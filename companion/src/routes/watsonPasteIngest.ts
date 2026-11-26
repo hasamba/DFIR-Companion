@@ -13,7 +13,7 @@ import type { WatsonPasteIngest } from "../analysis/ai/watson/pasteIngestChat.js
 import type { WatsonPaste } from "../analysis/ai/watson/types.js";
 import type { RouteContext } from "./context.js";
 import { beginImportSection } from "./importSection.js";
-import { settleForensicImport } from "./importSettle.js";
+import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
 import { importTagger, routeSettleDeps } from "./routeSettleDeps.js";
 
 export type { WatsonPasteIngest } from "../analysis/ai/watson/pasteIngestChat.js";
@@ -115,7 +115,10 @@ async function parseInSection(
       importedAt: new Date().toISOString(),
     });
     onImported();
-    const settled = await settleForensicImport(deps, caseId, section.baseline, paste.storedName);
+    // A settle failure still fails the paste, after its rows are settled (#2891) — with the HELD
+    // tagger, so a recovery never applies a promotion the analyst has not accepted.
+    const target = { caseId, storedNames: [paste.storedName], tag: "watson" };
+    const settled = await settleImportOrRecoverThenThrow(deps, target, section.baseline, paste.storedName);
     const offered = held.offered();
     const candidates = held.held();
     const windows = candidates.length ? await heldBuildWindows(settleDeps.stateStore, caseId, offered) : [];

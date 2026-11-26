@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +16,7 @@ import { TagsStore } from "../../src/analysis/tags.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { buildRuntimePipeline, createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
+import { failSettleAfterStamp } from "../helpers/settleFailure.js";
 
 // #1891: an import replay settles like a live import — super-timeline write, content tagger, then
 // demote (CLAUDE.md §7: merge-all → tagger → demote). It used to demote straight after the merge,
@@ -54,6 +55,7 @@ const ARTIFACT = "imports/0001_siem.json";
 let root: string;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (root) await rm(root, { recursive: true, force: true });
 });
 
@@ -133,6 +135,25 @@ describe("import replay settles like a live import (#1891)", () => {
     const superRows = await superEvents(superTimelineStore);
     expect(mentions(superRows, "Print Spooler")).toHaveLength(1);
     expect(mentions(superRows, "Windows Update")).toHaveLength(1);
+  });
+
+  it("a settle that fails after stamping still fails the replay, but its rows are graded first (#2891)", async () => {
+    const { app, stateStore, superTimelineStore, runStore } = await harness();
+    const fired = failSettleAfterStamp(stateStore);
+    const replay = await request(app).post("/cases/c1/analysis-runs/siem-import/replay");
+    expect(fired()).toBe(true);
+    expect(replay.status).toBe(500); // the failure is still reported
+    const forensic = (await stateStore.load("c1")).forensicTimeline;
+    // Tagged before the demote: the rule's row is kept graded up, the plain Info row is demoted.
+    const spooler = mentions(forensic, "Print Spooler");
+    expect(spooler).toHaveLength(1);
+    expect(spooler[0].severity).toBe("High");
+    expect(spooler[0].importBatchId).toEqual(expect.any(String));
+    expect(mentions(forensic, "Windows Update")).toHaveLength(0);
+    const superRows = await superEvents(superTimelineStore);
+    expect(mentions(superRows, "Print Spooler")).toHaveLength(1);
+    expect(mentions(superRows, "Windows Update")).toHaveLength(1);
+    expect((await runStore.list("c1")).filter((r) => r.parentRunId === "siem-import")).toHaveLength(0);
   });
 
   it("records a changed-only child run fingerprinted from the case after the settle", async () => {

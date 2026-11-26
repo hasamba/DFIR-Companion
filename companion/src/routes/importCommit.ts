@@ -4,7 +4,12 @@ import type { Severity } from "../analysis/stateTypes.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
-import { settleForensicImport, type SettleDeps } from "./importSettle.js";
+import type { SettleDeps } from "./importSettle.js";
+import {
+  recoverWithoutSnapshot,
+  recoveryDepsFromSettle,
+  settleImportOrRecoverThenThrow,
+} from "./importRowRecovery.js";
 import { ImportJournalLostError } from "./importSettleDiff.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
@@ -196,9 +201,11 @@ export function commitDedicatedImport(
       if (settleDeps && baseline) {
         // The seam is REQUIRED processing, not bookkeeping: a failure here leaves Info rows in the
         // forensic timeline and none in the super-timeline — the defect these routes existed with.
-        // So it is not caught; it reaches the failure handler below. Only the record, the activity
+        // So it is not caught; it reaches the failure handler below — after its rows are settled, so
+        // the next import's demote cannot move them untagged (#2891). Only the record, the activity
         // line and the checkpoint after it are best-effort.
-        const settled = await settleForensicImport(settleDeps, caseId, baseline, storedName);
+        const target = { caseId, storedNames: [storedName], tag: "import" };
+        const settled = await settleImportOrRecoverThenThrow(settleDeps, target, baseline, storedName);
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
         ctx.serverLogger.debug(
           `[import-debug] ${caseId}: commit kind=${safeKind(kind)} settled forensicNow=${settled.forensicCount} ` +
@@ -259,6 +266,12 @@ export function commitDedicatedImport(
           /* non-fatal — the import is merged and settled; only its bookkeeping failed */
         }
       } else {
+        // No snapshot (its capture failed): the settle cannot run, but the rows the importer merged
+        // must still be graded before any demote (#2891, as #2890 did for the streamed paths).
+        if (settleDeps) {
+          const target = { caseId, storedNames: [storedName], tag: "import" };
+          await recoverWithoutSnapshot(recoveryDepsFromSettle(settleDeps), target);
+        }
         if (partial) return reportCancelled(new Error("import cancelled"));
         ctx.serverLogger.debug(
           `[import-debug] ${caseId}: commit kind=${safeKind(kind)} not settled (no settle deps)`,

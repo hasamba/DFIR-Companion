@@ -27,6 +27,7 @@ import { createWatsonCaseEvents } from "../../src/composition/watsonCaseEvents.j
 import { createApp } from "../../src/server.js";
 import { readWatsonFlowRows } from "../../src/composition/watsonVeloResultsWiring.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
+import { failSettleAfterStamp } from "../helpers/settleFailure.js";
 
 // Spec §14: a paste in a known format is parsed and graded, but the content tagger's promotions are
 // held as pending Watson proposals; a chat ingest never starts a synthesis (#1599) and never counts
@@ -255,6 +256,25 @@ describe("Watson paste ingest", () => {
     const undone = await request(h.app).post(`/cases/${CASE}/watson/proposals/${held[0].id}/undo`);
     expect(undone.status).toBe(200);
     expect(mentions((await h.stateStore.load(CASE)).forensicTimeline, "ntdsutil")).toHaveLength(0);
+  });
+
+  it("a settle that fails after stamping still settles the paste's rows before the next demote (#2891)", async () => {
+    const h = await harness();
+    const fired = failSettleAfterStamp(h.stateStore);
+    const res = await paste(h.app as never, SIEM, "events.json");
+    expect(fired()).toBe(true);
+    expect(res.status).toBe(200);
+    // Still reported as a grading failure: the held proposals do not survive the throw.
+    expect((await h.chatStore.load(CASE)).pastes[0].parsed).toMatchObject({ kind: "text" });
+    // But no raw Info row of the paste is left in the record the AI reads, and none is lost: both
+    // were dual-written and demoted, as a successful settle leaves them (the promotion stays held).
+    const forensic = (await h.stateStore.load(CASE)).forensicTimeline;
+    expect(mentions(forensic, "ntdsutil")).toHaveLength(0);
+    expect(mentions(forensic, "Windows Update")).toHaveLength(0);
+    const superRows: ForensicEvent[] = [];
+    for await (const b of h.superTimelineStore.eventBatches(CASE)) superRows.push(...b);
+    expect(mentions(superRows, "ntdsutil")).toHaveLength(1);
+    expect(mentions(superRows, "Windows Update")).toHaveLength(1);
   });
 
   it("in Auto mode, the paste's held promotion is applied after the round, logged as Watson (Auto)", async () => {
