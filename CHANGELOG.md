@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Edit, archive and delete threat-hunt clients** — the instance administrator renames a client and changes its default server set, archives or unarchives it (linked cases keep working, shown "(archived)"), and deletes one only when no case is linked; every action is audited (closes #2941)
 - **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)
 - **AI Agent Forensics working data, wider** — Codex plugin staging, caches and history databases, the Gemini browser profile, VS Code logs, OpenCode's database and .claude.json backups also grade Info; agent definitions and cached tool lists keep their grade (part of #2719)
 - **AI Agent Forensics quieter on developer machines** — hits in the agents' own working data (session transcripts, installed skills, temp folders, edit history) are graded Info; instruction files and MCP configs keep their grade (part of #2719)

@@ -1315,11 +1315,19 @@ export const FEATURES: Feature[] = [
     private: ["huntCaseRenderGen"],
   },
   {
+    // Client management in the Client Baseline panel (#2941): Edit / Archive / Unarchive / Delete
+    // client and Show archived, for the instance administrator. No `initializer`: the panel's
+    // loadClientBaseline asks clientAdminBar for the bar on every render.
+    file: "dashboard-client-admin.js",
+    publish: ["isClientAdmin", "clientAdminBar"],
+    private: ["SERVER_SETS_URL"],
+  },
+  {
     // The Client Baseline panel (#2670): client link, confirm-list exports, marks, download policy.
     // No `initializer`: the case loader in dashboard-case-connect.js runs loadClientBaseline per case.
     file: "dashboard-client-baseline.js",
     publish: ["loadClientBaseline"],
-    private: ["baselineRenderGen"],
+    private: ["baselineRenderGen", "showArchived"],
   },
   {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the

@@ -73,6 +73,13 @@ export interface ClientProfile {
   audit: ProfileAuditEntry[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * Set while the client is archived (#2941): hidden from the New Case and panel pickers, refused as
+   * a new link target, but every byte kept — baseline, versions, audit trail — and linked cases keep
+   * grading against it. Absent = active (every profile saved before #2941).
+   */
+  archivedAt?: string;
+  archivedBy?: string;
 }
 
 export const MAX_VERSIONS_KEPT = 100;
@@ -261,4 +268,50 @@ export function applyDomains(
 /** The baseline as it was at `version` (the pinned one), or null when that version is no longer kept. */
 export function baselineAt(p: ClientProfile, version: number): Baseline | null {
   return p.versions.find((v) => v.version === version)?.baseline ?? null;
+}
+
+export const isArchivedProfile = (p: Pick<ClientProfile, "archivedAt">): boolean => !!p.archivedAt;
+
+function withAudit(p: ClientProfile, entry: Omit<ProfileAuditEntry, "version">): ClientProfile {
+  return {
+    ...p,
+    audit: [...p.audit, { ...entry, version: p.version }].slice(-MAX_AUDIT_KEPT),
+    updatedAt: entry.at,
+  };
+}
+
+/** Rename / change the default server set (#2941). Not a baseline change, so no new version. */
+export function editProfile(
+  p: ClientProfile,
+  input: z.infer<typeof profileInputSchema>,
+  by: string,
+  at: string,
+): ClientProfile {
+  const { defaultServerSetId: _old, ...rest } = p;
+  const set = (id: string | undefined) => (id ? `"${id}"` : "none");
+  const detail = `name "${p.name}" → "${input.name}"; default server set ${set(p.defaultServerSetId)} → ${set(input.defaultServerSetId)}`;
+  return withAudit(
+    {
+      ...rest,
+      name: input.name,
+      ...(input.defaultServerSetId ? { defaultServerSetId: input.defaultServerSetId } : {}),
+    },
+    { at, by, action: "profile", detail },
+  );
+}
+
+/** Archive (#2941). The same object back when the client is already archived: no second audit entry. */
+export function archiveProfile(p: ClientProfile, by: string, at: string): ClientProfile {
+  if (isArchivedProfile(p)) return p;
+  return withAudit(
+    { ...p, archivedAt: at, archivedBy: by },
+    { at, by, action: "archive", detail: `client "${p.name}" archived` },
+  );
+}
+
+/** Unarchive (#2941). The same object back when the client is not archived. */
+export function unarchiveProfile(p: ClientProfile, by: string, at: string): ClientProfile {
+  if (!isArchivedProfile(p)) return p;
+  const { archivedAt: _at, archivedBy: _by, ...rest } = p;
+  return withAudit(rest, { at, by, action: "unarchive", detail: `client "${p.name}" unarchived` });
 }

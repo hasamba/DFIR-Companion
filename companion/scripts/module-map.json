@@ -626,6 +626,7 @@
     "huntReportLoad.ts": "analysis/hunt",
     "huntSettle.ts": "analysis/hunt",
     "huntSettleHook.ts": "analysis/hunt",
+    "clientProfileLinks.ts": "analysis/hunt",
     "clientProfileStore.ts": "analysis/hunt",
     "huntClientLink.ts": "analysis/hunt",
     "huntConfirmList.ts": "analysis/hunt",

@@ -911,6 +911,15 @@ itself, and part of it you type in.
 client**. The answers are saved on the client, not on the case. (Only the instance administrator can
 create or edit a client; linking a case needs the case administrator.)
 
+**Edit, archive or delete a client (instance administrator only).** Pick the client in the **Client**
+box, then use the buttons under it. **Edit client…** changes the name and the default server set.
+**Archive client** hides the client from the **New Case** Client box and from this panel's Client box,
+but keeps all its data; linked cases keep working and show "(archived)" after the client's name. Tick
+**Show archived clients** to see archived clients and **Unarchive client** to bring one back.
+**Delete client…** asks first and works only when no case is linked to the client; otherwise it names
+the linked cases and suggests archiving instead. Every action is audited. Members do not see these
+buttons, or **New client…**. See [Threat hunting](threat-hunting.md#edit-archive-or-delete-a-client).
+
 **The "waiting for the client" list fills itself. You type nothing.** After a hunt imports program,
 autorun or download evidence (for example the **Threat Hunt Starter** bundle: Amcache, Prefetch,
 UserAssist, Autoruns, downloads), the Companion lists what it found on the hosts that the client has
