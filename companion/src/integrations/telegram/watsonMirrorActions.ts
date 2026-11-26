@@ -128,8 +128,14 @@ export function presserId(from: TelegramPresser | undefined): string | undefined
   return undefined;
 }
 
+// A display name keeps letters, digits, marks, spaces and . ' - only: no Markdown, HTML or CSV syntax
+// can ride into the report's "approved by" line, whatever escaping a report path applies.
+const NAME_SYNTAX = /[^\p{L}\p{N}\p{M} .'-]/gu;
+
 const cleanName = (v: unknown): string =>
-  typeof v === "string" ? v.replace(UNSAFE_CHARS, " ").replace(/\s+/g, " ").trim() : "";
+  typeof v === "string"
+    ? v.replace(UNSAFE_CHARS, " ").replace(NAME_SYNTAX, "").replace(/\s+/g, " ").trim()
+    : "";
 
 /**
  * The actor a Telegram decision is recorded under — the badge, the report line and the activity log

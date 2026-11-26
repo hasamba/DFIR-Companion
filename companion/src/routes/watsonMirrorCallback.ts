@@ -233,8 +233,10 @@ export async function handleMirrorCallback(
   const userId = presserId(cq.from);
   const parsed = parseMirrorCallback(cq.data);
   if (!/^-?\d{1,20}$/.test(chatId) || !userId || !parsed) return TOAST.invalid;
+  // Limited per (chat, user) BEFORE the durable dedup write: one member cannot lock others out, and
+  // a flood cannot push accepted messages out of the shared dedup list.
+  if (!pressLimiter.tryAcquire(`${chatId}:${userId}`)) return TOAST.busy;
   if (!(await store.markInbound(`cb:${id}`))) return TOAST.replay;
-  if (!pressLimiter.tryAcquire(chatId)) return TOAST.busy;
   const press: Press = { chatId, userId, token: parsed.token };
   if (!onTelegramAllowlist(userId)) {
     const found = await store.findAction(parsed.token).catch(() => undefined);

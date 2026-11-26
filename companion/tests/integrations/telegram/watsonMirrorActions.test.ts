@@ -11,6 +11,10 @@ import {
   telegramApprovable,
 } from "../../../src/integrations/telegram/watsonMirrorActions.js";
 import type { WatsonProposal } from "../../../src/analysis/ai/watson/types.js";
+import { turnPlainText } from "../../../src/integrations/telegram/watsonMirrorFormat.js";
+import { watsonApprovalLine } from "../../../src/reports/watsonFindingMd.js";
+import { row } from "../../../src/reports/csv.js";
+import type { Finding } from "../../../src/analysis/stateTypes.js";
 
 // #2712: which mirrored proposals get Apply / Reject buttons, the callback data, and the approver's name.
 
@@ -151,5 +155,29 @@ describe("telegramActor", () => {
     expect(presserId({ id: 1.5 })).toBeUndefined();
     expect(presserId({ id: "555; drop" })).toBeUndefined();
     expect(presserId({})).toBeUndefined();
+  });
+});
+
+describe("the Telegram actor downstream", () => {
+  it("is escaped in the report's approval line and formula-guarded in CSV", () => {
+    const actor = telegramActor({ id: 7, first_name: "*[x](http://evil.example)* | y" });
+    const line = watsonApprovalLine({ approvedBy: actor } as Finding);
+    expect(line).not.toContain("[x](http://evil.example)");
+    expect(line).toContain("(via Telegram)");
+    expect(row([telegramActor({ id: 7, username: "alice_ir" })])).toMatch(/^"?'@alice_ir/);
+  });
+
+  it("names the approver on the mirrored decision note", () => {
+    const text = turnPlainText(
+      {
+        id: "wt-n",
+        at: "2026-11-25T10:00:00Z",
+        role: "system",
+        actor: "@alice_ir (via Telegram)",
+        text: "Applied it",
+      },
+      [],
+    );
+    expect(text).toBe("Note (@alice_ir (via Telegram)):\nApplied it");
   });
 });
