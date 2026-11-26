@@ -63,7 +63,8 @@
 //          js/dashboard-scope.js and js/dashboard-selection.js, as named owners.
 //        - NOT CHANGE NOTIFICATION. A subscriber is ONE fixed reaction to a write, and the
 //          measurement says these writes want different ones: loadScope commits without
-//          redrawing, the websocket branch redraws, applyScope refetches and reloads twenty
+//          redrawing (#2904: unless its case already rendered under another window),
+//          the websocket branch redraws, applyScope refetches and reloads twenty
 //          panels. A single subscriber would have to be the union of all three, which is a
 //          behaviour change wearing a refactor's clothes. So refresh stays at the call sites and
 //          neither owner publishes a subscription.

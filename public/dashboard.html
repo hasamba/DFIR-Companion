@@ -5232,25 +5232,25 @@
       }
     }
 
-    // inScope() and projectScope() moved to js/dashboard-scope.js (#415) — they are pure functions
-    // of (window, state), and moving them with the value is what leaves `scope` with no readers
-    // outside its owner. DfirScope.project() is the same function; a parity suite now checks it
-    // against companion/src/analysis/scopeProject.ts, the server copy it has always mirrored.
+    // inScope(), projectScope() and renderScopeInfo() live in js/dashboard-scope.js (#415): pure
+    // functions of the window, and DfirScope.receive()/confirm() repaint the chip as they commit.
 
-    // renderScopeInfo() moved into js/dashboard-scope.js: its three call sites were exactly the
-    // three writers, so an owner that could be written without repainting its own indicator was a
-    // bug waiting to be written. DfirScope.receive()/confirm() each repaint as part of committing.
-
+    // #2904: a load for another case clears the window at once (the previous case's window must never
+    // filter this one, even when this GET fails); only the newest answer for the case on screen commits.
+    // No redraw while loading (render() comes separately) unless this case already rendered.
+    let scopeLoad = { caseId: null, seq: 0 };
     function loadScope(caseId) {
+      const onScreen = () => { const el = document.getElementById("caseId"); return !el || typeof el.value !== "string" || el.value.trim() === caseId; };
+      if (!onScreen()) return; // a late caller for a case the analyst has left
+      if (scopeLoad.caseId !== caseId) { scopeLoad.caseId = caseId; DfirScope.receive(null, null); }
+      const seq = ++scopeLoad.seq;
       fetch(`/cases/${caseId}/scope`).then(r => r.json()).then(s => {
-        // No redraw, deliberately — the case is still loading and render() arrives separately.
-        // The websocket branch performs the identical commit and then DOES redraw; that difference
-        // is real (see the scope_changed handler) and is preserved rather than levelled out.
+        if (seq !== scopeLoad.seq || !onScreen()) return;
+        const was = DfirScope.get(), changed = was.start !== (s.start || null) || was.end !== (s.end || null);
         DfirScope.receive(s.start, s.end);
+        if (changed && DfirState.lastState()) typeof render === "function" && render(DfirState.lastState());
       }).catch(() => {});
     }
-
-
 
     // The compact, always-visible row title: a plain-weight (not bold — a whole sentence in bold reads
     // as noise, not signal) truncated description. Anything beyond this — the untruncated text, MITRE,
