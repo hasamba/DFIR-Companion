@@ -12,10 +12,26 @@
   // ── Live CLIENT_EVENT monitoring (#84) ────────────────────────────────────────────────────
   let veloMonCase = null;
   let veloMonSeq = 0;
+  // #2933: an action's answer paints only in the generation it was sent in. It moves when the owner
+  // changes (a cancel too), never on a same-case reload; the shared buttons and lines are freed then.
+  let veloMonGen = 0;
+  const veloMonLive = (caseId, gen = veloMonGen) => () => gen === veloMonGen && veloCaseId() === caseId;
+  function veloMonNewOwner() {
+    veloMonGen++;
+    for (const id of ["veloMonStartBtn", "veloMonAutoBtn"]) {
+      const b = document.getElementById(id);
+      if (b) b.disabled = false;
+    }
+    for (const id of ["veloMonMsg", "veloMonAutoMsg"]) {
+      const m = document.getElementById(id);
+      if (m) m.textContent = "";
+    }
+  }
   // #2915: a cancelled or failed case load drops the monitors and the LIVE badge; the next open reads again.
   function onVeloMonReset(caseId) {
     if (caseId !== null) return;
     veloMonSeq++;
+    veloMonNewOwner();
     veloMonCase = null;
     renderVeloMonitors([]);
   }
@@ -30,6 +46,7 @@
     if (caseId) typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onVeloMonReset);
     // #2904: the previous case's monitors (and LIVE badge) go at once; only the newest load paints.
     if (veloMonCase !== caseId || !caseId) renderVeloMonitors([]);
+    if (veloMonCase !== caseId) veloMonNewOwner();
     veloMonCase = caseId;
     if (!caseId) return;
     const seq = ++veloMonSeq;
@@ -128,6 +145,7 @@
         ? "POST"
         : "POST";
     if (btn) btn.disabled = true;
+    const live = veloMonLive(caseId);
     fetch(
       `/cases/${encodeURIComponent(caseId)}/velociraptor/monitors/${encodeURIComponent(id)}/${action}`,
       { method },
@@ -143,6 +161,7 @@
         // A resume that could not re-enable the artifact in Velociraptor answers 502 with the reason
         // (#1409) — show it where the start form shows its errors, not only in the console.
         const msg = document.getElementById("veloMonMsg");
+        if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
         if (msg) msg.textContent = !ok && j && j.error ? "error: " + j.error : "";
         loadVeloMonitors(caseId);
       })
@@ -262,6 +281,7 @@
     const btn = document.getElementById("veloMonStartBtn");
     if (btn) btn.disabled = true;
     if (msg) msg.textContent = "starting…";
+    const live = veloMonLive(caseId);
     fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -269,6 +289,7 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (!live()) return; // #2933
         if (!ok || j.error) {
           if (msg) msg.textContent = "error: " + (j.error || "failed");
           return;
@@ -284,14 +305,14 @@
         loadVeloMonitors(caseId);
       })
       .catch((e) => {
-        if (msg)
+        if (msg && live())
           msg.textContent =
             "error: " +
             e.message +
             " — restart the companion server if this 404s";
       })
       .finally(() => {
-        if (btn) btn.disabled = false;
+        if (btn && live()) btn.disabled = false;
       });
   }
   // Discover every artifact already enabled in Velociraptor's Client Monitoring table and start an
@@ -310,6 +331,7 @@
     const btn = document.getElementById("veloMonAutoBtn");
     if (btn) btn.disabled = true;
     if (msg) msg.textContent = "discovering configured client events…";
+    const live = veloMonLive(caseId);
     fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors/auto`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -317,6 +339,7 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (!live()) return; // #2933
         if (!ok || j.error) {
           if (msg) msg.textContent = "error: " + (j.error || "failed");
           return;
@@ -327,14 +350,14 @@
         loadVeloMonitors(caseId);
       })
       .catch((e) => {
-        if (msg)
+        if (msg && live())
           msg.textContent =
             "error: " +
             e.message +
             " — restart the companion server if this 404s";
       })
       .finally(() => {
-        if (btn) btn.disabled = false;
+        if (btn && live()) btn.disabled = false;
       });
   }
 

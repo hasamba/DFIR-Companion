@@ -542,7 +542,7 @@
     }
     const minSeverity = document.getElementById("veloExtMinsev").value;
     const superTimelineOnly = document.getElementById("veloExtSuper").checked;
-    const go = document.getElementById("veloExtGo");
+    const go = document.getElementById("veloExtGo"), gen = veloExtGen, live = () => gen === veloExtGen && veloCaseId() === caseId;
     go.disabled = true;
     msg.textContent = "importing…";
     fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/import-external`, {
@@ -557,6 +557,7 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
         if (j && j.alreadyImported) {
           veloShowAlreadyImported(msg, j.alreadyImported);
           return;
@@ -600,23 +601,22 @@
           gaps;
         loadVeloHuntJobs(caseId);
       })
-      .catch(
-        (e) =>
-          (msg.textContent =
-            "error: " +
-            e.message +
-            " — restart the companion server if this 404s"),
-      )
-      .finally(() => {
-        go.disabled = false;
-      });
+      .catch((e) => live() && (msg.textContent = "error: " + e.message + " — restart the companion server if this 404s"))
+      .finally(() => live() && (go.disabled = false));
   }
 
-  let veloJobsCase = null, veloJobsSeq = 0; // #2904: whose hunts are shown; only the newest load paints
+  let veloJobsCase = null, veloJobsSeq = 0, veloExtGen = 0; // #2904: whose hunts are shown; only the newest load paints
+  // #2933: an owner change (a cancel too) retires an external import's answer and its message (a re-import
+  // prompt would import into the new case), and frees Import.
+  function veloExtNewOwner() {
+    const m = document.getElementById("veloExtMsg"), go = document.getElementById("veloExtGo");
+    veloExtGen++, m && (m.textContent = ""), go && (go.disabled = false);
+  }
   const veloJobsReset = (c) => c === null && (veloJobsSeq++, loadVeloHuntJobs(null)); // #2915: a cancelled load
   function loadVeloHuntJobs(caseId) {
     if (caseId && veloCaseId() !== caseId) return; // a late caller for a case the analyst has left
     if (caseId) typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(veloJobsReset);
+    if (veloJobsCase !== caseId) veloExtNewOwner();
     if (veloJobsCase !== caseId || !caseId) renderVeloJobs([]); // the previous case's hunts go at once
     veloJobsCase = caseId;
     if (!caseId) return;

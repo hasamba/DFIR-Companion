@@ -170,11 +170,11 @@
       .catch(() => {});
   }
 
-  async function failure(r, action, stored, caseId) {
+  async function failure(r, action, stored, caseId, ppg) {
     const body = await r.json().catch(() => ({}));
     const why = body.error ? String(body.error) : "The Watson request failed (HTTP " + r.status + ")";
     if (r.status === 409 && body.error === "presidio_approval_required") {
-      if (typeof setPresidioPending === "function") setPresidioPending(body.findings, caseId); // #2904: dropped if the case changed
+      if (typeof setPresidioPending === "function") setPresidioPending(body.findings, caseId, ppg); // #2904/#2933: dropped if the case changed
       return stored
         ? "The case keeps the paste as evidence. Presidio found new values that wait for approval. Approve or reject them in Anonymization. Then send a message, and Watson reads the paste."
         : "Presidio found new values that wait for approval. Approve or reject them in Anonymization. Then send again.";
@@ -188,7 +188,7 @@
   // POST to the case the action started on. { ok, stored, transport }: stored is true once the server kept a paste; transport is "lost" when no readable answer came back.
   async function post(caseId, path, payload, action, headers) {
     const out = { ok: false, stored: false, transport: "response" };
-    let answered = false;
+    let answered = false, ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined; // #2933
     if (!caseId) { wNotice = { text: "No case is open. Open a case first." }; renderWatson(); }
     if (!caseId || wBusy.has(caseId)) return out;
     wBusy.add(caseId);
@@ -212,7 +212,7 @@
           renderWatson(chat);
         }
       } else {
-        const text = await failure(r, action, out.stored, caseId);
+        const text = await failure(r, action, out.stored, caseId, ppg);
         if (live(caseId)) wNotice = { text };
       }
     } catch (e) {
@@ -281,13 +281,13 @@
 
   // A write that answers { chat, state?: { keyQuestions } } (a proposal decision, an added answer).
   async function decide(path, pid, el) {
-    const caseId = currentCase();
+    const caseId = currentCase(), ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined;
     wNotice = null;
     try {
       const r = await fetch(api(caseId, path), { method: "POST" });
       if (!live(caseId)) return;
       if (!r.ok) {
-        const text = await failure(r, "proposal", false, caseId);
+        const text = await failure(r, "proposal", false, caseId, ppg);
         if (!live(caseId)) return;
         if (pid) wCardErr.set(pid, text);
         if (!pid || watsonSectionRefused(el, text)) wNotice = { text }; // a section's Undo: shown where the analyst is

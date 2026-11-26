@@ -247,8 +247,8 @@
       .catch(() => {});
   }
   // The one operation the three outside writers used to open-code as an assign-then-render pair.
-  function setPresidioPending(findings, caseId) { // #2904: a hold answer for a case left is dropped
-    if (caseId !== undefined && !ppOnScreen(caseId)) return;
+  function setPresidioPending(findings, caseId, gen) { // #2904: a hold answer for a case left is dropped
+    if ((caseId !== undefined && !ppOnScreen(caseId)) || (gen !== undefined && gen !== ppGen)) return; // #2933: or from before a cancel
     presidioPending = findings || [];
     renderPresidioPending();
   }
@@ -781,6 +781,7 @@
   window.loadPresidioPending = loadPresidioPending;
   window.renderPresidioPending = renderPresidioPending;
   window.setPresidioPending = setPresidioPending;
+  window.presidioPendingGen = () => ppGen; // #2933: callers pass it back to setPresidioPending
   window.suppressAllPresidioPending = suppressAllPresidioPending;
   window.presidioHold = presidioHold;
   window.presidioHoldText = presidioHoldText;

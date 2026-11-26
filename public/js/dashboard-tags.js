@@ -250,7 +250,9 @@
   // case drops the previous case's tags — and closes an open tag editor, whose save would
   // land on this case — at once (no render: this case's render reads the empty index).
   let tagsCase = null;
+  let tagsGen = 0; // #2933: an add's answer applies only in the generation it was sent in (owner change / cancel)
   function clearTags(caseId) {
+    tagsGen++;
     tagsCase = caseId;
     tagsByTarget = new Map(); // the stars were reset with the case switch (dashboard-case-connect.js)
     if (tagTarget) closeTagModal();
@@ -395,7 +397,8 @@
   function addTag(label) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId || !tagTarget || !String(label || "").trim()) return;
-    const msg = document.getElementById("tagMsg");
+    const msg = document.getElementById("tagMsg"), gen = tagsGen;
+    const live = () => gen === tagsGen && tagsOnScreen(caseId);
     msg.textContent = "adding…";
     // Bulk mode: add the tag to every selected entity. Serialize the POSTs — the server's
     // TagsStore.add() is read-modify-write on tags.json, so concurrent requests clobber each
@@ -406,6 +409,7 @@
           const ids = tagTarget.ids;
           const bulkTargetType = tagTarget.targetType || "event";
           for (let i = 0; i < ids.length; i++) {
+            if (!live()) return; // #2933: a cancel or a switch stops the run — no more tags for it
             msg.textContent = `adding… (${i + 1}/${ids.length})`;
             const r = await fetch(`/cases/${caseId}/tags`, {
               method: "POST",
@@ -419,11 +423,12 @@
             });
             if (!r.ok) throw new Error("HTTP " + r.status);
           }
+          if (!live()) return;
           document.getElementById("tagInput").value = "";
           msg.textContent = "";
           loadTags(caseId);
         } catch (e) {
-          msg.textContent = "failed: " + e.message;
+          if (live()) msg.textContent = "failed: " + e.message;
         }
       })();
       return;
@@ -444,11 +449,12 @@
         return r.json();
       })
       .then(() => {
+        if (!live()) return;
         document.getElementById("tagInput").value = "";
         msg.textContent = "";
         loadTags(caseId);
       })
-      .catch((e) => (msg.textContent = "failed: " + e.message));
+      .catch((e) => live() && (msg.textContent = "failed: " + e.message));
   }
   function deleteTag(id) {
     const caseId = document.getElementById("caseId").value.trim();

@@ -42,7 +42,12 @@
   // (no re-render — this case's render follows); only the newest answer for the case on screen paints.
   let importMetaCase = null;
   let importMetaSeq = 0;
+  // #2933: an action's answer (held files, Run all, an upload's status lines) paints only in the
+  // generation it was sent in; it moves when the owner changes (a cancel too), never on a same-case reload.
+  let icGen = 0;
+  const icLive = (caseId, gen = icGen) => () => gen === icGen && icOnScreen(caseId);
   function clearImportMeta(caseId) {
+    icGen++;
     importMetaCase = caseId;
     newEventKeys = new Set();
     newIocKeys = new Set();
@@ -162,6 +167,7 @@
       const chunks = [];
       for (let i = 0; i < all.length; i += 500) chunks.push(all.slice(i, i + 500));
       el.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      const live = icLive(caseId);
       chunks
         .reduce(
           (p, c) =>
@@ -177,13 +183,14 @@
           Promise.resolve(),
         )
         .then(() => {
+          if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
           document.getElementById("status").textContent =
             decision === "import"
               ? "Held files moved back into drop/ — they import on the next drop sweep"
               : "Held files moved to drop/_skipped/";
         })
         .catch((e) => {
-          document.getElementById("status").textContent = "could not record the decision: " + e.message;
+          if (live()) document.getElementById("status").textContent = "could not record the decision: " + e.message;
         })
         .then(() => loadDropHeld(caseId));
     };
@@ -236,6 +243,7 @@
       runAll.onclick = () => {
         runAll.disabled = true;
         runAll.textContent = "Running…";
+        const live = icLive(caseId);
         fetch(`/cases/${caseId}/drop/run-pending`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -243,6 +251,7 @@
         })
           .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
           .then(({ ok, j }) => {
+            if (!live()) return; // #2933
             if (!ok) {
               runAll.disabled = false;
               runAll.textContent = "Retry";
@@ -259,6 +268,7 @@
             loadImportMeta(caseId);
           })
           .catch((e) => {
+            if (!live()) return;
             runAll.disabled = false;
             runAll.textContent = "Retry";
             document.getElementById("status").textContent =
@@ -438,7 +448,8 @@
       btn.disabled = true;
       btn.textContent = "Running…";
     }
-    const statusEl = document.getElementById("status");
+    const statusEl = document.getElementById("status"), live = icLive(caseId);
+    const say = (text) => live() && (statusEl.textContent = text); // #2933: never over another case's line
     const LARGE_MB = 180; // base64 body must fit DFIR_MAX_BODY_MB (default 256 MB → ~190 MB raw)
     (async () => {
       let ran = 0,
@@ -447,14 +458,12 @@
         ioc = 0;
       const jobIds = [];
       for (const it of runs) {
-        statusEl.textContent =
-          "running " + it.toolId + " on " + it.file.name + "…";
+        say("running " + it.toolId + " on " + it.file.name + "…");
         try {
           if (it.file.size > LARGE_MB * 1024 * 1024) {
             failed++;
-            statusEl.textContent =
-              it.file.name +
-              " is too large to upload — copy it into the case drop folder instead";
+            say(it.file.name +
+              " is too large to upload — copy it into the case drop folder instead");
             continue;
           }
           const b64 = await fileToBase64(it.file);
@@ -476,7 +485,7 @@
           if (!r.ok) {
             failed++;
             // Surface the reason (wrong zip password, unreachable service) instead of a silent skip.
-            statusEl.textContent = it.file.name + ": " + (j.error || "failed");
+            say(it.file.name + ": " + (j.error || "failed"));
             console.warn("tool run failed", it.file.name, j.error);
             continue;
           }
@@ -485,17 +494,15 @@
           ioc += j.addedIocs || 0;
           if (Array.isArray(j.jobIds)) jobIds.push.apply(jobIds, j.jobIds);
           if (j.truncated)
-            statusEl.textContent =
-              it.file.name +
-              ": only the first 25 archive entries were submitted";
+            say(it.file.name +
+              ": only the first 25 archive entries were submitted");
         } catch (e) {
           failed++;
           console.warn("tool run error", it.file.name, e && e.message);
         }
       }
-      if (el) el.style.display = "none";
-      statusEl.textContent =
-        "Ran " +
+      if (el && live()) el.style.display = "none";
+      say("Ran " +
         ran +
         " run(s): +" +
         ev +
@@ -505,8 +512,8 @@
         (failed ? ", " + failed + " failed/skipped" : "") +
         (jobIds.length
           ? " — " + jobIds.length + " SO-CRATES analysis/es running…"
-          : "");
-      if (jobIds.length) pollSocratesJobs(caseId, jobIds);
+          : ""));
+      if (jobIds.length && live()) pollSocratesJobs(caseId, jobIds);
       loadImportMeta(caseId);
     })();
   }
@@ -690,13 +697,10 @@
         note: `matches previously-marked FP pattern (${label})`,
       }),
     })
+      // #2933: through the sequenced loader — a bare read painted whichever case it answered for.
       .then(() => {
         const c = document.getElementById("caseId").value.trim();
-        if (c)
-          fetch(`/cases/${c}/import-meta`)
-            .then((r) => r.json())
-            .then(renderImportMeta)
-            .catch(() => {});
+        if (c) loadImportMeta(c);
       })
       .catch(() => {});
   }

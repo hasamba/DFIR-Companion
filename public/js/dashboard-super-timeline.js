@@ -150,11 +150,11 @@
   // superCaseGen numbers each visit (A -> B -> A). Group repeats is a browser preference and stays.
   let superFilterCase = null;
   let superCaseGen = 0, superRowsCase = null; // visit number; the case whose rows were last drawn
+  const stAiFree = () => [["stStarredReport", "✨ Starred report"], ["stViewSummary", "✨ Summarize view"]].forEach(([id, t]) => { const b = document.getElementById(id); if (b) { b.disabled = false; b.textContent = t; } }); // #2933: a new visit frees both
   function scopeSuperFiltersToCase(caseId) {
     if (caseId === superFilterCase) return;
-    superFilterCase = caseId; superCaseGen++;
-    superSelectedOrigins = null;
-    superKnownOrigins = new Set();
+    superFilterCase = caseId; superCaseGen++; stAiFree();
+    superSelectedOrigins = null; superKnownOrigins = new Set();
     superSelectedHosts = null;
     superKnownHosts = new Set();
     superPromote = new Set(); superSelectedLabels = new Set();
@@ -514,7 +514,7 @@
   }
 
   function genStarredReport() {
-    const caseId = superCaseId();
+    const caseId = superCaseId(), gen = superCaseGen; // #2933: the visit the request was sent in
     if (!caseId) return;
     if (!DfirStarred.count()) {
       stRenderNote("No starred events yet — star rows (☆) in the timeline first; the report runs over only the starred set.");
@@ -531,19 +531,19 @@
         return d;
       })
       .then(d => {
-        if (caseId !== superCaseId()) return;   // case switched mid-flight — drop the stale result
+        if (gen !== superCaseGen || caseId !== superCaseId()) return; // switched, or cancelled and reopened
         lastStarredReport = { ...d, caseId };
         stRenderAiPanel("✨ Starred events report", d.markdown || "(empty report)",
           d.truncated ? `${d.usedEvents} of ${d.eventCount} starred events (AI input budget)` : `${d.eventCount} starred event${d.eventCount !== 1 ? "s" : ""}`,
           saveStarredReport);
       })
-      .catch(e => e.presidioHold ? stRenderNote(presidioHoldText("Starred report"))
+      .catch(e => gen !== superCaseGen || caseId !== superCaseId() ? null : e.presidioHold ? stRenderNote(presidioHoldText("Starred report"))
         : stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "starred report failed: " + e.message, true))
-      .finally(() => { btn.disabled = false; btn.textContent = "✨ Starred report"; });
+      .finally(() => { if (gen === superCaseGen) { btn.disabled = false; btn.textContent = "✨ Starred report"; } });
   }
 
   function genViewSummary() {
-    const caseId = superCaseId();
+    const caseId = superCaseId(), gen = superCaseGen;
     if (!caseId) return;
     if (DfirState.lastSuperData() && !superTotal) { stRenderNote("Nothing to summarize — the current filters match no events."); return; }
     const btn = document.getElementById("stViewSummary");
@@ -562,14 +562,14 @@
         return d;
       })
       .then(d => {
-        if (caseId !== superCaseId()) return;   // case switched mid-flight — drop the stale result
+        if (gen !== superCaseGen || caseId !== superCaseId()) return; // switched, or cancelled and reopened
         stRenderAiPanel("✨ View summary", d.markdown || "(empty summary)",
           d.truncated ? `${d.usedEvents} of ${d.eventCount} matching events summarized` : `${d.eventCount} matching event${d.eventCount !== 1 ? "s" : ""}`,
           null);
       })
-      .catch(e => e.presidioHold ? stRenderNote(presidioHoldText("View summary"))
+      .catch(e => gen !== superCaseGen || caseId !== superCaseId() ? null : e.presidioHold ? stRenderNote(presidioHoldText("View summary"))
         : stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "view summary failed: " + e.message, true))
-      .finally(() => { btn.disabled = false; btn.textContent = "✨ Summarize view"; });
+      .finally(() => { if (gen === superCaseGen) { btn.disabled = false; btn.textContent = "✨ Summarize view"; } });
   }
 
   // Inline ±window menu anchored to a ⌖ button. Only one is open at a time.
@@ -693,7 +693,7 @@
       `<option value="${escAttr(w.id)}">${esc(w.label)}</option>`).join("");
     sel.value = cur;
   }
-  const tfReset = (c) => c === null && ((tfSeq++, tfCase = null), paintTimeframes([])); // #2915: a cancelled load
+  const tfReset = (c) => c === null && ((tfSeq++, superCaseGen++, tfCase = null), stAiFree(), paintTimeframes([])); // #2915/#2933: a cancelled load
   function loadSavedTimeframes(caseId) {
     caseId = caseId || superCaseId();
     if (!caseId || caseId !== superCaseId()) return; // none open, or a late caller for a case left

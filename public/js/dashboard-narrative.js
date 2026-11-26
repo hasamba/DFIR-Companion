@@ -51,6 +51,7 @@
     // The other order: Edit opened mid-generation would seed the textarea from the OLD text.
     editBtn.disabled = true;
     msg.textContent = "generating… (one AI call)";
+    const live = narrLive(caseId);
     fetch(`/cases/${caseId}/narrative`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -77,17 +78,17 @@
         return d;
       })
       .then((d) => {
+        if (!live()) return; // #2933: never another case's narrative, nor one from before a cancel
         if (d.error) {
           msg.textContent = "error: " + d.error;
           return;
         }
         msg.textContent = "generated and saved ✓";
         setNarrativeView(d.narrativeTimeline || "—");
-        setTimeout(() => {
-          msg.textContent = "";
-        }, 3000);
+        setTimeout(() => live() && (msg.textContent = ""), 3000);
       })
       .catch((e) => {
+        if (!live()) return;
         msg.textContent = e.sectionDisabled || e.presidioHold
           ? e.message || ""
           : "generate failed: " +
@@ -95,6 +96,7 @@
             " — restart the companion server if this 404s";
       })
       .finally(() => {
+        if (!live()) return; // the owner change freed both buttons already
         btn.disabled = false;
         editBtn.disabled = false;
       });
@@ -108,10 +110,26 @@
   }
   let synthMetaCase = null;
   let synthMetaSeq = 0;
+  // #2933: a Generate / Save answer paints only in the generation it was sent in. It moves when the
+  // owner changes (a cancel too), never on a same-case reload; the buttons and lines are freed then.
+  let narrGen = 0;
+  const narrLive = (caseId, gen = narrGen) => () => gen === narrGen && synthMetaOnScreen(caseId);
+  function narrNewOwner() {
+    narrGen++;
+    for (const id of ["genNarrativeBtn", "editNarrativeBtn"]) {
+      const b = document.getElementById(id);
+      if (b) b.disabled = false;
+    }
+    for (const id of ["genNarrativeMsg", "saveNarrativeMsg"]) {
+      const m = document.getElementById(id);
+      if (m) m.textContent = "";
+    }
+  }
   // #2915: a cancelled or failed case load hides the banner; the next open (same case too) reads again.
   function onSynthMetaReset(caseId) {
     if (caseId !== null) return;
     synthMetaSeq++;
+    narrNewOwner();
     synthMetaCase = null;
     renderSynthMeta(null);
   }
@@ -119,6 +137,7 @@
     if (!synthMetaOnScreen(caseId)) return; // a late caller for a case the analyst has left
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onSynthMetaReset);
     if (synthMetaCase !== caseId) {
+      narrNewOwner();
       synthMetaCase = caseId;
       renderSynthMeta(null);
     }
@@ -311,7 +330,7 @@
         const caseId = document.getElementById("caseId").value.trim();
         if (!caseId) return;
         const text = document.getElementById("narrativeText").value;
-        const msg = document.getElementById("saveNarrativeMsg");
+        const msg = document.getElementById("saveNarrativeMsg"), live = narrLive(caseId);
         msg.textContent = "saving…";
         fetch(`/cases/${caseId}/narrative`, {
           method: "PUT",
@@ -323,13 +342,14 @@
             return r.json();
           })
           .then(() => {
+            if (!live()) return; // #2933: the new case's view and open editor stay as they are
             setNarrativeView(text || "—");
             document.getElementById("narrativeView").style.display = "";
             document.getElementById("narrativeEditWrap").style.display = "none";
             msg.textContent = "";
           })
           .catch((e) => {
-            msg.textContent = "save failed: " + (e.message || "");
+            if (live()) msg.textContent = "save failed: " + (e.message || "");
           });
       });
     document

@@ -12,8 +12,13 @@
   let notebookEntries = [];
   let nbEditingId = null;
   let notebookCaseId = null; // the case the list and the editor belong to
+  // #2933: an action's (and a list read's) answer applies only in the generation it was sent in; it
+  // moves when the owner changes (a cancel too), never on a same-case reload. nbSeq: the newest read.
+  let nbGen = 0, nbSeq = 0;
+  const nbLive = (caseId, gen = nbGen) => () => gen === nbGen && nbOnScreen(caseId);
 
   function clearNotebook(caseId) {
+    nbGen++;
     notebookCaseId = caseId;
     notebookEntries = [];
     if (document.getElementById("nbAddBtn")) nbCancelEdit();
@@ -34,14 +39,16 @@
   const nbListenReset = () =>
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onNotebookReset);
   function loadNotebook(caseId) {
+    if (!caseId || !nbOnScreen(caseId)) return; // #2933: a late caller (an edit's answer) for a case left
     nbListenReset();
     // A different case (#2442): its half-finished edit and entry list must not carry over — "Save
     // edit" would PATCH the old case's entry id into the new case.
     if (caseId !== notebookCaseId) clearNotebook(caseId);
+    const seq = ++nbSeq, live = nbLive(caseId);
     fetch(`/cases/${caseId}/notebook`)
       .then((r) => r.json())
       .then((list) => {
-        if (caseId !== notebookCaseId) return; // a late answer for the case left behind
+        if (seq !== nbSeq || !live()) return; // a late answer for the case left behind, or before a cancel
         notebookEntries = Array.isArray(list) ? list : [];
         renderNotebook();
       })
@@ -124,10 +131,11 @@
   }
 
   function nbDelete(id) {
-    const caseId = document.getElementById("caseId").value.trim();
+    const caseId = document.getElementById("caseId").value.trim(), live = nbLive(caseId);
     if (!caseId) return;
     fetch(`/cases/${caseId}/notebook/${id}`, { method: "DELETE" })
       .then(async (r) => {
+        if (!live()) return; // #2933
         // A refused delete (a closed case answers 423, #2437) says why instead of failing silently.
         if (!r.ok) {
           const msg = document.getElementById("nbMsg");
@@ -157,6 +165,7 @@
         return;
       }
       msg.textContent = nbEditingId ? "saving…" : "adding…";
+      const live = nbLive(caseId);
       if (nbEditingId) {
         fetch(`/cases/${caseId}/notebook/${nbEditingId}`, {
           method: "PATCH",
@@ -168,13 +177,8 @@
             if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
             return r.json();
           })
-          .then(() => {
-            nbCancelEdit();
-            loadNotebook(caseId);
-          })
-          .catch((e) => {
-            msg.textContent = "failed: " + e.message;
-          });
+          .then(() => live() && (nbCancelEdit(), loadNotebook(caseId))) // #2933: not the reopened case's editor
+          .catch((e) => live() && (msg.textContent = "failed: " + e.message));
       } else {
         fetch(`/cases/${caseId}/notebook`, {
           method: "POST",
@@ -187,13 +191,12 @@
             return r.json();
           })
           .then(() => {
+            if (!live()) return;
             document.getElementById("nbText").value = "";
             msg.textContent = "";
             loadNotebook(caseId);
           })
-          .catch((e) => {
-            msg.textContent = "failed: " + e.message;
-          });
+          .catch((e) => live() && (msg.textContent = "failed: " + e.message));
       }
     };
     document
@@ -204,6 +207,7 @@
           this.checked = !this.checked;
           return;
         }
+        const live = nbLive(caseId);
         fetch(`/cases/${caseId}/ai-control`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -211,9 +215,7 @@
             enabled: aiEnabled,
             includeNotebook: this.checked,
           }),
-        }).catch(() => {
-          this.checked = !this.checked;
-        });
+        }).catch(() => live() && (this.checked = !this.checked)); // #2933
       });
   }
 

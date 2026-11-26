@@ -1547,6 +1547,8 @@ export const FEATURES: Feature[] = [
       "loadSourceTrust",
       "renderFalsePositives",
       "runCustomerExposureCheck",
+      // #2933: callers in other modules capture the false-positive panel's cancel generation.
+      "falsePositiveGen",
     ],
     private: [],
   },
@@ -2227,6 +2229,8 @@ export const FEATURES: Feature[] = [
       "renderAutoEntities",
       // #1839: the stale-save rebase, published so its merge rules are unit-tested directly.
       "rebaseAnonCustom",
+      // #2933: callers in other modules capture the pending list's cancel generation.
+      "presidioPendingGen",
     ],
     private: [
       "presidioPending",

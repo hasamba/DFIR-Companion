@@ -92,12 +92,37 @@
       : "";
     el.innerHTML = `<div data-safe-style="color:var(--text-muted);font-size:12px">${checked} · Providers: ${esc(providers)}<br>${targetLine}</div>${rows}${errs}`;
   }
+  // #2933: the panel had no owner at all — any case's answer painted, and a target save after a switch
+  // could PUT the previous case's chips onto this one. ceCase owns it, ceSeq names the newest load, ceGen
+  // moves only when the owner changes (a cancel too), and ceKnown says this case's targets have loaded.
+  let ceCase = null, ceSeq = 0, ceGen = 0, ceKnown = false;
+  const ceLive = (caseId, gen = ceGen) => () => gen === ceGen && fpOnScreen(caseId);
+  function clearCustomerExposure(caseId) {
+    ceGen++;
+    ceCase = caseId;
+    ceKnown = false;
+    ceDomains = [], ceEmails = [], ceAutoDomains = [], ceAutoEmails = [];
+    renderCeChips();
+    for (const id of ["customerExposure", "ceProviders", "customerExposureMsg"]) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = "";
+    }
+  }
   function loadCustomerExposure(caseId) {
+    if (!caseId || !fpOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    fpListenReset();
+    if (ceCase !== caseId) clearCustomerExposure(caseId); // before the hidden-panel skip: A -> B(hidden) -> A
     if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("customerExposure", caseId)) return; // #2854 hidden: load on reveal
+    const seq = ++ceSeq, live = ceLive(caseId);
     fetch(`/cases/${caseId}/customer-exposure`)
       .then((r) => r.json())
-      .then(renderCustomerExposure)
+      .then((j) => {
+        if (seq !== ceSeq || !live()) return;
+        ceKnown = true;
+        renderCustomerExposure(j);
+      })
       .catch(() => {
+        if (seq !== ceSeq || !live()) return;
         document.getElementById("customerExposure").innerHTML =
           "<span data-safe-style='color:var(--sev-high)'>Customer exposure endpoints unavailable — restart the companion server.</span>";
       });
@@ -132,7 +157,10 @@
     if (!caseId) return;
     renderCeChips();
     const msg = document.getElementById("customerExposureMsg");
+    // #2933: never save before this case's own targets have loaded — the list would be another case's.
+    if (ceCase !== caseId || !ceKnown) return void (msg.textContent = "not saved — this case's targets are still loading");
     msg.textContent = "saving…";
+    const live = ceLive(caseId);
     fetch(`/cases/${encodeURIComponent(caseId)}/customer-exposure/targets`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -148,14 +176,15 @@
         return j;
       })
       .then(() => {
+        if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
         msg.textContent = "saved";
         loadCustomerExposure(caseId);
         setTimeout(() => {
-          if (msg.textContent === "saved") msg.textContent = "";
+          if (live() && msg.textContent === "saved") msg.textContent = "";
         }, 1500);
       })
       .catch((e) => {
-        msg.textContent = "save failed: " + e.message;
+        if (live()) msg.textContent = "save failed: " + e.message;
       });
   }
   function ceAddTarget(kind, value) {
@@ -177,7 +206,7 @@
   function runCustomerExposureCheck() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
-    const msg = document.getElementById("customerExposureMsg");
+    const msg = document.getElementById("customerExposureMsg"), live = ceLive(caseId);
     msg.textContent = "checking…";
     fetch(`/cases/${encodeURIComponent(caseId)}/customer-exposure/check`, {
       method: "POST",
@@ -190,11 +219,12 @@
         return j;
       })
       .then((j) => {
+        if (!live()) return; // #2933
         msg.textContent = `checked: ${j.results.length} hit(s), ${j.errors.length} error(s)`;
         loadCustomerExposure(caseId);
       })
       .catch((e) => {
-        msg.textContent = "failed: " + e.message;
+        if (live()) msg.textContent = "failed: " + e.message;
       });
   }
 
@@ -313,15 +343,19 @@
   //
   // A failed load for a new case therefore leaves it unfiltered — the safe direction: nothing
   // hidden, rather than hidden by another case's judgement.
-  function commitFalsePositives(caseId, markers) {
+  // #2933: a caller in another module passes the generation its request started in (falsePositiveGen()),
+  // so an answer from before a cancel and a reopen of the same case installs nothing.
+  function commitFalsePositives(caseId, markers, gen) {
     if (caseId !== activeCaseId) return; // a response for a case that is no longer on screen
+    if (gen !== undefined && gen !== fpGen) return;
     renderFalsePositives(markers);
   }
   let fpLoadSeq = 0;
   let fpLoadedCaseId = null;
   // #2929: an un-mark or Save answer paints only in the generation it was sent in. It moves when an
   // owner changes (a cancel included), never on a same-case reload.
-  let fpGen = 0;
+  let fpGen = 0, stGen = 0; // #2933: source trust has its own, so its first load drops no un-mark answer
+  const falsePositiveGen = () => fpGen;
   const fpLive = (caseId, gen = fpGen) => () => gen === fpGen && fpOnScreen(caseId);
   // #2904: the panel's rows (and their un-mark buttons) are the previous case's too — blank, not
   // "Nothing marked", which would be a claim about this case before its answer.
@@ -338,8 +372,9 @@
   // content and owners, so the next open — the same case included — clears and reads them again.
   function onFpReset(caseId) {
     if (caseId !== null) return;
-    fpLoadSeq++, lpSeq++, stSeq++;
+    fpLoadSeq++, lpSeq++, stSeq++, stGen++;
     clearFalsePositives(null);
+    clearCustomerExposure(null);
     lpCase = stCase = null;
     renderLearnedPatterns([]);
     renderSourceTrust(null);
@@ -438,7 +473,7 @@
     if (!fpOnScreen(caseId)) return; // a late caller for a case the analyst has left
     fpListenReset();
     if (stCase !== caseId) {
-      fpGen++;
+      stGen++;
       stCase = caseId;
       renderSourceTrust(null); // the previous case's overrides must not be saved onto this one
       const msg = document.getElementById("sourceTrustMsg");
@@ -484,7 +519,7 @@
             }
           });
         msg.textContent = "saving…";
-        const live = fpLive(caseId);
+        const gen = stGen, live = () => gen === stGen && fpOnScreen(caseId); // #2933: the source-trust generation
         fetch(`/cases/${caseId}/source-trust`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
@@ -587,6 +622,7 @@
   window.loadCustomerExposure = loadCustomerExposure;
   window.loadFalsePositives = loadFalsePositives;
   window.commitFalsePositives = commitFalsePositives;
+  window.falsePositiveGen = falsePositiveGen;
   window.loadLearnedPatterns = loadLearnedPatterns;
   window.loadSourceTrust = loadSourceTrust;
   window.renderFalsePositives = renderFalsePositives;
