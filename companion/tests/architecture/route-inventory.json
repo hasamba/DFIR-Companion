@@ -866,6 +866,7 @@
     "ROUTE GET /js/dashboard-ai-agent-hits.js",
     "ROUTE GET /js/dashboard-ai-agent.js",
     "ROUTE GET /js/dashboard-hunt-case.js",
+    "ROUTE GET /js/dashboard-client-admin.js",
     "ROUTE GET /js/dashboard-client-baseline.js",
     "ROUTE GET /js/dashboard-wizard-server-set.js",
     "ROUTE GET /js/dashboard-case-templates.js",
