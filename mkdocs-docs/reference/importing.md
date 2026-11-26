@@ -150,12 +150,19 @@ synthetic data. Small cases cost the most per event, and a real case of about 14
 more than 11 GB. To size a VM for a large hunt, count the events you expect in the forensic timeline.
 Rows graded Info go only to the super-timeline and do not count. Allow 128 KB of free RAM per event.
 
-The estimate does not cover one cost: **a large file that is read whole but keeps only a few rows.**
-A SIEM, EDR or EVTX XML export keeps at most `DFIR_MAX_EVENTS` rows (2,000 by default), but the
-whole file is still parsed in memory. A 100 MB SIEM export kept at 2,000 rows used about 1 GB above
-the idle server, while the guard counted it as 2,000 events (about 250 MB). Leave about 10 times the
-size of the largest such file free, up to about 2 GB for the drop folder's 200 MB limit. Large
-Velociraptor exports are read in batches and do not have this cost.
+**Large SIEM, EDR and Windows Event XML exports are read in parts.** A SIEM / EDR export in JSON
+Lines form (one record per line — a winlogbeat or filebeat dump) and a Windows Event XML export of
+32 MB or more are read from the saved copy a piece at a time, not as one block of text — from the
+Import button, Import-from-path, the drop folder and a resumed import alike. The events, IOCs, counts
+and the "over the cap" note are the same as before. Memory now follows the grouped rows the import
+builds rather than the size of the file: parsing a synthetic 100 MB SIEM export (about 190,000
+records, 2,000 kept) peaked at about 0.3 GB instead of 1.7 GB.
+
+A file of those kinds that cannot be read in parts is still read whole: a SIEM export that is one
+JSON document (an array, or an Elastic `hits` / `data` wrapper), a UTF-16 file, or a file under
+32 MB. For those the guard also counts the file itself — about 10 bytes of RAM and 7 bytes of heap per
+byte of file — so a 100 MB single-document export is estimated at about 1 GB. Under about 25 MB this
+changes nothing. Export SIEM data as JSON Lines (NDJSON) to avoid the cost.
 `DFIR_IMPORT_MEMORY_GUARD=off` turns the guard off. Do that only if you know the machine has the
 memory.
 

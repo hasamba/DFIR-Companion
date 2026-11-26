@@ -565,8 +565,8 @@ export function sourceArtifactHash(text: string): string {
 export function stampSourceArtifactHash<T extends { canonical?: CanonicalEventEnvelope }>(
   events: readonly T[],
   text: string,
+  hash = sourceArtifactHash(text), // precomputed by a streamed import that never held the text (#2823)
 ): T[] {
-  const hash = sourceArtifactHash(text);
   return events.map((event) =>
     event.canonical
       ? {

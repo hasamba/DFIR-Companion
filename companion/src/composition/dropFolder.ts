@@ -46,7 +46,7 @@ import { maxImportFileBytes } from "../routes/importFileHead.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
 import type { DiskBatchIngest } from "./importIngestBatch.js";
 import { runDropSweep } from "./dropBatch.js";
-import { createDropStreamer, isGzipMagic, streamGzipDropFile } from "./dropStreamed.js";
+import { createDropStreamer, isGzipMagic, streamGzipDropFile, WINLOG_MIN } from "./dropStreamed.js";
 import { prepareHuntDrops } from "./dropHuntFolder.js";
 import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
 import { pruneHuntZipLedgers } from "./dropHuntZipLedger.js";
@@ -561,6 +561,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         await ingestDroppedImage(caseId, full, name, file.mtimeMs);
         return { ok: true };
       }
+      const inParts =
+        file.size >= WINLOG_MIN && (await streamDropFile(caseId, full, file.relpath, debug, true));
+      if (inParts) return inParts; // a large SIEM JSON Lines / Windows Event XML file reads in parts (#2823)
       const text = await readWholeText(caseId, full, file.size); // guarded before the read (#2785)
       if (!text.trim()) return { ok: false, reason: "empty file" };
       const kind = resolveImportKind(name, text, debug);

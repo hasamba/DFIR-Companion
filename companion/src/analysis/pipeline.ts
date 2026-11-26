@@ -341,6 +341,11 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     return ingest.importVelociraptorFile(this.importCtx, ...args);
   }
+  importWindowsLogFile(
+    ...args: ImporterArgs<typeof ingest.importWindowsLogFile>
+  ): Promise<InvestigationState> {
+    return ingest.importWindowsLogFile(this.importCtx, ...args); // SIEM JSON Lines / EVTX XML from disk (#2823)
+  }
   // A pulled Velociraptor artifact: a Hayabusa result takes the Hayabusa importer, as from the drop folder (#1756).
   importVelociraptorArtifact(
     ...args: ImporterArgs<typeof ingest.importVelociraptorArtifact>
