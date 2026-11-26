@@ -20,10 +20,12 @@ import { readDecodedText } from "./streamedTextFile.js";
  *   read; the numbers are the same, the steps between are fewer.
  */
 
-const BLOCK_RE = /<Event\b[^>]*>([\s\S]*?)<\/Event>/gi;
+// The global (`g`) patterns are built per call, never shared: their lastIndex is a cursor, and two
+// imports of different cases scan at once with awaits between their steps.
+const blockRe = (): RegExp => /<Event\b[^>]*>([\s\S]*?)<\/Event>/gi;
 const OPEN_RE = /<Event\b/i;
-const CLOSE_RE = /<\/Event>/gi;
-const OPEN_COUNT_RE = /<Event\b/gi;
+const closeRe = (): RegExp => /<\/Event>/gi;
+const openCountRe = (): RegExp => /<Event\b/gi;
 const OPEN_LEN = "<Event".length;
 const CLOSE_LEN = "</Event>".length;
 const YIELD_EVERY = 250;
@@ -35,17 +37,18 @@ const yieldToServer = (): Promise<void> => new Promise<void>((resolve) => setImm
 
 /** `<Event\b` occurrences in the file, read in parts: an open tag at a chunk's end waits for the next. */
 async function countOpenTags(path: string, signal?: AbortSignal, chunkBytes?: number): Promise<number> {
+  const opens = openCountRe();
   let total = 0;
   let carry = "";
   for await (const chunk of readDecodedText(path, { signal, chunkBytes }).chunks) {
     const text = carry + chunk;
     const limit = text.length - OPEN_LEN; // a tag starting at or past here has no boundary char yet
-    OPEN_COUNT_RE.lastIndex = 0;
-    for (let m = OPEN_COUNT_RE.exec(text); m && m.index < limit; m = OPEN_COUNT_RE.exec(text)) total++;
+    opens.lastIndex = 0;
+    for (let m = opens.exec(text); m && m.index < limit; m = opens.exec(text)) total++;
     carry = text.slice(Math.max(0, limit));
   }
-  OPEN_COUNT_RE.lastIndex = 0;
-  while (OPEN_COUNT_RE.exec(carry) !== null) total++;
+  opens.lastIndex = 0;
+  while (opens.exec(carry) !== null) total++;
   return total;
 }
 
@@ -57,20 +60,22 @@ function trimToOpen(buf: string): string {
 }
 
 /** Every `<Event>` block of the file, in order, as the whole-text regex finds them. */
-async function* eventBlocks(chunks: AsyncIterable<string>): AsyncGenerator<string, void, undefined> {
+export async function* eventBlocks(chunks: AsyncIterable<string>): AsyncGenerator<string, void, undefined> {
+  const blocks = blockRe();
+  const closes = closeRe();
   let buf = "";
   for await (const chunk of chunks) {
     const closeFrom = Math.max(0, buf.length - (CLOSE_LEN - 1));
     buf += chunk;
-    CLOSE_RE.lastIndex = closeFrom;
-    if (!CLOSE_RE.test(buf)) {
+    closes.lastIndex = closeFrom;
+    if (!closes.test(buf)) {
       buf = trimToOpen(buf);
       continue;
     }
-    BLOCK_RE.lastIndex = 0;
+    blocks.lastIndex = 0;
     let end = 0;
-    for (let m = BLOCK_RE.exec(buf); m; m = BLOCK_RE.exec(buf)) {
-      end = BLOCK_RE.lastIndex;
+    for (let m = blocks.exec(buf); m; m = blocks.exec(buf)) {
+      end = blocks.lastIndex;
       yield m[1];
     }
     buf = trimToOpen(buf.slice(end));

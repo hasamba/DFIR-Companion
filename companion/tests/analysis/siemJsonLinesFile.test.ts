@@ -283,6 +283,11 @@ describe("probeSiemJsonLinesHead", () => {
     expect(await probe('{"a":1}\n   \n\t\n')).toBe(false);
   });
 
+  it("refuses a first line that yields no record, so a streamed file always yields one", async () => {
+    expect(await probe('{}\n{\n  "event_id": 1\n}\n')).toBe(false);
+    expect(await probe('{"_source":{}}\n{"a":1}\n')).toBe(false);
+  });
+
   it("refuses a malformed first line and UTF-16", async () => {
     expect(await probe('garbage\n{"a":1}\n')).toBe(false);
     expect(await probe(Buffer.from([0xff, 0xfe, 0x7b, 0x00, 0x7d, 0x00]))).toBe(false);

@@ -6,7 +6,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseEvtxXmlProgress } from "../../src/analysis/evtxXmlImport.js";
-import { parseEvtxXmlFile } from "../../src/analysis/evtxXmlFile.js";
+import { eventBlocks, parseEvtxXmlFile } from "../../src/analysis/evtxXmlFile.js";
 import { createImportDebugRecorder } from "../../src/analysis/importDebug.js";
 import { decodeImportedText } from "../../src/ingest/decodeText.js";
 import type { SiemImportOptions } from "../../src/analysis/siemImport.js";
@@ -157,6 +157,22 @@ describe("parseEvtxXmlFile matches parseEvtxXmlProgress", () => {
     const xml = "<Event broken>" + mixedEvents(6).join("");
     const r = await both(xml, {}, 13);
     expect(r.streamed).toEqual(r.whole);
+  });
+
+  it("two exports scanned at once each get every block (no shared regex cursor)", async () => {
+    async function* one(text: string): AsyncGenerator<string> {
+      yield text;
+    }
+    const xa = mixedEvents(3).join("\n");
+    const xb = "<Events>" + "x".repeat(5000) + mixedEvents(2).join("");
+    const a = eventBlocks(one(xa));
+    const first = await a.next(); // paused inside its block loop
+    const fromB: string[] = [];
+    for await (const blk of eventBlocks(one(xb))) fromB.push(blk); // another import scans meanwhile
+    const rest: string[] = [];
+    for await (const blk of a) rest.push(blk);
+    expect([first.value, ...rest]).toHaveLength(3);
+    expect(fromB).toHaveLength(2);
   });
 
   it("on a file with no events at all", async () => {

@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { isObject, unwrapSource, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
+import { unwrapSource, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
 import { stampSourceArtifactHash } from "./canonicalEvent.js";
 import { WindowsEventBuilder } from "./siemBuildProgress.js";
 import { hasUtf16Bom, readDecodedText, textLines, STREAMED_TEXT_CHUNK_BYTES } from "./streamedTextFile.js";
@@ -41,14 +41,6 @@ export function siemRecordFromLine(line: string): Row | null {
   return rec && Object.keys(rec).length > 0 ? rec : null;
 }
 
-function isObjectLine(line: string): boolean {
-  try {
-    return isObject(JSON.parse(line));
-  } catch {
-    return false;
-  }
-}
-
 // Decoded text read by positional reads on the caller's handle, from `pos`.
 async function readText(
   fh: FileHandle,
@@ -84,7 +76,7 @@ export async function probeSiemJsonLinesHead(fh: FileHandle): Promise<boolean> {
         pending = pending.slice(m.index + 1);
         terminator.lastIndex = 0;
         if (!line) continue;
-        if (!isObjectLine(line)) return false;
+        if (!siemRecordFromLine(line)) return false; // so the JSON Lines branch yields a record
         found = true;
         break;
       }
