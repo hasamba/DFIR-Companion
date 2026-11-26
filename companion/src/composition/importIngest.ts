@@ -512,7 +512,11 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   const settleDeps: StreamedSettleDeps = { options, runStateExclusive, autoTagImported, demote };
   // The section's snapshot (analysis/importBaseline.ts). Best-effort: null means no diff, never a failed import.
   const baselineOf = async (caseId: string): Promise<ImportBaseline | null> =>
-    options.stateStore ? captureImportBaseline(options.stateStore, caseId).catch(() => null) : null;
+    options.stateStore
+      ? captureImportBaseline(options.stateStore, caseId, {
+          markGrade: options.superTimelineStore ? true : undefined,
+        }).catch(() => null) // #2909
+      : null;
   const releaseBaseline = (baseline: ImportBaseline | null): Promise<void> =>
     options.stateStore ? releaseImportBaseline(options.stateStore, baseline) : Promise.resolve();
 

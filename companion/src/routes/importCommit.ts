@@ -4,7 +4,7 @@ import type { Severity } from "../analysis/stateTypes.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
-import type { SettleDeps } from "./importSettle.js";
+import { gradeArmOf, type SettleDeps } from "./importSettle.js";
 import {
   recoverWithoutSnapshot,
   recoveryDepsFromSettle,
@@ -167,9 +167,13 @@ export function commitDedicatedImport(
   const run = async (): Promise<void> => {
     if (!(await job.admitted())) throw job.stopped();
     runStarted = Date.now();
-    section = await beginImportSection(importLock, caseId, options.stateStore, {
-      incomingEvents: commit.linesIn,
-    });
+    section = await beginImportSection(
+      importLock,
+      caseId,
+      options.stateStore,
+      { incomingEvents: commit.linesIn },
+      gradeArmOf(settleDeps), // #2909
+    );
     baseline = section.baseline;
     abortIfCancelled(signal); // cancelled while it waited for the section: nothing ran
     // #1438: the start line is the last thing in the log before a crash mid-parse; the merged line

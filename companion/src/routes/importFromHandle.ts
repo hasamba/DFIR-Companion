@@ -24,6 +24,7 @@ import { logImportActivity } from "./importActivity.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
+import { gradeArmOf } from "./importSettle.js";
 import { sendPipelineError } from "./presidioApproval.js";
 
 /**
@@ -197,7 +198,13 @@ export async function importFromHandle(
     const run = async (): Promise<unknown> => {
       await tracking.start();
       const hint = streaming ? saved.bytes : windowsLogWholeReadHint(kind, saved.bytes); // charged by size (#2823)
-      section = await beginImportSection(importLock, caseId, options.stateStore, hint);
+      section = await beginImportSection(
+        importLock,
+        caseId,
+        options.stateStore,
+        hint,
+        gradeArmOf(settleDeps),
+      );
       baseline = section.baseline;
       return streaming
         ? cloudStream.runStoredFile(ctx, { kind, caseId, storedName, base })

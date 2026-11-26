@@ -1,6 +1,7 @@
 import type { ImportLock } from "../analysis/importLock.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import type { ImportAdmissionHint } from "../analysis/importMemoryGuard.js";
+import type { GradeMode } from "../analysis/gradeMark.js";
 import {
   captureImportBaseline,
   releaseImportBaseline,
@@ -42,17 +43,20 @@ export async function beginImportSection(
   caseId: string,
   stateStore?: StateStore,
   size?: number | ImportAdmissionHint,
+  /** #2909: arm the grade mark on inserts — only when the section ends in the settle with its tagger
+   * wired (routeSettleDeps.ts gradeArmOf). */
+  markGrade?: GradeMode,
 ): Promise<ImportSection> {
   const unlock = await importLock.acquire(caseId, typeof size === "number" ? { incomingBytes: size } : size);
   let baseline: ImportBaseline | null = null;
   try {
-    baseline = stateStore ? await captureImportBaseline(stateStore, caseId) : null;
+    baseline = stateStore ? await captureImportBaseline(stateStore, caseId, { markGrade }) : null;
   } catch {
     // Best-effort: no snapshot means no diff and no checkpoint, never a failed import.
   }
   // The journal is disarmed BEFORE the lock goes, so the next section's arm is never undone by it.
   const release = (): void => {
-    if (!stateStore || !baseline?.journalToken) return unlock();
+    if (!stateStore || (!baseline?.journalToken && !baseline?.gradeToken)) return unlock(); // #2909: grade arm too
     void releaseImportBaseline(stateStore, baseline).finally(unlock);
   };
   return { baseline, release };

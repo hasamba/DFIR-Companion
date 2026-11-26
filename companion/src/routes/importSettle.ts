@@ -1,5 +1,6 @@
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
-import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
+import { disarmGrade, type DemoteOptions, type GradeMode, type TagOutcome } from "../analysis/gradeMark.js";
+import { NO_REGRADE, sweepLeftovers, withCapCandidates } from "./importRegrade.js";
 import type { SuperEviction, SuperRelink } from "../analysis/superTimelineStore.js";
 import type { TimelineDiff } from "../analysis/timelineDiff.js";
 import type { IocsDiff } from "../analysis/iocsDiff.js";
@@ -8,7 +9,7 @@ import { formatImportSettled } from "../logging/importLog.js";
 import type { ForensicRowStore } from "../analysis/forensicRows.js";
 import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
-import { capBuildTimeScoped, capLabSetupScoped, stampEngineBootScoped } from "./importSettleCap.js";
+import { gradeCapsScoped } from "./importSettleCap.js";
 import { flagLookalikeCandidates } from "./importSettleLookalike.js";
 import { nameCallersScoped } from "./importSettleNames.js";
 import { principalLedgerChanged } from "../analysis/principalNames.js";
@@ -91,6 +92,8 @@ export interface SettleDeps {
   /** Legacy callers that only wire a state broadcaster: the settle loads the case once for it. */
   onState?: (state: InvestigationState) => void;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** The held tagger for rows marked "held" (#2909, importSettlePaged.ts DualWriteDeps.tagHeld). */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   /**
    * The forensic gate's demote; returns the rows it removed (composition/importDemote.ts). `graded`:
    * the rows the tagger just finished on — the only rows carrying the grade mark it may move (#2891).
@@ -99,10 +102,21 @@ export interface SettleDeps {
   /** The same demote returning the whole case afterwards — legacy callers only. */
   demoteForensicForCase?: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
   /**
-   * False: write no grade mark (#2891). A Watson paste's tagger HOLDS its raises as proposals, so a
-   * start-up re-grade with the plain tagger would apply a raise the analyst never approved.
+   * False: write no grade mark (#2891). "held" (#2909): a Watson paste — its rows are marked "held",
+   * so only the held tagger ever grades them (its raises are proposals the analyst approves); a plain
+   * re-grade would apply a raise the analyst never approved.
    */
-  markGradePending?: boolean;
+  markGradePending?: boolean | "held";
+}
+
+/**
+ * The grade-arm mode an import section takes (#2909, analysis/gradeMark.ts): the mark goes on inserts
+ * only when the section ends in this settle with its tagger wired (a super-timeline store), as the
+ * stamp-time mark does. Undefined: no arm.
+ */
+export function gradeArmOf(deps: SettleDeps | null | undefined): GradeMode | undefined {
+  if (!deps?.superTimelineStore || deps.markGradePending === false) return undefined;
+  return deps.markGradePending === "held" ? "held" : true;
 }
 
 export interface SettledImport {
@@ -149,11 +163,14 @@ export async function settleForensicImport(
   caseId: string,
   before: InvestigationState | ImportBaseline,
   label?: string,
-  opts: { importBatchId?: string; onGraded?: () => Promise<void> } = {},
+  opts: { importBatchId?: string; onGraded?: () => Promise<void>; preGraded?: readonly string[] } = {},
 ): Promise<SettledImport> {
   const baseline = toImportBaseline(before);
   const store = deps.stateStore;
   const lock = deps.runStateExclusive ?? runUnlocked;
+  // #2909: the importer's merge window is over — nothing the settle inserts (hunt summaries) is the
+  // importer's row, so the grade arm goes first (analysis/gradeMark.ts).
+  await disarmGrade(store, caseId);
   const scope = await settleScope(store, caseId, baseline);
   // Its rename ledger and collector identities only (#1874): not the IOC list, as long as the timeline.
   const ledger = store.loadOverviewWithoutIocs
@@ -187,7 +204,7 @@ export async function settleForensicImport(
       downgrade: !!deps.superTimelineStore,
       importBatchId: opts.importBatchId,
       // #2891: the mark goes on with the stamp only when the tagger runs below (a super store is wired).
-      gradePending: !!deps.superTimelineStore && deps.markGradePending !== false,
+      gradePending: gradeArmOf(deps) ?? false,
     }),
   );
   const addedIds = stamped.addedIds;
@@ -224,6 +241,20 @@ export async function settleForensicImport(
   } else {
     debug(`dual-write skipped store=${deps.superTimelineStore ? "yes" : "no"} added=${addedIds.length}`);
   }
+  // #2909: rows earlier imports left waiting for the tagger are graded now too, before the caps and the
+  // demote (importRegrade.ts) — inside this import's section, state locks only.
+  const sweep =
+    (deps.superTimelineStore &&
+      (await sweepLeftovers(deps, caseId, {
+        ledger,
+        ownIds: addedIds,
+        ownGraded: gradedIds.length,
+        preGraded: opts.preGraded,
+        // A legacy baseline cannot say which old rows this import touched: stamp no leftover then.
+        keepStamp: scope.touchedKnown ? touchedRow(scope.touchedRowIds) : () => true,
+      }))) ||
+    NO_REGRADE;
+  changed ||= sweep.offered + sweep.cleared > 0;
   // Case-account look-alikes (#1971): after the tagger, before the caps. Scans only when this import
   // added a new account or group member.
   const lookalikes = await lock(caseId, () => flagLookalikeCandidates(store, caseId, candidates.lookalike));
@@ -233,17 +264,15 @@ export async function settleForensicImport(
   // before demote decides what leaves the forensic timeline.
   // Off every rename chain, the cap can only change a row that already carries a cap mark (the
   // tagger never writes one), so only such rows of this import's own are handed on.
-  const extraIds = candidates.buildTimeIds;
-  const capped = await lock(caseId, () => capBuildTimeScoped(store, caseId, ledger, { scanAll, extraIds }));
-  changed ||= capped > 0;
   // Lab setup (#1946): a file copied in through a hypervisor drag-and-drop folder is capped at Medium.
-  const labCapped = await lock(caseId, () =>
-    capLabSetupScoped(store, caseId, { scanAll, candidateIds: candidates.labSetupIds }),
-  );
-  changed ||= labCapped > 0;
   // Defender engine start-up (#2084): the Info start-up rows are still here; demote is next.
-  const engineBoot = await lock(caseId, () => stampEngineBootScoped(store, caseId, candidates.engineBoot));
-  changed ||= engineBoot > 0;
+  // #2909: the rows the sweep re-graded are handed on too (their candidates join this import's).
+  const caps = await gradeCapsScoped(store, lock, caseId, ledger, {
+    scanAll,
+    candidates: withCapCandidates(candidates, sweep.candidates),
+  });
+  const capped = caps.capped;
+  changed ||= caps.capped + caps.labCapped + caps.engineBoot > 0;
   // Hunt grading (#2670): a hunt case records this import's rows (Info still here) as host counts and
   // writes one summary entry per graded program. Reads no raw record; changes no imported row.
   // In pages of the added ids (#2713, importSettlePaged.ts), each page read under the state lock.
@@ -251,11 +280,12 @@ export async function settleForensicImport(
     getServerLogger().warn(`[hunt] ${caseId}: grading skipped: ${e.message}`, { caseId }),
   );
   changed ||= hunt > 0;
-  const demoted = await demote(deps, caseId, { graded: new Set(gradedIds) });
+  const graded = [...gradedIds, ...sweep.gradedIds, ...(opts.preGraded ?? [])];
+  const demoted = await demote(deps, caseId, { graded: new Set(graded) });
   changed ||= demoted.removed > 0;
   // #2891: the survivors the tagger finished on lose their mark — still unfinished grading, so a failure
   // here is recovered like any other before it (the rows keep the mark, and a re-grade finds them).
-  await clearGradePending(store, lock, caseId, gradedIds);
+  await clearGradePending(store, lock, caseId, graded);
   // Every row is stamped, tagged and demoted from here on: a failure below is not unfinished grading,
   // and a recovery that re-ran it would re-stamp the rows and demote again (review of #2890).
   try {
@@ -302,6 +332,12 @@ export async function settleForensicImport(
   } catch (err) {
     throw new SettleAfterGradingError(err);
   }
+}
+
+/** The old rows this import touched, by row id (the sweep never re-stamps them). */
+function touchedRow(rowIds: readonly number[]): (rowId: number) => boolean {
+  const touched = new Set(rowIds);
+  return (rowId) => touched.has(rowId);
 }
 
 /**

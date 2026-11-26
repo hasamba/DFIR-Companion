@@ -23,19 +23,32 @@ import {
 import type { CollectionSummaryRequest } from "../integrations/cloudCollect/collectSummary.js";
 import type { RouteContext } from "./context.js";
 import { runDiskImport } from "./importCloudStream.js";
-import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
+import {
+  gradeStampedRows,
+  recoveryDepsFromSettle,
+  settleImportOrRecoverThenThrow,
+} from "./importRowRecovery.js";
+import { dualWriteAndTagPaged } from "./importSettlePaged.js";
+import { runUnlocked } from "./importSettleRows.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
+import { gradeArmOf } from "./importSettle.js";
 
 /**
  * The settle of a page or summary. A failure still fails the collection, but only after the rows the
  * import merged are stamped, dual-written and tagged (#2891): the next demote is case-wide, and a
  * Resume that would settle them may never come. Called inside the engine's import section.
  */
-function settleCollected(ctx: RouteContext, caseId: string, baseline: ImportBaseline, label: string) {
+function settleCollected(
+  ctx: RouteContext,
+  caseId: string,
+  baseline: ImportBaseline,
+  label: string,
+  preGraded?: readonly string[],
+) {
   const settle = routeSettleDeps(ctx);
   if (!settle) return Promise.resolve(null);
   const target = { caseId, storedNames: [label], tag: "cloud-collect" };
-  return settleImportOrRecoverThenThrow(settle, target, baseline, label);
+  return settleImportOrRecoverThenThrow(settle, target, baseline, label, preGraded ? { preGraded } : {});
 }
 
 function stateStoreOf(ctx: RouteContext) {
@@ -44,17 +57,17 @@ function stateStoreOf(ctx: RouteContext) {
   return store;
 }
 
-/** Settle the rows of a page whose import committed before a crash. Every step is idempotent. */
+/**
+ * Settle the rows of a page whose import committed before a crash. Every step is idempotent: the
+ * super-timeline copy dedups by id (and never carries the grade mark), the tagger runs by mark, the
+ * demote moves only rows the tagger finished on among marked ones, and those lose their mark (#2909).
+ */
 async function settleLanded(ctx: RouteContext, caseId: string, label: string): Promise<void> {
   const settle = routeSettleDeps(ctx);
   if (!settle) return;
   const state = await stateStoreOf(ctx).load(caseId);
-  const rows = state.forensicTimeline.filter((e) => e.sourceScreenshots.includes(label));
-  if (rows.length) {
-    await ctx.options.superTimelineStore?.appendReporting(caseId, rows); // dedups by id
-    await settle.autoTagImported(caseId, rows);
-  }
-  await ctx.demoteForensic(caseId);
+  const ids = state.forensicTimeline.filter((e) => e.sourceScreenshots.includes(label)).map((e) => e.id);
+  await gradeStampedRows(recoveryDepsFromSettle(settle), caseId, ids);
 }
 
 /**
@@ -76,7 +89,9 @@ async function importSummary(
   const store = stateStoreOf(ctx);
   const pipeline = ctx.options.pipeline;
   if (!pipeline) throw new Error("pipeline is not configured");
-  const baseline = await captureImportBaseline(store, caseId);
+  const baseline = await captureImportBaseline(store, caseId, {
+    markGrade: gradeArmOf(routeSettleDeps(ctx)),
+  });
   try {
     const built = await pipeline.importCloudCollectionSummary(caseId, req.kind, req.pages, {
       collectionId: req.collectionId,
@@ -90,11 +105,18 @@ async function importSummary(
     const held = new Set(baseline.outline.ids);
     const kept = new Set(built.ids);
     const rebuilt = built.state.forensicTimeline.filter((e) => kept.has(e.id) && held.has(e.id));
-    if (rebuilt.length) {
-      await ctx.options.superTimelineStore?.appendReporting(caseId, rebuilt); // dedups by id
-      await settle.autoTagImported(caseId, rebuilt);
-    }
-    await settleCollected(ctx, caseId, baseline, req.label);
+    // #2909: dual-written without the grade mark, tagged by mark; the rows the tagger finished on are
+    // handed to the settle, whose demote may move them and which removes their mark.
+    const preGraded = rebuilt.length
+      ? (
+          await dualWriteAndTagPaged(
+            { ...settle, runStateExclusive: settle.runStateExclusive ?? runUnlocked },
+            caseId,
+            rebuilt.map((e) => e.id),
+          )
+        ).gradedIds
+      : [];
+    await settleCollected(ctx, caseId, baseline, req.label, preGraded);
   } finally {
     await releaseImportBaseline(store, baseline);
   }
@@ -111,7 +133,9 @@ export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
     importSummary: (caseId, req, signal) => importSummary(ctx, caseId, req, signal),
     importPage: async (caseId, page, signal) => {
       // Inside the section the engine holds: the baseline is only honest while it is held.
-      const baseline = await captureImportBaseline(store, caseId);
+      const baseline = await captureImportBaseline(store, caseId, {
+        markGrade: gradeArmOf(routeSettleDeps(ctx)),
+      });
       try {
         await runDiskImport(ctx, page.kind, caseId, page.path, page.label, {
           label: page.label,

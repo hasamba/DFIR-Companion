@@ -38,6 +38,7 @@ import type { CloudBatchHooks } from "../analysis/ingest/cloudStreamImport.js";
 import { SUPER_ROWS_PER_IMPORT_MAX } from "../analysis/cloudStreamLimits.js";
 import { DEFAULT_SUPER_MAX } from "../analysis/superTimelineStore.js";
 import { describeCloudStreamDisclosure } from "../analysis/cloudStreamDisclosure.js";
+import { gradeStampedRows } from "../routes/importRowRecovery.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { openNoFollow } from "../storage/noFollowRead.js";
 import { sniffImportFileHeadDetail } from "../routes/importFileHead.js";
@@ -161,7 +162,9 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     let baselineTaken = false;
     try {
       await importLock.runSized(caseId, { incomingBytes: batch.bytes }, async () => {
-        const baseline = await captureImportBaseline(stateStore, caseId);
+        const baseline = await captureImportBaseline(stateStore, caseId, {
+          markGrade: options.superTimelineStore ? true : undefined,
+        }); // #2909
         baselineTaken = true;
         try {
           outcome = await section(caseId, batch, baseline, onFileDone);
@@ -414,11 +417,18 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
         const named = new Set(labels);
         const state = await stateStore.load(caseId);
         const rows = state.forensicTimeline.filter((e) => e.sourceScreenshots.some((s) => named.has(s)));
-        if (rows.length) {
-          await options.superTimelineStore?.appendReporting(caseId, rows); // dedups by id
-          await deps.settleDeps.autoTagImported(caseId, rows);
-        }
-        await deps.demoteForensic(caseId);
+        // #2909: dual-write (dedups by id, never the grade mark) → tagger by mark → demote → unmark.
+        await gradeStampedRows(
+          {
+            stateStore,
+            runStateExclusive: deps.runStateExclusive,
+            superTimelineStore: options.superTimelineStore,
+            autoTagImported: deps.settleDeps.autoTagImported,
+            demote: deps.demoteForensic,
+          },
+          caseId,
+          rows.map((e) => e.id),
+        );
         getServerLogger().warn(
           `[drop] ${caseId}: settled ${rows.length} row(s) of an interrupted drop batch (${labels.length} file(s))`,
           { caseId },

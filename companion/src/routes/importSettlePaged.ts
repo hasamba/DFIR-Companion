@@ -18,7 +18,15 @@ import { lookalikeCandidate } from "./importSettleLookalike.js";
 import { labSetupCandidate } from "./importSettleCap.js";
 import { principalNameCarrier } from "../analysis/principalNameCarry.js";
 import { getServerLogger } from "../logging/serverLogger.js";
-import { gradedIdsOf, isGradePending, withoutGradePending, type TagOutcome } from "../analysis/gradeMark.js";
+import {
+  gradedIdsOf,
+  isGradePending,
+  isHeldGrade,
+  stampedMode,
+  withoutGradePending,
+  type GradeMode,
+  type TagOutcome,
+} from "../analysis/gradeMark.js";
 import {
   isForeignToImport,
   rewriteRows,
@@ -80,9 +88,10 @@ export const emptyCandidates = (): SettleCandidates => ({
 /**
  * Add `e` to every candidate list whose step would read it — each test is the one that step applies
  * to its input. The look-alike step reads only the import's own added rows; the others read the
- * added and the touched rows alike, as they always did.
+ * added and the touched rows alike, as they always did. Exported for the re-grade (#2909), which
+ * collects the cap candidates of rows it grades with the same tests (never as `added`).
  */
-function collector(
+export function collector(
   ledger: InvestigationState,
 ): (c: SettleCandidates, e: ForensicEvent, added: boolean) => void {
   const paths = labSetupPaths();
@@ -110,13 +119,14 @@ export async function carryAndStampPaged(
   /** `importBatchId`: preset by a caller that must find this batch's rows again (#2888); else fresh.
    * `importedAt`: preset by a recovery that keeps the failed settle's instant; else now.
    * `gradePending`: write the grade mark with the stamp (#2891, analysis/gradeMark.ts) — only when the
-   * tagger will run on these rows, so a settle without a super-timeline store marks nothing. */
+   * tagger will run on these rows, so a settle without a super-timeline store marks nothing. True or
+   * "held" (#2909: a Watson paste); a row already marked "held" keeps "held" (stampedMode). */
   opts: {
     capturedAt: string | undefined;
     downgrade: boolean;
     importBatchId?: string;
     importedAt?: string;
-    gradePending?: boolean;
+    gradePending?: boolean | GradeMode;
   },
 ): Promise<StampedImport> {
   const newIds = new Set(scope.addedIds);
@@ -134,9 +144,9 @@ export async function carryAndStampPaged(
   const ids = [...new Set([...scope.addedIds, ...touchedIds, ...carryIds])];
   const importedAt = opts.importedAt ?? new Date().toISOString();
   const importBatchId = opts.importBatchId ?? randomUUID();
-  const stamp = opts.gradePending
-    ? { importedAt, importBatchId, gradePending: true as const }
-    : { importedAt, importBatchId };
+  const mode: GradeMode | null = opts.gradePending === "held" ? "held" : opts.gradePending ? true : null;
+  const stampOf = (e: ForensicEvent) =>
+    mode ? { importedAt, importBatchId, gradePending: stampedMode(e, mode) } : { importedAt, importBatchId };
   const carry = hostRenameCarrier(ledger);
   const collect = collector(ledger);
   const out: StampedImport = { addedIds: [], carried: 0, candidates: emptyCandidates() };
@@ -152,13 +162,13 @@ export async function carryAndStampPaged(
     const transform = (e: ForensicEvent): ForensicEvent => {
       const moved = carry(e);
       if (!added.has(e.id)) return moved;
-      if (!opts.downgrade) return { ...moved, ...stamp };
+      if (!opts.downgrade) return { ...moved, ...stampOf(moved) };
       const egress = downgradeFirstPartyEgress([moved]).events[0];
       if (egress.severity !== moved.severity) counts.downgraded++;
       // #1958: generic Sysmon registry alerts, in the same position and for the same reason.
       const lowered = downgradeGenericSysmonRegistry([egress]).events[0];
       if (lowered.severity !== egress.severity) counts.genericRegistry++;
-      return { ...lowered, ...stamp };
+      return { ...lowered, ...stampOf(lowered) };
     };
     const written = new Map(
       (await rewriteRows(store, caseId, rows, transform)).map((r) => [r.rowId, r.event]),
@@ -206,6 +216,11 @@ export interface DualWriteDeps {
   };
   onSuperTimeline?: (caseId: string) => void;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /**
+   * The HELD tagger, for rows marked "held" (#2909: a Watson paste's rows): it writes tags and only
+   * proposes raises. Absent: those rows are not offered to any tagger and keep their mark.
+   */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
 }
 
 /**
@@ -241,6 +256,7 @@ export async function dualWriteAndTagPaged(
     const page = await deps.runStateExclusive(caseId, () =>
       deps.stateStore.forensicRowsById(caseId, pageIds),
     );
+    const held = new Set(page.filter((r) => isHeldGrade(r.event)).map((r) => r.event.id));
     const events = page.map((r) => withoutGradePending(r.event));
     if (!events.length) continue;
     try {
@@ -256,9 +272,28 @@ export async function dualWriteAndTagPaged(
     } catch {
       /* non-fatal — see above */
     }
-    gradedIds.push(...gradedIdsOf(events, await deps.autoTagImported(caseId, events)));
+    gradedIds.push(...(await tagByMode(deps, caseId, events, held)));
   }
   return { retained, relinkCandidates, gradedIds, ...(evicted ? { evicted } : {}) };
+}
+
+/**
+ * The tag step by mark (#2909): rows marked "held" go to the held tagger only — a plain tagger would
+ * apply a raise the analyst never approved — the rest to the content tagger. Returns the ids each
+ * tagger reported it finished on; held rows with no held tagger wired are not finished.
+ */
+async function tagByMode(
+  deps: DualWriteDeps,
+  caseId: string,
+  events: ForensicEvent[],
+  heldIds: ReadonlySet<string>,
+): Promise<string[]> {
+  const plain = heldIds.size ? events.filter((e) => !heldIds.has(e.id)) : events;
+  const held = heldIds.size ? events.filter((e) => heldIds.has(e.id)) : [];
+  const graded: string[] = [];
+  if (plain.length) graded.push(...gradedIdsOf(plain, await deps.autoTagImported(caseId, plain)));
+  if (held.length && deps.tagHeld) graded.push(...gradedIdsOf(held, await deps.tagHeld(caseId, held)));
+  return graded;
 }
 
 /**

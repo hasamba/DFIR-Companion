@@ -17,6 +17,7 @@ import { markFailedSynthesisOutOfDate } from "./analystGate.js";
 import type { RouteContext } from "./context.js";
 import { activeRulesHash, importReceiptOfCase } from "./importRunRecorder.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
+import { gradeArmOf } from "./importSettle.js";
 import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 import { sendAiOff } from "./aiOffRefusal.js";
@@ -144,10 +145,13 @@ async function replayImport(
   // an import running at the same time counts the replay's rows as its own (and sweeps them into its
   // undo checkpoint), and this receipt claims the other import's rows. Sized from the file on disk,
   // read inside the section: the source is already stored, so a memory-guard refusal loses nothing.
-  const section = await beginImportSection(ctx.importLock, run.caseId, options.stateStore, {
-    incomingBytes: (await stat(path)).size,
-    wording: REPLAY_REFUSAL_WORDING,
-  });
+  const section = await beginImportSection(
+    ctx.importLock,
+    run.caseId,
+    options.stateStore,
+    { incomingBytes: (await stat(path)).size, wording: REPLAY_REFUSAL_WORDING },
+    gradeArmOf(routeSettleDeps(ctx)), // #2909
+  );
   try {
     const source: ReplaySource = {
       path,

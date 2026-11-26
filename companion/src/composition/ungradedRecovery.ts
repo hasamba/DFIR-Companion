@@ -1,18 +1,22 @@
 /**
  * Start-up re-grade of the rows still waiting for the content tagger (#2891, analysis/gradeMark.ts).
  *
- * WHY. An import's stamp writes the grade mark; only the tagger's finished run removes it. A crash
- * between the stamp and the tag (an out-of-memory kill), or a tagger that failed internally, leaves
- * marked rows. The case-wide demote never moves them, so nothing is lost — but they are not graded
- * either, and Info rows among them still sit in the forensic timeline. This finds them and finishes
- * the seam: dual-write → tagger → demote → remove the mark.
+ * WHY. A row an import added carries the mark from its insert (#2909, an armed section) or its stamp,
+ * and only the tagger's finished run removes it. A crash (an out-of-memory kill) before the tag, an
+ * importer that threw after a partial merge, or a tagger that failed internally leaves marked rows. The
+ * case-wide demote never moves them, so nothing is lost — but they are not graded either, and Info rows
+ * among them still sit in the forensic timeline. The next import's settle grades them (#2909,
+ * routes/importRegrade.ts sweepLeftovers, bounded); this is the backstop that grades every case at
+ * start-up, on the same core: stamp if needed → dual-write → tagger → caps → demote → remove the mark.
  *
  * WHAT IT SELECTS (its own contract, unlike the in-process recovery that selects by file):
  *   - exactly the marked rows. A marked row the gate never touches (promoted, manual, a coverage note)
- *     only loses its mark: it is never re-tagged or demoted, and keeps its stored severity;
+ *     only loses its mark: it is never re-tagged or demoted, and keeps its stored severity. A marked row
+ *     with no stamp is stamped (an importer that threw before its settle);
  *   - plus the UNSTAMPED rows of the same stored file as a marked batch — rows the paged stamp never
  *     reached before the crash ("stamp if needed"). They get that batch's id, its import time and the
- *     mark. Marked rows are not stamped again; graded rows of the batch are not re-tagged.
+ *     mark. Stamped rows are not stamped again; graded rows of the batch are not re-tagged.
+ *   - a grade arm a crash left set is dropped first (no section can be open while this holds the case).
  *
  * WHEN. After the server listens (maintenanceTasks.ts), never from createApp, so tests that only build
  * the app never run it. One case at a time, in its own incarnation, inside the case's import section
@@ -22,19 +26,17 @@
  * the next start, with one WARN per case.
  */
 import { gateExempt } from "../analysis/forensicGate.js";
-import { forensicGradePendingRows } from "../analysis/gradeMark.js";
-import { SCAN_PAGE_ROWS, type ForensicRow } from "../analysis/forensicRows.js";
+import { disarmGrade, forensicGradePendingIds, gradeProbe } from "../analysis/gradeMark.js";
+import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
+import type { InvestigationState } from "../analysis/stateTypes.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { RouteContext } from "../routes/context.js";
 import { routeSettleDeps } from "../routes/routeSettleDeps.js";
-import {
-  gradeStampedRows,
-  recoveryDepsFromSettle,
-  type RowRecoveryDeps,
-} from "../routes/importRowRecovery.js";
-import { carryAndStampPaged, clearGradePending } from "../routes/importSettlePaged.js";
-import { runUnlocked } from "../routes/importSettleRows.js";
+import { recoveryDepsFromSettle, type RowRecoveryDeps } from "../routes/importRowRecovery.js";
+import { finishRegrade, regradeMarked } from "../routes/importRegrade.js";
+import { carryAndStampPaged } from "../routes/importSettlePaged.js";
+import { rowPages, runUnlocked } from "../routes/importSettleRows.js";
 
 export interface Regrade {
   /** Rows the tagger was offered again (marked rows plus the unstamped rows of their files). */
@@ -47,42 +49,51 @@ export interface Regrade {
 
 const NOTHING: Regrade = { regraded: 0, held: 0, cleared: 0 };
 
-/** Re-grade one case's marked rows. Takes no import lock: the caller holds the case's section. */
+const ledgerOf =
+  (store: ForensicRowStore): ((caseId: string) => Promise<InvestigationState>) =>
+  (caseId) =>
+    store.loadOverviewWithoutIocs ? store.loadOverviewWithoutIocs(caseId) : store.loadOverview(caseId);
+
+/**
+ * Re-grade one case's marked rows. Takes no import lock: the caller holds the case's section, so no
+ * import is in flight — a grade arm still set is a crash's leftover and is dropped first (#2909).
+ */
 export async function regradePendingRows(deps: RowRecoveryDeps, caseId: string): Promise<Regrade> {
   const store = deps.stateStore;
-  const lock = deps.runStateExclusive ?? runUnlocked;
-  const marked = await forensicGradePendingRows(store, caseId);
-  if (!marked.length) return NOTHING;
-  const exempt = marked.filter((r) => gateExempt(r.event)).map((r) => r.event.id);
-  const cleared = exempt.length ? await clearGradePending(store, lock, caseId, exempt) : 0;
-  const todo = marked.filter((r) => !gateExempt(r.event));
-  if (!todo.length) return { ...NOTHING, cleared };
-  const siblings = await stampUnreachedRows(deps, caseId, todo);
-  const ids = [...new Set([...todo.map((r) => r.event.id), ...siblings])];
-  await gradeStampedRows(deps, caseId, ids);
-  const still = new Set(ids);
-  const held = (await forensicGradePendingRows(store, caseId)).filter((r) => still.has(r.event.id)).length;
-  return { regraded: ids.length, held, cleared };
+  await disarmGrade(store, caseId);
+  const ids = await forensicGradePendingIds(store, caseId);
+  if (!ids.length) return NOTHING;
+  const ledger = await ledgerOf(store)(caseId);
+  const siblings = await stampUnreachedRows(deps, caseId, ids, ledger);
+  const all = [...new Set([...ids, ...siblings])];
+  const done = await regradeMarked(deps, caseId, all, { ledger });
+  await finishRegrade(deps, caseId, { ...done, ledger });
+  const still = new Set(await forensicGradePendingIds(store, caseId));
+  const held = all.filter((id) => still.has(id)).length;
+  return { regraded: done.offered, held, cleared: done.cleared };
 }
 
 /**
- * The unstamped, gate-reachable rows that carry a stored name of a marked batch: stamped with that
- * batch's id and import time, and the mark. One scan of the forensic timeline for every batch.
+ * The unstamped, gate-reachable rows that carry a stored name of a marked, stamped batch: stamped with
+ * that batch's id and import time, and the mark. Marked rows are read a page at a time; one scan of the
+ * forensic timeline finds the siblings for every batch.
  */
 async function stampUnreachedRows(
   deps: RowRecoveryDeps,
   caseId: string,
-  marked: readonly ForensicRow[],
+  markedIds: readonly string[],
+  ledger: InvestigationState,
 ): Promise<string[]> {
-  const batchOf = new Map<string, { id: string; importedAt?: string }>();
-  for (const { event: e } of marked) {
-    if (!e.importBatchId) continue;
-    for (const name of e.sourceScreenshots)
-      if (typeof name === "string" && !batchOf.has(name))
-        batchOf.set(name, { id: e.importBatchId, importedAt: e.importedAt });
-  }
-  if (!batchOf.size) return [];
   const store = deps.stateStore;
+  const batchOf = new Map<string, { id: string; importedAt?: string }>();
+  for await (const rows of rowPages(store, caseId, markedIds))
+    for (const { event: e } of rows) {
+      if (!e.importBatchId) continue;
+      for (const name of e.sourceScreenshots)
+        if (typeof name === "string" && !batchOf.has(name))
+          batchOf.set(name, { id: e.importBatchId, importedAt: e.importedAt });
+    }
+  if (!batchOf.size) return [];
   const byBatch = new Map<string, { importedAt?: string; ids: string[] }>();
   for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
     for (const e of page) {
@@ -93,10 +104,6 @@ async function stampUnreachedRows(
       entry.ids.push(e.id);
       byBatch.set(batch.id, entry);
     }
-  if (!byBatch.size) return [];
-  const ledger = store.loadOverviewWithoutIocs
-    ? await store.loadOverviewWithoutIocs(caseId)
-    : await store.loadOverview(caseId);
   const lock = deps.runStateExclusive ?? runUnlocked;
   const stampedIds: string[] = [];
   for (const [importBatchId, { importedAt, ids }] of byBatch) {
@@ -107,7 +114,7 @@ async function stampUnreachedRows(
         downgrade: !!deps.superTimelineStore,
         importBatchId,
         importedAt,
-        gradePending: !!deps.superTimelineStore && deps.markGradePending !== false,
+        gradePending: !deps.superTimelineStore || deps.markGradePending === false ? false : true,
       }),
     );
     stampedIds.push(...stamped.addedIds);
@@ -117,9 +124,13 @@ async function stampUnreachedRows(
 
 const errorText = (err: unknown): string => (err as Error)?.message ?? String(err);
 
-/** One case: ask first (one query, no lock); take the case's import section only when rows are marked. */
+/**
+ * One case: ask first (one query, no lock); take the case's import section only when the case carries
+ * a grade arm (a section a crash never finished, #2909) or marked rows.
+ */
 async function regradeCase(ctx: RouteContext, deps: RowRecoveryDeps, caseId: string): Promise<void> {
-  if (!(await forensicGradePendingRows(deps.stateStore, caseId)).length) return;
+  const probe = await gradeProbe(deps.stateStore, caseId);
+  if (!probe.armed && !probe.marked) return;
   const done = await ctx.importLock.runExclusive(caseId, () => regradePendingRows(deps, caseId));
   if (done === NOTHING) return;
   getServerLogger().warn(

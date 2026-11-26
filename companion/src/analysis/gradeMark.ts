@@ -1,8 +1,10 @@
 /**
- * The per-row grade mark (#2891). A row an import added carries `gradePending: true` from the moment
- * the import stamp is written (routes/importSettlePaged.ts, in the same row write as `importedAt` /
+ * The per-row grade mark (#2891). A row an import added carries `gradePending` from its insert, when
+ * the import section armed the case (#2909, caseSqliteWorkerGrade.ts), or else from the moment the
+ * import stamp is written (routes/importSettlePaged.ts, in the same row write as `importedAt` /
  * `importBatchId`) until the content tagger has really finished on it; a row reads as GRADED exactly
- * when it does not carry the mark.
+ * when it does not carry the mark. The next import's settle and start-up grade what is left
+ * (routes/importRegrade.ts, composition/ungradedRecovery.ts).
  *
  * WHY. The settle stamps a batch, then dual-writes and tags it, then demotes case-wide. A crash between
  * the stamp and the tag, or a tagger that failed internally, used to leave untagged rows that the next
@@ -22,12 +24,28 @@ import { upgradeForensicEvent } from "./canonicalEvent.js";
 import { SCAN_PAGE_ROWS, type ForensicRow, type ForensicRowStore } from "./forensicRows.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
+/**
+ * The mark's value (#2909): true — the plain content tagger grades the row; "held" — a Watson paste's
+ * row, which only the HELD tagger may grade (its raises are proposals the analyst approves, so a plain
+ * re-grade must never apply them). "held" wins wherever two marks meet (a fold, a stamp).
+ */
+export type GradeMode = true | "held";
+
 export interface GradeMarkFields {
-  /** Set with the import stamp; removed once the content tagger finished on this row (#2891). */
-  gradePending?: true;
+  /** Set at insert in an armed import section (#2909) or with the import stamp (#2891); removed once
+   * the content tagger finished on this row. */
+  gradePending?: GradeMode;
 }
 
-export const isGradePending = (e: GradeMarkFields): boolean => e.gradePending === true;
+export const isGradePending = (e: GradeMarkFields): boolean =>
+  e.gradePending === true || e.gradePending === "held";
+
+/** The row waits for the HELD tagger (a Watson paste's row). */
+export const isHeldGrade = (e: GradeMarkFields): boolean => e.gradePending === "held";
+
+/** The mark a stamp writes onto `e`: the stamp's mode, but never a plain mark over a held one. */
+export const stampedMode = (e: GradeMarkFields, mode: GradeMode): GradeMode =>
+  e.gradePending === "held" ? "held" : mode;
 
 /** `e` without the mark (the same object when it carries none). */
 export function withoutGradePending<E extends GradeMarkFields>(e: E): E {
@@ -75,4 +93,82 @@ export async function forensicGradePendingRows(
   for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
     for (const e of page) if (isGradePending(e)) ids.push(e.id);
   return ids.length ? store.forensicRowsById(caseId, ids) : [];
+}
+
+type GradeStore = { databasePath?(caseId: string): string };
+
+/**
+ * The ids of every marked forensic row (#2909): on the case database from the partial index alone
+ * (caseSqliteWorkerGrade.ts) — no payload is read, so a settle can ask on every import; any other row
+ * store is scanned. Forensic timeline only.
+ */
+export async function forensicGradePendingIds(
+  store: ForensicRowStore & GradeStore,
+  caseId: string,
+): Promise<string[]> {
+  if (typeof store.databasePath === "function") {
+    return caseSqliteWorker.request<string[]>({
+      op: "forensicGradePendingIds",
+      dbPath: store.databasePath(caseId),
+    });
+  }
+  const ids: string[] = [];
+  for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
+    for (const e of page) if (isGradePending(e)) ids.push(e.id);
+  return ids;
+}
+
+/**
+ * Drop the grade arm (#2909): `token` — only that section's (its release); none — whatever arm the case
+ * has (the settle's first act: nothing the settle itself inserts is an importer's row; a stale arm a
+ * crash left). A store without a case database has no arm. Never throws.
+ */
+export async function disarmGrade(store: object, caseId: string, token?: string): Promise<void> {
+  const { databasePath } = store as GradeStore;
+  if (typeof databasePath !== "function") return;
+  try {
+    const dbPath = databasePath.call(store, caseId);
+    await caseSqliteWorker.request<boolean>({ op: "disarmGrade", dbPath, token });
+  } catch {
+    // A stale arm only marks a row that a re-grade then grades or unmarks; start-up clears it.
+  }
+}
+
+/**
+ * Arm the grade mark on inserts (#2909) under the section's journal token, after the snapshot and
+ * before the importer runs. A case with no database yet (its first import) gets an empty one. False
+ * when it could not: the import then relies on the settle's stamp-time mark, as before.
+ */
+export async function armGrade(
+  store: object,
+  caseId: string,
+  token: string,
+  mode: GradeMode,
+): Promise<boolean> {
+  const { databasePath } = store as GradeStore;
+  if (typeof databasePath !== "function") return false;
+  try {
+    return await caseSqliteWorker.request<boolean>({
+      op: "armGrade",
+      dbPath: databasePath.call(store, caseId),
+      token,
+      mode,
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** Start-up's no-lock question: does the case carry a grade arm, or any marked row? */
+export async function gradeProbe(
+  store: ForensicRowStore & GradeStore,
+  caseId: string,
+): Promise<{ armed: boolean; marked: boolean }> {
+  if (typeof store.databasePath === "function") {
+    return caseSqliteWorker.request<{ armed: boolean; marked: boolean }>({
+      op: "gradeProbe",
+      dbPath: store.databasePath(caseId),
+    });
+  }
+  return { armed: false, marked: (await forensicGradePendingIds(store, caseId)).length > 0 };
 }

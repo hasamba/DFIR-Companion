@@ -25,17 +25,20 @@
  * mark and start-up recovery instead (#2891, analysis/gradeMark.ts, composition/ungradedRecovery.ts).
  */
 import { randomUUID } from "node:crypto";
-import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
+import { disarmGrade, type DemoteOptions, type TagOutcome } from "../analysis/gradeMark.js";
+import { finishRegrade } from "./importRegrade.js";
+import type { CapCandidates } from "./importSettleCap.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { isManualId } from "../analysis/manualId.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import {
   carryAndStampPaged,
-  clearGradePending,
+  collector,
   dualWriteAndTagPaged,
+  emptyCandidates,
   type DualWriteDeps,
 } from "./importSettlePaged.js";
-import { runUnlocked, type RunExclusive } from "./importSettleRows.js";
+import { rowPages, runUnlocked, type RunExclusive } from "./importSettleRows.js";
 import {
   failedAfterGrading,
   settleForensicImport,
@@ -53,8 +56,10 @@ export interface RowRecoveryDeps {
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   /** The case-wide forensic demote (either flavour; its result is not read). `graded`: see SettleDeps. */
   demote: (caseId: string, opts?: DemoteOptions) => Promise<unknown>;
-  /** False: write no grade mark (a Watson paste, SettleDeps.markGradePending). */
-  markGradePending?: boolean;
+  /** The held tagger for rows marked "held" (#2909, SettleDeps.tagHeld). */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** False: write no grade mark; "held": a Watson paste's mark (SettleDeps.markGradePending). */
+  markGradePending?: boolean | "held";
 }
 
 /** True for a row source (a stored name) that belongs to the import being recovered. */
@@ -82,6 +87,7 @@ export async function settleUnsettledRows(
 ): Promise<number | null> {
   const store = deps.stateStore;
   const lock = deps.runStateExclusive ?? runUnlocked;
+  await disarmGrade(store, caseId); // #2909: the importer's merge window is over (importSettle.ts)
   const ids: string[] = [];
   let importedAt: string | undefined; // the failed settle's own instant, when it stamped any row
   for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
@@ -102,31 +108,51 @@ export async function settleUnsettledRows(
       downgrade: !!superStore,
       importBatchId: batchId, // the same id: a second failure leaves the rows findable (#2888)
       importedAt, // and the same instant: the recovery does not rewrite when the case received them
-      gradePending: !!superStore && deps.markGradePending !== false, // #2891, as the settle
+      gradePending: !superStore || deps.markGradePending === false ? false : (deps.markGradePending ?? true),
     }),
   );
-  await gradeStampedRows(deps, caseId, stamped.addedIds);
+  await gradeStampedRows(deps, caseId, stamped.addedIds, { ledger, candidates: stamped.candidates });
   return stamped.addedIds.length;
 }
 
 /**
- * The seam's back half for rows already stamped: dual-write → tagger → demote → remove the grade mark
- * from the survivors the tagger finished on (#2891). Takes no import lock (the caller holds the section).
+ * The seam's back half for rows already stamped: dual-write → tagger → the settle's three corrections
+ * (#2909: build-time and lab-setup caps, Defender engine start-up, on these rows' candidates) → demote
+ * → remove the grade mark from the survivors the tagger finished on (#2891). Takes no import lock (the
+ * caller holds the section). Without `caps` the candidates are read from the rows themselves.
  */
 export async function gradeStampedRows(
   deps: RowRecoveryDeps,
   caseId: string,
   ids: readonly string[],
+  caps?: { ledger: InvestigationState; candidates: CapCandidates },
 ): Promise<void> {
   const store = deps.stateStore;
   const lock = deps.runStateExclusive ?? runUnlocked;
+  // A caller without the stamp's candidates (a landed cloud page, an interrupted drop batch) gets
+  // them read here with the stamp's own tests, before the tagger: the corrections always run (#2909).
+  const corrections = caps ?? (await capsOf(store, caseId, ids));
   let gradedIds: string[] = [];
   if (deps.superTimelineStore && ids.length) {
     const dualDeps = { ...deps, stateStore: store, runStateExclusive: lock };
     gradedIds = (await dualWriteAndTagPaged(dualDeps, caseId, ids)).gradedIds;
   }
-  await deps.demote(caseId, { graded: new Set(gradedIds) });
-  await clearGradePending(store, lock, caseId, gradedIds);
+  await finishRegrade(deps, caseId, { gradedIds, ...corrections });
+}
+
+async function capsOf(
+  store: ForensicRowStore,
+  caseId: string,
+  ids: readonly string[],
+): Promise<{ ledger: InvestigationState; candidates: CapCandidates }> {
+  const ledger = store.loadOverviewWithoutIocs
+    ? await store.loadOverviewWithoutIocs(caseId)
+    : await store.loadOverview(caseId);
+  const candidates = emptyCandidates();
+  const collect = collector(ledger);
+  for await (const rows of rowPages(store, caseId, ids))
+    for (const r of rows) collect(candidates, r.event, false);
+  return { ledger, candidates };
 }
 
 /** The recovery deps from the deps an import already hands settleForensicImport. */
@@ -138,8 +164,11 @@ export function recoveryDepsFromSettle(d: SettleDeps): RowRecoveryDeps {
     superTimelineStore: d.superTimelineStore,
     onSuperTimeline: d.onSuperTimeline,
     autoTagImported: d.autoTagImported,
+    ...(d.tagHeld ? { tagHeld: d.tagHeld } : {}),
     demote,
-    ...(d.markGradePending === false ? { markGradePending: false } : {}),
+    ...(d.markGradePending !== undefined && d.markGradePending !== true
+      ? { markGradePending: d.markGradePending }
+      : {}),
   };
 }
 
@@ -224,10 +253,15 @@ export async function settleImportOrRecoverThenThrow(
   t: ImportRecoveryTarget,
   before: InvestigationState | ImportBaseline,
   label?: string,
+  /** `preGraded`: rows the caller already tagged (settleForensicImport's option). */
+  extra: { preGraded?: readonly string[] } = {},
 ): Promise<SettledImport> {
   const batchId = randomUUID();
   try {
-    return await settleForensicImport(settleDeps, t.caseId, before, label, { importBatchId: batchId });
+    return await settleForensicImport(settleDeps, t.caseId, before, label, {
+      ...extra,
+      importBatchId: batchId,
+    });
   } catch (err) {
     if (!failedAfterGrading(err)) {
       const deps = recoveryDepsFromSettle(settleDeps);

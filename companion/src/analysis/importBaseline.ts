@@ -4,6 +4,7 @@ import { EMPTY_OUTLINE, type ForensicOutline } from "./forensicRows.js";
 import type { StateStore } from "./stateStore.js";
 import { rowFactsStamp } from "./rowFacts.js";
 import type { IocJournalRef, IocOutline } from "./iocJournal.js";
+import { armGrade, disarmGrade, type GradeMode } from "./gradeMark.js";
 
 /**
  * What an import compares itself against (#1874), in place of a full copy of the case held from the
@@ -50,19 +51,38 @@ export interface ImportBaseline {
    * Absent on a legacy baseline.
    */
   capturedAt?: string;
+  /**
+   * The grade arm's token (#2909, analysis/gradeMark.ts) when the section armed it — the journal token,
+   * or for a case that had no database at capture, the token its new, empty database was armed under.
+   * The release drops it.
+   */
+  gradeToken?: string;
 }
 
 export function isImportBaseline(v: unknown): v is ImportBaseline {
   return !!v && typeof v === "object" && (v as { kind?: unknown }).kind === "import-baseline";
 }
 
-/** Snapshot the case and arm its import journal. Release it with releaseImportBaseline. */
-export async function captureImportBaseline(stateStore: StateStore, caseId: string): Promise<ImportBaseline> {
+/**
+ * Snapshot the case and arm its import journal. Release it with releaseImportBaseline.
+ * `markGrade` (#2909, analysis/gradeMark.ts): also arm the grade mark on every forensic row inserted
+ * until the settle starts — only for a section that ends in the settle with the tagger wired.
+ */
+export async function captureImportBaseline(
+  stateStore: StateStore,
+  caseId: string,
+  opts: { markGrade?: GradeMode } = {},
+): Promise<ImportBaseline> {
   const token = randomUUID();
   const capturedAt = new Date().toISOString();
   const captured = await stateStore.captureImportBaseline(caseId, token, rowFactsStamp());
+  // Not in the snapshot's transaction, and it need not be: a row another writer inserts in between is
+  // still one of the settle's added rows, which its stamp marks (#2909).
+  const armed = !!opts.markGrade && (await armGrade(stateStore, caseId, token, opts.markGrade));
+  const grade = armed ? { gradeToken: token } : {};
   if (!captured) {
     return {
+      ...grade,
       kind: "import-baseline",
       caseId,
       overview: emptyState(caseId),
@@ -80,6 +100,7 @@ export async function captureImportBaseline(stateStore: StateStore, caseId: stri
     overview: captured.overview,
     outline: captured.outline,
     journalToken: token,
+    ...grade,
     empty: false,
     unfresh: captured.unfresh ?? null,
     ...(captured.fence === undefined ? {} : { journalFence: captured.fence }),
@@ -93,6 +114,7 @@ export async function releaseImportBaseline(
   stateStore: StateStore,
   baseline: ImportBaseline | null,
 ): Promise<void> {
+  if (baseline?.gradeToken) await disarmGrade(stateStore, baseline.caseId, baseline.gradeToken); // #2909
   if (!baseline?.journalToken) return;
   try {
     await stateStore.disarmImportJournal(baseline.caseId, baseline.journalToken);

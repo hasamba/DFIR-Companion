@@ -63,3 +63,13 @@ export function timeBasisOf(events: readonly ForensicEvent[], timestamp: string)
   const atTime = events.filter((e) => e.timestamp === timestamp);
   return atTime.length > 0 && atTime.every((e) => e.timeBasis === "scan") ? "scan" : undefined;
 }
+
+/**
+ * The grade mark a correlation merge keeps (#2891, #2909; analysis/gradeMark.ts): any member still
+ * waiting for the tagger → the merged row waits too. "held" wins over true, so a fold never lets a
+ * plain re-grade apply a raise a Watson paste only proposed.
+ */
+export function gradeMarkUnion(events: readonly ForensicEvent[]): Pick<ForensicEvent, "gradePending"> {
+  if (events.some((e) => e.gradePending === "held")) return { gradePending: "held" };
+  return events.some((e) => e.gradePending) ? { gradePending: true } : {};
+}

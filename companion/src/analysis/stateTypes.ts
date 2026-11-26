@@ -494,8 +494,8 @@ export interface ForensicEvent extends EventRevisionFields, EventTimeBasisFields
   // Which import action produced this row — an opaque id, one per settle call, shared by every row that
   // import added. Not for display, and not a join key into `importMeta.ts` (only the LAST import's summary).
   importBatchId?: string;
-  // Written with the import stamp; removed once the content tagger finished on the row (gradeMark.ts, #2891).
-  gradePending?: true;
+  // Written at insert (#2909) or with the import stamp; removed once the tagger finished on it (gradeMark.ts).
+  gradePending?: true | "held";
   // WHEN promoteSuperTimeline pulled this row up (analyst, explain-event, starred report, second
   // look, remediation boundary) — on purpose, so the forensic gate never demotes a row carrying it
   // whatever its severity (#1432). The first promotion is kept; a re-promote never overwrites it.
