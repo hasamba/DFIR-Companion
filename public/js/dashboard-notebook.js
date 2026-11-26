@@ -32,12 +32,26 @@
       .catch(() => {});
   }
 
+  // #2904: a load for another case unchecks the box at once (the server default) — the previous
+  // case's choice must not show here; only the newest answer for the case on screen sets it.
+  function nbOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  let nbAiCase = null;
+  let nbAiSeq = 0;
   function loadNbAiToggle(caseId) {
+    if (!nbOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    const el = document.getElementById("nbAiToggle");
+    if (nbAiCase !== caseId) {
+      nbAiCase = caseId;
+      if (el) el.checked = false;
+    }
+    const seq = ++nbAiSeq;
     fetch(`/cases/${caseId}/ai-control`)
       .then((r) => r.json())
       .then((c) => {
-        const el = document.getElementById("nbAiToggle");
-        if (el) el.checked = !!c.includeNotebook;
+        if (el && seq === nbAiSeq && nbOnScreen(caseId)) el.checked = !!c.includeNotebook;
       })
       .catch(() => {});
   }

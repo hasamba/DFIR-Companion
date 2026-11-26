@@ -286,12 +286,14 @@
   };
   const HASH_CAVEAT =
     "File hashes are taken after the YARA scan. The bytes YARA read are not separately hashed, so \"same\" shows only that the file did not change between hashing and preservation; that the preserved copy holds the matched bytes is not proven.";
+  // #2911: one short line per hash; the full values and the check stay on the hover title.
   function hashCell(h) {
     const td = el("td", null, "aa-hash");
-    td.appendChild(el("div", `after scan: ${h.sha256 || "none"}`));
-    td.appendChild(el("div", `preserved: ${h.preservedSha256 || "none"}`));
     const check = h.hashCheck || "not recorded";
-    td.appendChild(el("div", HASH_LABELS[check] || check, check === "differs" ? "aa-warn" : "aa-muted"));
+    td.title = `after scan: ${h.sha256 || "none"}\npreserved: ${h.preservedSha256 || "none"}\n${HASH_LABELS[check] || check}`;
+    td.appendChild(el("div", `file ${window.aaShortHash(h.sha256)}`));
+    td.appendChild(el("div", `kept ${window.aaShortHash(h.preservedSha256)}`, "aa-muted"));
+    if (check === "differs") td.appendChild(el("div", "changed before it was kept", "aa-warn"));
     return td;
   }
 
@@ -319,35 +321,79 @@
     return wrap;
   }
 
+  // #2911: filters (grade, rule, and endpoint when there is more than one) and a table that fits.
+  function hitRow(h, multiHost) {
+    const tr = el("tr");
+    const grade = el("td", null, "aa-grade-cell");
+    grade.appendChild(el("span", h.severity, `aa-grade sev-${String(h.severity).toLowerCase()}`));
+    if (h.selfScan) grade.appendChild(el("div", "self-scan", "aa-muted"));
+    tr.appendChild(grade);
+    if (multiHost) tr.appendChild(el("td", h.host, "aa-nowrap"));
+    tr.appendChild(el("td", h.rule, "aa-rule"));
+    const file = el("td", window.aaShortPath(h.path), "aa-path");
+    file.title = h.path || "";
+    tr.appendChild(file);
+    const time = el("td", h.time, "aa-nowrap");
+    time.appendChild(el("div", h.timeBasis, "aa-muted"));
+    tr.appendChild(time);
+    tr.appendChild(el("td", h.snippet, "aa-snippet"));
+    tr.appendChild(hashCell(h));
+    const src = el("td", h.author || "", "aa-source");
+    if (h.link && /^https:\/\/github\.com\//.test(h.link)) {
+      const a = el("a", "rule");
+      a.href = h.link;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      src.append(" ", a);
+    }
+    tr.appendChild(src);
+    return tr;
+  }
+
+  function hitFilter(label, values, all, onChange) {
+    const wrap = el("label", null, "aa-filter");
+    wrap.appendChild(el("span", label));
+    const sel = el("select");
+    for (const [text, value] of [[all, ""], ...values.map((v) => [v, v])]) {
+      const o = el("option", text);
+      o.value = value;
+      sel.appendChild(o);
+    }
+    sel.addEventListener("change", () => onChange(sel.value));
+    wrap.appendChild(sel);
+    return wrap;
+  }
+
   function hitsTable(hits) {
     if (!hits.length) return el("p", "No rule matched on these endpoints and scopes.", "aa-note");
-    const table = el("table", null, "aa-hits");
+    const opts = window.aaHitFilterOptions(hits);
+    const multiHost = opts.hosts.length > 1;
+    const filter = { grade: "", rule: "", host: "" };
+    const count = el("span", "", "aa-hit-count");
+    count.setAttribute("role", "status");
+    const table = el("table", null, "aa-hits aa-findings");
     const head = el("tr");
-    for (const h of ["Grade", "Endpoint", "Rule", "File", "Latest time the content could have been planted", "Matched text", "File SHA-256 after scan / preserved", "Rule"])
-      head.appendChild(el("th", h));
-    table.appendChild(head);
-    for (const h of hits) {
-      const tr = el("tr");
-      tr.appendChild(el("td", `${h.severity}${h.selfScan ? " (self-scan)" : ""}`, `sev-${String(h.severity).toLowerCase()}`));
-      tr.appendChild(el("td", h.host));
-      tr.appendChild(el("td", h.rule));
-      tr.appendChild(el("td", h.path));
-      tr.appendChild(el("td", `${h.time} (${h.timeBasis})`));
-      tr.appendChild(el("td", h.snippet, "aa-snippet"));
-      tr.appendChild(hashCell(h));
-      const ruleCell = el("td", h.author ? `${h.author} ` : "");
-      if (h.link && /^https:\/\/github\.com\//.test(h.link)) {
-        const a = el("a", "rule");
-        a.href = h.link;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        ruleCell.appendChild(a);
-      }
-      tr.appendChild(ruleCell);
-      table.appendChild(tr);
-    }
+    const cols = ["Grade", ...(multiHost ? ["Endpoint"] : []), "Rule", "File", "Latest time the content could have been planted", "Matched text", "SHA-256 (file / kept)", "Rule source"];
+    for (const h of cols) head.appendChild(el("th", h));
+    const thead = el("thead");
+    thead.appendChild(head);
+    const tbody = el("tbody");
+    table.append(thead, tbody);
+    const draw = () => {
+      const shown = window.aaFilterHits(hits, filter);
+      tbody.replaceChildren(...shown.map((h) => hitRow(h, multiHost)));
+      count.textContent = window.aaHitCountNote(shown.length, hits.length);
+    };
+    const bar = el("div", null, "aa-filter-bar");
+    bar.appendChild(hitFilter("Grade", opts.grades, "All grades", (v) => ((filter.grade = v), draw())));
+    bar.appendChild(hitFilter("Rule", opts.rules, "All rules", (v) => ((filter.rule = v), draw())));
+    if (multiHost) bar.appendChild(hitFilter("Endpoint", opts.hosts, "All endpoints", (v) => ((filter.host = v), draw())));
+    bar.appendChild(count);
+    draw();
+    const scroller = el("div", null, "aa-findings-scroll");
+    scroller.appendChild(table);
     const wrap = el("div");
-    wrap.append(table, el("p", HASH_CAVEAT, "aa-note"));
+    wrap.append(bar, scroller, el("p", HASH_CAVEAT, "aa-note"));
     return wrap;
   }
 

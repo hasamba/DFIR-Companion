@@ -2513,6 +2513,7 @@ export const NON_FEATURES = new Set([
   "dashboard-velo-case.js", // pure helper: the connected case, and whether a bundle may run
   "dashboard-velo-coverage.js", // pure helper: a hunt card's accounting + in-flight lines, holds nothing
   "dashboard-velo-labels.js", // pure helper: the run form's label picker over the cached fleet, holds nothing
+  "dashboard-ai-agent-hits.js", // pure helper: the AI Agent findings table's filters and shortened cells (#2911)
   "dashboard-velo-clients.js", // pure helper: the client lists' "list was cut" notice + the AI Agent picker's rows (#2887)
   "dashboard-velo-hunt-cancel.js", // pure helper: a hunt card's Cancel button + dialog, state on the overlay's dataset
   "dashboard-velo-collect.js", // pure helper: the Fleet Collection panel's run list + run form over the cached bundles, holds nothing

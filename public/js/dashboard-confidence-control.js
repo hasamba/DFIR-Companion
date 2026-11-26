@@ -53,7 +53,30 @@
       () => {},
     );
   }
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function confOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: the case whose filters the controls hold. A load for another case puts them back to
+  // "show everything" at once — before the save-related waits below — so the previous case's floor
+  // and origin lenses never hide this case's findings, not even when this case's read fails. No
+  // render here: this case's render follows, and reads the reset controls.
+  let confCase = null;
+  function resetConfidenceControlsFor(caseId) {
+    if (confCase === caseId) return;
+    confCase = caseId;
+    const set = (id, key, v) => {
+      const el = document.getElementById(id);
+      if (el) el[key] = v;
+    };
+    set("confFilter", "value", "0");
+    set("hideAutoFindings", "checked", false);
+    set("hideGapFindings", "checked", false);
+  }
   function loadConfidenceControl(caseId) {
+    if (!confOnScreen(caseId)) return; // a late caller (an owed reload) for a case the analyst left
+    resetConfidenceControlsFor(caseId);
     // The analyst's own edit is still waiting to save; its echo will re-read the newer value.
     if (confPending && confPending.caseId === caseId) return;
     if (confSavesInFlight > 0) {
@@ -66,7 +89,7 @@
       .then((r) => r.json())
       .then((c) => {
         if (load !== confLoadGen || editsAtStart !== confEditGen) return;
-        if (document.getElementById("caseId").value.trim() !== caseId) return;
+        if (!confOnScreen(caseId)) return;
         document.getElementById("confFilter").value = c.minConfidence ?? 0;
         document.getElementById("hideAutoFindings").checked =
           !!c.hideAutoFindings;

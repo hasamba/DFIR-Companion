@@ -370,10 +370,23 @@
   // call this now, and an answer that lands late — for a case the analyst has left, or behind a
   // newer answer for the same case — must not repaint the pill over the truth.
   let aiStateSeq = 0;
+  // #2904: the case the pill was last derived for. The first correction for ANOTHER case puts the
+  // pill back to the page's "AI: —" at once, so the case left's state (and its held-screenshot offer)
+  // never shows on this one — not even when this case's read fails.
+  let aiStateCase = null;
   async function refreshAiState(caseId) {
     // An inactive case is rejected BEFORE the counter moves: a late call for a case the analyst left
     // must not invalidate a correction still in flight for the case on screen.
     if (!caseId || caseId !== activeCaseId) return;
+    if (aiStateCase !== null && aiStateCase !== caseId) {
+      const el = document.getElementById("aiStatus");
+      if (el) {
+        el.className = "ai-unknown";
+        el.textContent = el.title = "AI: —";
+      }
+      hideHeldSkip();
+    }
+    aiStateCase = caseId;
     const seq = ++aiStateSeq;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ai-state`);

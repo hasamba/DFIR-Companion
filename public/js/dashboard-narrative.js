@@ -100,10 +100,24 @@
       });
   }
 
+  // #2904: the case whose "what changed" banner is shown, and the newest load. A load for another
+  // case hides the previous case's banner at once; only the newest answer for the case on screen paints.
+  function synthMetaOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  let synthMetaCase = null;
+  let synthMetaSeq = 0;
   function loadSynthMeta(caseId) {
+    if (!synthMetaOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (synthMetaCase !== caseId) {
+      synthMetaCase = caseId;
+      renderSynthMeta(null);
+    }
+    const seq = ++synthMetaSeq;
     fetch(`/cases/${caseId}/synth-meta`)
       .then((r) => r.json())
-      .then(renderSynthMeta)
+      .then((m) => seq === synthMetaSeq && synthMetaOnScreen(caseId) && renderSynthMeta(m))
       .catch(() => {});
   }
   function renderSynthMeta(m) {

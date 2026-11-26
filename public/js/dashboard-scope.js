@@ -33,6 +33,9 @@
 //
 //   loadScope (3724)        commit -> push into #scopeStart/#scopeEnd -> repaint #scopeInfo.
 //                           NO redraw. The case is still loading; render() comes separately.
+//                           #2904: a load for another case first receives an empty window, so the
+//                           case left can never filter this one; redraws only if this case's state
+//                           already rendered under a different window.
 //   scope_changed (15395)   THE SAME THREE STEPS, then render(DfirState.lastState()).
 //                           Another analyst (or this one, in another tab) moved the window.
 //   applyScope (9022)       commit -> repaint #scopeInfo, and deliberately does NOT touch the two
@@ -215,7 +218,8 @@
      * A window arrived FROM the server — the case-load GET, or another client's change over the
      * websocket. Commit it and push it into the two controls, which are a sink on this path.
      *
-     * Does not redraw. loadScope never did, and the websocket branch does its own render() straight
+     * Does not redraw. loadScope redraws only in the #2904 case (this case's state rendered first under
+     * a different window), and the websocket branch does its own render() straight
      * after; that difference between the two callers is real and stays visible at the call sites.
      */
     receive(start, end) {
