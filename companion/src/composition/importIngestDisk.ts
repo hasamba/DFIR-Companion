@@ -12,6 +12,7 @@
  * gate, which no streamed kind needs (none of them makes a model call).
  */
 import type { FileHandle } from "node:fs/promises";
+import type { DemoteOptions } from "../analysis/gradeMark.js";
 import { statusFromStore, withIngestAdmission } from "../analysis/caseIngestAdmission.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import {
@@ -35,7 +36,7 @@ export interface DiskIngestDeps {
   options: AppOptions;
   importLock: ImportLock;
   runStateExclusive: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
-  demoteForensic: (caseId: string) => Promise<ForensicEvent[]>;
+  demoteForensic: (caseId: string, opts?: DemoteOptions) => Promise<ForensicEvent[]>;
   settleDeps: StreamedSettleDeps;
   /** The whitelist / NSRL / deobfuscation auto-marks and the background re-synthesis. */
   afterImport: (caseId: string) => Promise<void>;

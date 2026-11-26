@@ -3,6 +3,7 @@ import { tagCollectorFootprint } from "../analysis/cloudCollectorFootprint.js";
 import { syncTrustedActivity } from "../analysis/trustedActivitySync.js";
 import { parseTrustedMarks, trustedActivityTags } from "../analysis/trustedSourceMarks.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
+import type { TagOutcome } from "../analysis/gradeMark.js";
 import { nodeCollectFs } from "../integrations/cloudCollect/collectFs.js";
 import { createCollectorRunReader } from "../integrations/cloudCollect/collectRuns.js";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -39,7 +40,7 @@ export interface ImportTaggerDeps {
  * a cloud collection's own API calls; tag only, never a grade; not TAGGER_AUTO-gated), then the
  * trusted-activity recompute when the case has an `ours`/`responder` mark (#2561; tag only).
  */
-type ContentTagger = (caseId: string, added: ForensicEvent[]) => Promise<void>;
+type ContentTagger = (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
 
 /** `contentTagger` replaces the content-tagger step only (a Watson paste holds its promotions). */
 export function importTagger(d: ImportTaggerDeps, contentTagger?: ContentTagger): ContentTagger {
@@ -61,31 +62,43 @@ export function importTagger(d: ImportTaggerDeps, contentTagger?: ContentTagger)
         caseId,
         added,
       ));
+  // The content tagger's outcome is the one returned (#2891): the footprint and trusted-activity tags
+  // below write tags only, never a grade, so they cannot leave a row ungraded.
   return async (caseId, added) => {
-    await content(caseId, added);
-    const tags = options.tagsStore;
-    if (!tags) return;
-    await tagCollectorFootprint(
-      {
-        tags,
-        runsFor: (id) => collectorRuns(d.store.caseDir(id)),
-        ...(options.onTags ? { onTags: options.onTags } : {}),
-        logLine: d.logLine,
-      },
-      caseId,
-      added,
-    );
-    // A streamed import calls this once per batch: the whole-case recompute runs only when the batch
-    // holds a row a friendly mark would tag. It tags the stored forensic timeline, never these rows.
-    const trusted = trustedSyncDeps(options, d.store, d.logLine);
-    if (!trusted) return;
-    try {
-      const marks = parseTrustedMarks(await trusted.loadMarks(caseId));
-      if (trustedActivityTags(added, marks).length) await syncTrustedActivity(trusted, caseId);
-    } catch (err) {
-      d.logLine(`trusted-activity check skipped for case ${caseId}: ${(err as Error).message}`);
-    }
+    const outcome = await content(caseId, added);
+    await footprintAndTrusted(d, caseId, added);
+    return outcome;
   };
+}
+
+async function footprintAndTrusted(
+  d: ImportTaggerDeps,
+  caseId: string,
+  added: ForensicEvent[],
+): Promise<void> {
+  const { options } = d;
+  const tags = options.tagsStore;
+  if (!tags) return;
+  await tagCollectorFootprint(
+    {
+      tags,
+      runsFor: (id) => collectorRuns(d.store.caseDir(id)),
+      ...(options.onTags ? { onTags: options.onTags } : {}),
+      logLine: d.logLine,
+    },
+    caseId,
+    added,
+  );
+  // A streamed import calls this once per batch: the whole-case recompute runs only when the batch
+  // holds a row a friendly mark would tag. It tags the stored forensic timeline, never these rows.
+  const trusted = trustedSyncDeps(options, d.store, d.logLine);
+  if (!trusted) return;
+  try {
+    const marks = parseTrustedMarks(await trusted.loadMarks(caseId));
+    if (trustedActivityTags(added, marks).length) await syncTrustedActivity(trusted, caseId);
+  } catch (err) {
+    d.logLine(`trusted-activity check skipped for case ${caseId}: ${(err as Error).message}`);
+  }
 }
 
 export function routeSettleDeps(ctx: SettleContext): SettleDeps | null {

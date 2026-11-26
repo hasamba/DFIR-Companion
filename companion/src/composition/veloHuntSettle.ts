@@ -14,6 +14,7 @@
  * error stays the one on the hunt card.
  */
 import type { AppOptions } from "./appOptions.js";
+import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
 import type { RouteContext } from "../routes/context.js";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import type { SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
@@ -30,8 +31,8 @@ import { logLine } from "../logging/serverLogger.js";
 
 export interface HuntSettleDeps {
   options: AppOptions;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
-  demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
   runStateExclusive?: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   pushImportCheckpoint: RouteContext["pushImportCheckpoint"];
 }

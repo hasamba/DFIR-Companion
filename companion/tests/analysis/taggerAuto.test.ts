@@ -103,7 +103,8 @@ describe("autoTagNewEvents", () => {
     expect(st.forensicTimeline[0].severity).toBe("Low"); // untouched
   });
 
-  it("never throws on an invalid ruleset (best-effort)", async () => {
+  // #2891: still never throws, but the rows it could not tag are reported, so the demote holds them.
+  it("never throws on an invalid ruleset (best-effort), and reports the rows as not finished", async () => {
     const badDir = await mkdtemp(join(tmpdir(), "dfir-tagger-bad-"));
     const badDefault = join(badDir, "bad.yaml");
     await writeFile(badDefault, "bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n");
@@ -112,7 +113,7 @@ describe("autoTagNewEvents", () => {
       autoTagNewEvents({ taggerStore: badStore, tagsStore, stateStore }, "c1", [
         ev({ id: "e1", message: "x" }),
       ]),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ungraded: ["e1"] });
     await rm(badDir, { recursive: true, force: true });
   });
 });

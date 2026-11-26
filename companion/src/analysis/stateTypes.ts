@@ -491,11 +491,11 @@ export interface ForensicEvent extends EventRevisionFields, EventTimeBasisFields
   // keeps whichever member was chosen primary's `importedAt` and silently drops the others' — the
   // same already-accepted behavior `originalTimestamp`/`skewOffsetMs` above already have.
   importedAt?: string;
-  // Which import action produced this row — an opaque id, one per settle call, shared by every
-  // row that import added. Not for human display, and not a join key into `importMeta.ts` (which
-  // only ever holds the LAST import's summary) — just the grouping key a future feature could use
-  // to attach human-readable provenance without re-touching every event.
+  // Which import action produced this row — an opaque id, one per settle call, shared by every row that
+  // import added. Not for display, and not a join key into `importMeta.ts` (only the LAST import's summary).
   importBatchId?: string;
+  // Written with the import stamp; removed once the content tagger finished on the row (gradeMark.ts, #2891).
+  gradePending?: true;
   // WHEN promoteSuperTimeline pulled this row up (analyst, explain-event, starred report, second
   // look, remediation boundary) — on purpose, so the forensic gate never demotes a row carrying it
   // whatever its severity (#1432). The first promotion is kept; a re-promote never overwrites it.

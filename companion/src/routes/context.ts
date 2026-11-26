@@ -1,4 +1,5 @@
 import type { WatsonFlowWatch } from "../analysis/ai/watson/velo/launchTypes.js";
+import type { DemoteOptions } from "../analysis/gradeMark.js";
 import type { Request } from "express";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
@@ -240,9 +241,9 @@ export interface RouteContext {
   //                               auto-mark known-good indicators + decode obfuscated commands.
   //   moveDropFile              — move a processed drop file to _processed/_failed (shared w/ poller).
   dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown>;
-  demoteForensicForCase(caseId: string): Promise<InvestigationState>;
+  demoteForensicForCase(caseId: string, opts?: DemoteOptions): Promise<InvestigationState>;
   /** The same demote, returning only the rows it removed — no load of the case (#1874). */
-  demoteForensic(caseId: string): Promise<ForensicEvent[]>;
+  demoteForensic(caseId: string, opts?: DemoteOptions): Promise<ForensicEvent[]>;
   /** `analyst`: a person asked for this run now, so it supersedes a running one (#1608). */
   resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
   markConclusionsOutOfDate(caseId: string, reason: string): Promise<void>;

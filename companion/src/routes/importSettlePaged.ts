@@ -18,6 +18,7 @@ import { lookalikeCandidate } from "./importSettleLookalike.js";
 import { labSetupCandidate } from "./importSettleCap.js";
 import { principalNameCarrier } from "../analysis/principalNameCarry.js";
 import { getServerLogger } from "../logging/serverLogger.js";
+import { gradedIdsOf, isGradePending, withoutGradePending, type TagOutcome } from "../analysis/gradeMark.js";
 import {
   isForeignToImport,
   rewriteRows,
@@ -107,8 +108,16 @@ export async function carryAndStampPaged(
   scope: SettleScope,
   scanAll: boolean,
   /** `importBatchId`: preset by a caller that must find this batch's rows again (#2888); else fresh.
-   * `importedAt`: preset by a recovery that keeps the failed settle's instant; else now. */
-  opts: { capturedAt: string | undefined; downgrade: boolean; importBatchId?: string; importedAt?: string },
+   * `importedAt`: preset by a recovery that keeps the failed settle's instant; else now.
+   * `gradePending`: write the grade mark with the stamp (#2891, analysis/gradeMark.ts) — only when the
+   * tagger will run on these rows, so a settle without a super-timeline store marks nothing. */
+  opts: {
+    capturedAt: string | undefined;
+    downgrade: boolean;
+    importBatchId?: string;
+    importedAt?: string;
+    gradePending?: boolean;
+  },
 ): Promise<StampedImport> {
   const newIds = new Set(scope.addedIds);
   const touchedIds: string[] = [];
@@ -125,10 +134,13 @@ export async function carryAndStampPaged(
   const ids = [...new Set([...scope.addedIds, ...touchedIds, ...carryIds])];
   const importedAt = opts.importedAt ?? new Date().toISOString();
   const importBatchId = opts.importBatchId ?? randomUUID();
+  const stamp = opts.gradePending
+    ? { importedAt, importBatchId, gradePending: true as const }
+    : { importedAt, importBatchId };
   const carry = hostRenameCarrier(ledger);
   const collect = collector(ledger);
   const out: StampedImport = { addedIds: [], carried: 0, candidates: emptyCandidates() };
-  const counts = { downgraded: 0, genericRegistry: 0 };
+  const counts = { downgraded: 0, genericRegistry: 0, refused: 0 };
   for await (const rows of rowPages(store, caseId, ids)) {
     // #1904: a new row another writer added mid-import is carried like any old row, never stamped.
     const added = new Set(
@@ -140,19 +152,20 @@ export async function carryAndStampPaged(
     const transform = (e: ForensicEvent): ForensicEvent => {
       const moved = carry(e);
       if (!added.has(e.id)) return moved;
-      if (!opts.downgrade) return { ...moved, importedAt, importBatchId };
+      if (!opts.downgrade) return { ...moved, ...stamp };
       const egress = downgradeFirstPartyEgress([moved]).events[0];
       if (egress.severity !== moved.severity) counts.downgraded++;
       // #1958: generic Sysmon registry alerts, in the same position and for the same reason.
       const lowered = downgradeGenericSysmonRegistry([egress]).events[0];
       if (lowered.severity !== egress.severity) counts.genericRegistry++;
-      return { ...lowered, importedAt, importBatchId };
+      return { ...lowered, ...stamp };
     };
     const written = new Map(
       (await rewriteRows(store, caseId, rows, transform)).map((r) => [r.rowId, r.event]),
     );
     for (const r of rows) {
       const e = written.get(r.rowId) ?? r.event;
+      if (added.has(e.id) && !written.has(r.rowId)) counts.refused++; // #2891 review: see logDowngrades
       if (added.has(e.id)) out.addedIds.push(e.id);
       collect(out.candidates, e, added.has(e.id));
     }
@@ -161,8 +174,17 @@ export async function carryAndStampPaged(
   return out;
 }
 
-function logDowngrades(caseId: string, c: { downgraded: number; genericRegistry: number }): void {
+function logDowngrades(
+  caseId: string,
+  c: { downgraded: number; genericRegistry: number; refused: number },
+): void {
   const log = getServerLogger();
+  // A stamp write refused after rewriteRows' conflict rounds (only a writer outside the state lock can
+  // cause it): the row carries no stamp and no grade mark, so it is treated as graded, as before #2891.
+  if (c.refused)
+    log.warn(`[import] ${caseId}: ${c.refused} new row(s) could not be stamped (changed by another writer)`, {
+      caseId,
+    });
   if (c.downgraded)
     log.info(`[import] ${caseId}: ${c.downgraded} first-party update connection(s) graded Info`, { caseId });
   if (c.genericRegistry)
@@ -183,7 +205,7 @@ export interface DualWriteDeps {
     ): Promise<{ retained: number; evicted: SuperEviction; relinkCandidates?: SuperRelinkCandidate[] }>;
   };
   onSuperTimeline?: (caseId: string) => void;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
 }
 
 /**
@@ -192,24 +214,34 @@ export interface DualWriteDeps {
  * removes into the super-timeline in its own critical section and KEEPS the row when that capture
  * fails (composition/importDemote.ts) — a row is never in neither record. What a failure costs is the
  * count. Each page is read under the state lock, as every other settle read is.
+ *
+ * #2891: neither the super-timeline nor the tagger sees the grade mark (the raw record never carries
+ * it), and `gradedIds` are the rows the tagger reported it finished on — the only ones the demote may
+ * move and whose mark is removed afterwards (clearGradePending).
  */
 export async function dualWriteAndTagPaged(
   deps: DualWriteDeps,
   caseId: string,
   addedIds: readonly string[],
-): Promise<{ retained: number; evicted?: SuperEviction; relinkCandidates: SuperRelinkCandidate[] }> {
+): Promise<{
+  retained: number;
+  evicted?: SuperEviction;
+  relinkCandidates: SuperRelinkCandidate[];
+  gradedIds: string[];
+}> {
   let retained = 0;
+  const gradedIds: string[] = [];
   let evicted: SuperEviction | undefined;
   // #2619: rows the store content-deduped onto an older row the forensic timeline lacks (Undo + re-import).
   const relinkCandidates: SuperRelinkCandidate[] = [];
   const superStore = deps.superTimelineStore;
-  if (!superStore) return { retained, relinkCandidates };
+  if (!superStore) return { retained, relinkCandidates, gradedIds };
   for (let i = 0; i < addedIds.length; i += SCAN_PAGE_ROWS) {
     const pageIds = addedIds.slice(i, i + SCAN_PAGE_ROWS);
     const page = await deps.runStateExclusive(caseId, () =>
       deps.stateStore.forensicRowsById(caseId, pageIds),
     );
-    const events = page.map((r) => r.event);
+    const events = page.map((r) => withoutGradePending(r.event));
     if (!events.length) continue;
     try {
       if (superStore.appendReporting) {
@@ -224,9 +256,31 @@ export async function dualWriteAndTagPaged(
     } catch {
       /* non-fatal — see above */
     }
-    await deps.autoTagImported(caseId, events);
+    gradedIds.push(...gradedIdsOf(events, await deps.autoTagImported(caseId, events)));
   }
-  return { retained, relinkCandidates, ...(evicted ? { evicted } : {}) };
+  return { retained, relinkCandidates, gradedIds, ...(evicted ? { evicted } : {}) };
+}
+
+/**
+ * Remove the grade mark from the rows of `ids` the tagger finished on and the demote kept (#2891). Runs
+ * AFTER the demote, so a row the demote moved out is never rewritten — only the survivors are written.
+ * Each page under the state lock. A row whose write is refused keeps its mark (start-up re-grades it).
+ */
+export async function clearGradePending(
+  store: ForensicRowStore,
+  lock: RunExclusive,
+  caseId: string,
+  ids: readonly string[],
+): Promise<number> {
+  let cleared = 0;
+  for (let i = 0; i < ids.length; i += SCAN_PAGE_ROWS) {
+    const pageIds = ids.slice(i, i + SCAN_PAGE_ROWS);
+    cleared += await lock(caseId, async () => {
+      const marked = (await store.forensicRowsById(caseId, pageIds)).filter((r) => isGradePending(r.event));
+      return marked.length ? (await rewriteRows(store, caseId, marked, withoutGradePending)).length : 0;
+    });
+  }
+  return cleared;
 }
 
 /**

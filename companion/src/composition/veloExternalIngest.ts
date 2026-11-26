@@ -14,6 +14,7 @@
  * super-only field mapping is visibly a change in two places rather than invisibly one.
  */
 import type { CaseStore } from "../storage/caseStore.js";
+import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
 import { statusFromStore, withIngestAdmission } from "../analysis/caseIngestAdmission.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportLock } from "../analysis/importLock.js";
@@ -69,8 +70,8 @@ export interface VeloExternalIngestDeps {
   ) => Promise<{ storedName: string; importedAt: string; seq: number }>;
   dispatchImport: (kind: string, caseId: string, text: string, base: ImportBase) => Promise<unknown>;
   resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
-  demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
   getControl: (caseId: string) => Promise<AiControl>;
   applyWhitelistToCase: (caseId: string) => Promise<{ matched: number; added: number }>;
   applyNsrlToCase: (caseId: string) => Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;

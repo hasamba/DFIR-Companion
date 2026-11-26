@@ -16,6 +16,7 @@
 // decided from its own mapping result, in events — a row of MFT can map to up to eight.
 
 import { createHash } from "node:crypto";
+import type { TagOutcome } from "../analysis/gradeMark.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import { runVelociraptorBulk, bulkPathApplies } from "../analysis/ingest/velociraptorBulk.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
@@ -81,7 +82,7 @@ export interface SuperOnlyDeps {
   bulkImportSink?: BulkImportSink;
   superTimelineStore: SuperTimelineStore;
   onSuperTimeline?: (caseId: string) => void;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
 }
 
 export interface SuperOnlyArtifact {
