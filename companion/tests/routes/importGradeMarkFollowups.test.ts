@@ -18,6 +18,9 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
 import { captureImportBaseline, releaseImportBaseline } from "../../src/analysis/importBaseline.js";
+import { beginImportSection } from "../../src/routes/importSection.js";
+import { ImportLock } from "../../src/analysis/importLock.js";
+import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { createImportDemote } from "../../src/composition/importDemote.js";
 import { settleForensicImport, type SettleDeps } from "../../src/routes/importSettle.js";
 import { regradePendingRows } from "../../src/composition/ungradedRecovery.js";
@@ -180,6 +183,17 @@ describe("item 1 — rows merged but never stamped carry the mark from their ins
     expect(await deps(raiseMarkers).demote.demoteForensic("c1")).toEqual([]);
   });
 
+  it("a brand-new case's first import that throws: releasing the section drops the arm", async () => {
+    const importLock = new ImportLock();
+    const section = await beginImportSection(importLock, "c1", stateStore, 1, true);
+    expect(section.baseline?.empty).toBe(true);
+    await addRows([ev("first-1", "Info")]);
+    section.release(); // the importer threw: no settle
+    (await importLock.acquire("c1"))(); // the release is done once the lock is free again
+    await addRows([ev("later-1", "Info", "an analyst's row", OTHER)]);
+    expect(await pending()).toEqual(["first-1"]);
+  });
+
   it("an unarmed section marks nothing, and the settle drops the arm before its own inserts", async () => {
     await addRows([ev("seed", "High")]);
     const unarmed = await captureImportBaseline(stateStore, "c1"); // a section that never settles
@@ -314,6 +328,42 @@ describe("item 2 — a same-id re-merge keeps the mark", () => {
     );
     await stateStore.save({ ...state, forensicTimeline: timeline });
     expect((await forensic()).get("x")).toMatchObject({ description: "re-graded", gradePending: true });
+  });
+});
+
+describe("item 2 — through the pipeline's real merge (Sigma re-grade, promotion)", () => {
+  const pipeline = () =>
+    new AnalysisPipeline({
+      stateStore,
+      superTimelineStore: superStore,
+      stateLock: lock,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+
+  it("a Sigma re-grade of a marked row keeps the mark (already preserved, now pinned)", async () => {
+    await addRows([{ ...ev("x", "Info"), importBatchId: "b1", gradePending: true }, ev("y", "High")]);
+    await pipeline().mergeSigmaRegrade("c1", [{ ...ev("x", "High"), description: "re-graded" }], {
+      label: "Sigma re-grade (test)",
+      at: "2026-05-03T00:00:00Z",
+      note: "Sigma re-grade",
+    });
+    expect((await forensic()).get("x")).toMatchObject({ severity: "High", gradePending: true });
+  });
+
+  it("a promotion of a marked row keeps the mark, and the row is exempt: a re-grade only unmarks it", async () => {
+    await addRows([{ ...ev("x", "Info"), importBatchId: "b1", gradePending: true }]);
+    await pipeline().promoteSuperTimeline("c1", [ev("x", "Info")], {
+      importedAt: "2026-05-03T00:00:00Z",
+      intent: "manual",
+    });
+    const promoted = (await forensic()).get("x");
+    expect(promoted?.promotedAt).toBeTruthy();
+    expect(promoted?.gradePending).toBe(true);
+    const offered: string[] = [];
+    await regradePendingRows(recoveryDepsFromSettle(deps(raiseMarkers, offered).d), "c1");
+    expect(offered).toEqual([]);
+    expect((await forensic()).get("x")).toMatchObject({ severity: "Info" });
+    expect(await pending()).toEqual([]);
   });
 });
 

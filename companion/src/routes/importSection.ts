@@ -56,7 +56,7 @@ export async function beginImportSection(
   }
   // The journal is disarmed BEFORE the lock goes, so the next section's arm is never undone by it.
   const release = (): void => {
-    if (!stateStore || !baseline?.journalToken) return unlock();
+    if (!stateStore || (!baseline?.journalToken && !baseline?.gradeToken)) return unlock(); // #2909: grade arm too
     void releaseImportBaseline(stateStore, baseline).finally(unlock);
   };
   return { baseline, release };
