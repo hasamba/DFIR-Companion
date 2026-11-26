@@ -36,6 +36,7 @@ import { WATSON_TURN_TEXT_MAX } from "../analysis/ai/watson/chatStore.js";
 import { guardCase } from "./slashCaseGuard.js";
 import { chatMirrorsCase, runMirrorCommand, stopMirrorOnRebind } from "./watsonMirrorCommand.js";
 import { askFromMirror, classifyMirrorInbound } from "./watsonMirrorInbound.js";
+import { answerMirrorCallback, mirrorCallbackWebhookReply } from "./watsonMirrorCallback.js";
 
 /** /dfir synthesize is an analyst's "run now" (#1608) — see resynthesizeInBackground. */
 const RUN_NOW = { analyst: true } as const;
@@ -224,6 +225,9 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
       verifyTelegramSecret(presented, expected),
     );
     if (!guess.ok) return void refuse(res, guess);
+    // #2712: a proposal button press, answered with a toast Telegram runs from this reply.
+    if (body.callback_query)
+      return void res.status(200).json(await mirrorCallbackWebhookReply(ctx, body.callback_query));
     // #2647: a mirroring chat's plain text is a Watson question; group chatter is ignored unanswered.
     const inbound = await classifyMirrorInbound(ctx, body.message);
     if (inbound.kind === "ignore") return void res.status(200).json({});
@@ -283,6 +287,8 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
     apiBase,
     log: ctx.serverLogger,
     onUpdate: async (update: TelegramUpdate) => {
+      // #2712: not awaited — a decision may wait for the case's locks; the next update must not.
+      if (update.callback_query) return void answerMirrorCallback(ctx, update.callback_query);
       const message = update.message ?? update.edited_message ?? update.channel_post ?? {};
       const chatId = String(message.chat?.id ?? "");
       const text = String(message.text ?? message.caption ?? "");

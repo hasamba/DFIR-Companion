@@ -3,7 +3,12 @@ import type { SlashCommandResponse } from "../analysis/slashCommand.js";
 import { bindingKey } from "../analysis/slashCommandStore.js";
 import { sendTelegramMessage, type TelegramMessage } from "../analysis/telegramPoller.js";
 import { sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.js";
-import { mirrorAudit, telegramAllowlist, telegramApiBase, telegramBotToken } from "./watsonMirrorSupport.js";
+import {
+  mirrorAudit,
+  onTelegramAllowlist,
+  telegramApiBase,
+  telegramBotToken,
+} from "./watsonMirrorSupport.js";
 import { fetchBotUsername } from "../integrations/telegram/watsonMirrorSender.js";
 import { resolveToken } from "../analysis/telegramPoller.js";
 import { captureCaseScope } from "../storage/caseIncarnation.js";
@@ -108,8 +113,7 @@ export async function askFromMirror(
   const { ctx, channelId, userId, channelStore } = input;
   if (q.seenKey && !(await ctx.options.watsonMirrorStore?.markInbound(q.seenKey))) return undefined;
   const refuse = (title: string): DispatchResult => ({ reply: card(title), ephemeral: true });
-  const allow = telegramAllowlist();
-  if (allow.length === 0 || !allow.includes(userId)) {
+  if (!onTelegramAllowlist(userId)) {
     mirrorAudit(ctx, `telegram:${userId}`)(
       q.caseId,
       "slash-command-denied",

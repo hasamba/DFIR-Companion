@@ -78,6 +78,11 @@ export interface WatsonApplyOptions {
   acceptRisk?: boolean;
   /** An Auto chain launch: refused under the chat lock once the analyst stopped the chain. */
   chained?: boolean;
+  /**
+   * #2712: a Telegram button press's authorization, re-run under the chat lock after the status check
+   * and before anything is written. Throw to refuse; nothing is written then.
+   */
+  authorize?: (p: WatsonProposal) => Promise<void>;
 }
 
 const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
@@ -123,7 +128,8 @@ function describe(p: WatsonProposal): string {
   }
 }
 
-function detailFor(action: WatsonProposalAction, p: WatsonProposal): string {
+/** "Applied Watson's new finding: …" — the activity entry's text, and a Telegram decision's chat note. */
+export function decisionDetail(action: WatsonProposalAction, p: WatsonProposal): string {
   const verb = { apply: "Applied", reject: "Rejected", undo: "Undid" }[action];
   const kept = action === "undo" && "keptEventIds" in p ? (p.keptEventIds?.length ?? 0) : 0;
   const note = kept ? `; kept ${kept} event${kept === 1 ? "" : "s"} other findings cite` : "";
@@ -203,6 +209,7 @@ export async function applyWatsonProposal(
     if (action === "reject" && p.kind === "event_promote" && p.source === "supertimeline") {
       throw new WatsonProposalStateError(action, p.status, STUCK_PROMOTION);
     }
+    if (opts.authorize) await opts.authorize(p);
     if (action === "apply") await checkRawEvidence(deps, caseId, p);
     const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action, actor);
     state = result.state;
@@ -227,7 +234,7 @@ export async function recordWatsonActivity(
     ...(actor ? { actor } : {}),
     category: "ai",
     action: `watson.${action}`,
-    detail: detailFor(action, p) + (suffix ?? ""),
+    detail: decisionDetail(action, p) + (suffix ?? ""),
     targetType: TARGET_TYPE[p.kind],
     targetId: proposalTargetId(p),
   });

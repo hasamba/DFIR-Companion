@@ -109,3 +109,35 @@ describe("WatsonMirrorStore", () => {
     expect(e?.retry).toBeUndefined();
   });
 });
+
+describe("#2712 button tokens", () => {
+  it("mints one token per proposal, reuses it, and finds it again", async () => {
+    await enable("100");
+    const first = await store.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-1", "wp-2"]);
+    expect(Object.keys(first)).toEqual(["wp-1", "wp-2"]);
+    expect(first["wp-1"]).not.toBe(first["wp-2"]);
+    const again = await store.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-1"]);
+    expect(again["wp-1"]).toBe(first["wp-1"]);
+    const hit = await store.findAction(first["wp-2"]);
+    expect(hit?.proposalId).toBe("wp-2");
+    expect(hit?.entry).toMatchObject({ chatId: "100", caseId: "c1" });
+    expect(await store.findAction("AAAAAAAAAAAAAAAA")).toBeUndefined();
+  });
+
+  it("arms no buttons for another enablement or a chat that is off", async () => {
+    await enable("100");
+    expect(await store.actionTokens("100", "2000-01-01T00:00:00.000Z", ["wp-1"])).toEqual({});
+    expect(await store.actionTokens("200", "2026-11-19T10:00:00.000Z", ["wp-1"])).toEqual({});
+  });
+
+  it("kills every button when mirroring is switched off or on again", async () => {
+    await enable("100");
+    const { "wp-1": token } = await store.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-1"]);
+    await store.disable("100");
+    expect(await store.findAction(token)).toBeUndefined();
+    await enable("100");
+    const { "wp-1": t2 } = await store.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-1"]);
+    await enable("100"); // on again: a fresh entry
+    expect(await store.findAction(t2)).toBeUndefined();
+  });
+});

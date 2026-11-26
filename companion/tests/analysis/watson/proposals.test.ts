@@ -146,6 +146,27 @@ describe("applyWatsonProposal", () => {
   const statusOf = async (id: string) =>
     (await chatStore.load(CASE)).proposals.find((p) => p.id === id)?.status;
 
+  // #2712: a Telegram press re-checks its authorization under the chat lock, before any write.
+  it("runs the authorize hook under the lock and writes nothing when it refuses", async () => {
+    const seen: string[] = [];
+    await expect(
+      applyWatsonProposal(deps, CASE, "wp-u", "apply", "@a (via Telegram)", {
+        authorize: async (p) => {
+          seen.push(`${p.id}:${p.status}`);
+          throw new Error("revoked");
+        },
+      }),
+    ).rejects.toThrow("revoked");
+    expect(seen).toEqual(["wp-u:pending"]);
+    expect(await statusOf("wp-u")).toBe("pending");
+    expect(mem.saves).toBe(0);
+    expect(entries).toEqual([]);
+    await applyWatsonProposal(deps, CASE, "wp-u", "apply", "@a (via Telegram)", {
+      authorize: async () => {},
+    });
+    expect(await statusOf("wp-u")).toBe("applied");
+  });
+
   it("apply writes the new answer pinned and authored by Watson, and marks the proposal applied", async () => {
     mem.state = {
       ...mem.state,

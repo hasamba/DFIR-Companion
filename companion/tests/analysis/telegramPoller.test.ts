@@ -185,7 +185,7 @@ describe("TelegramPoller", () => {
     expect(urls[0]).toContain("timeout=50");
   });
 
-  it("requests only message updates, with a long-poll timeout", async () => {
+  it("requests message and button-press updates, with a long-poll timeout", async () => {
     const { fn, urls } = fetchServing([{ body: { ok: true, result: [] } }]);
     const poller = new TelegramPoller({
       botToken: "T",
@@ -198,7 +198,8 @@ describe("TelegramPoller", () => {
     await poller.stop();
     expect(urls[0]).toContain("/botT/getUpdates");
     expect(urls[0]).toContain("timeout=50");
-    expect(urls[0]).toContain("message");
+    const allowed = new URL(urls[0]).searchParams.get("allowed_updates");
+    expect(JSON.parse(allowed ?? "[]")).toEqual(["message", "channel_post", "callback_query"]); // #2712
   });
 
   it("backs off after a failure and retries", async () => {

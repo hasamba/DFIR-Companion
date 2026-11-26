@@ -26,6 +26,13 @@ export interface TelegramUpdate {
   message?: TelegramMessage;
   edited_message?: TelegramMessage;
   channel_post?: TelegramMessage;
+  /** #2712: a press on a mirrored Watson proposal's Apply / Reject button (routes/watsonMirrorCallback.ts). */
+  callback_query?: {
+    id?: unknown;
+    from?: { id?: unknown; username?: unknown; first_name?: unknown; last_name?: unknown };
+    message?: { message_id?: unknown; chat?: { id?: unknown } };
+    data?: unknown;
+  };
 }
 
 export interface TelegramMessage {
@@ -203,7 +210,7 @@ export class TelegramPoller {
       const url =
         `${this.opts.apiBase.replace(/\/+$/, "")}/bot${token}/getUpdates` +
         `?timeout=${this.opts.pollTimeoutSeconds}` +
-        `&allowed_updates=${encodeURIComponent(JSON.stringify(["message", "channel_post"]))}` +
+        `&allowed_updates=${encodeURIComponent(JSON.stringify(["message", "channel_post", "callback_query"]))}` +
         (this.offset === undefined ? "" : `&offset=${this.offset}`);
       const res = await this.fetchFn(url, { signal: this.controller.signal });
       const body = (await res.json().catch(() => ({}))) as {

@@ -1,4 +1,5 @@
 import { resolveToken, type TokenSource } from "../../analysis/telegramPoller.js";
+import type { InlineKeyboard } from "./watsonMirrorActions.js";
 
 // #2647: the Telegram mirror's Bot API calls. Separate from sendTelegramMessage: this one sends HTML,
 // always turns link previews off, returns the message id, and classifies every failure so the service
@@ -46,6 +47,8 @@ export async function sendMirrorMessage(input: {
   botToken: TokenSource;
   chatId: string;
   text: string;
+  /** #2712: the Apply / Reject buttons, on the last message of a batch only. */
+  replyMarkup?: InlineKeyboard;
   apiBase?: string;
   fetchFn?: typeof fetch;
 }): Promise<MirrorSendOutcome> {
@@ -61,6 +64,7 @@ export async function sendMirrorMessage(input: {
         text: input.text,
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
+        ...(input.replyMarkup ? { reply_markup: input.replyMarkup } : {}),
       }),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
@@ -92,6 +96,38 @@ export async function fetchBotUsername(input: {
     return res.ok && typeof name === "string" && name ? name : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/** Telegram shows at most 200 characters in a button press's toast. */
+const TOAST_MAX = 200;
+
+/**
+ * #2712: answer a button press with a short toast. Best effort: a failure is returned, never thrown —
+ * the decision behind it is already made (or refused) and audited.
+ */
+export async function answerCallbackQuery(input: {
+  botToken: TokenSource;
+  callbackQueryId: string;
+  text: string;
+  apiBase?: string;
+  fetchFn?: typeof fetch;
+}): Promise<boolean> {
+  const token = resolveToken(input.botToken);
+  if (!token) return false;
+  try {
+    const res = await (input.fetchFn ?? fetch)(apiUrl(input.apiBase, token, "answerCallbackQuery"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        callback_query_id: input.callbackQueryId,
+        text: input.text.slice(0, TOAST_MAX),
+      }),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 
