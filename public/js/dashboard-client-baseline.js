@@ -279,13 +279,28 @@
   }
 
   /** `note` is shown in the fresh status line, so a message said before a reload is not lost. */
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function baselineOnScreen(caseId) {
+    const el = byId("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: a load for another case blanks the previous case's panel at once. Every await below is
+  // followed by a check that this render is still the newest for the case on screen: an older
+  // render used to go on appending into the box after a newer one had cleared it.
+  let baselineCase = null;
   async function loadClientBaseline(caseId, note = "") {
     const box = byId("clientBaselinePanel");
     if (!box || !caseId) return;
+    if (!baselineOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (baselineCase !== caseId) {
+      baselineCase = caseId;
+      box.replaceChildren();
+    }
     const gen = ++baselineRenderGen;
+    const live = () => gen === baselineRenderGen && baselineOnScreen(caseId);
     const st = await call(huntUrl(caseId, "status"));
     const info = st.ok && st.body.hunt ? await call(huntUrl(caseId, "client")) : null;
-    if (gen !== baselineRenderGen) return;
+    if (!live()) return;
     box.replaceChildren();
     if (!st.ok || !st.body.hunt) {
       box.appendChild(el("p", "Client baselines apply to threat-hunt cases only.", "ev-sub"));
@@ -296,17 +311,22 @@
       box.appendChild(el("p", `Client baseline unavailable: ${(info && info.body.error) || "error"}`, "ev-sub"));
       return;
     }
-    box.appendChild(await linkRow(caseId, info.body, status));
+    const row = await linkRow(caseId, info.body, status);
+    if (!live()) return;
+    box.appendChild(row);
     if (info.body.client) {
       const pid = info.body.client.id;
       box.appendChild(summary(caseId, info.body));
       const cands = await call(huntUrl(caseId, "candidates"));
+      if (!live()) return;
       const picked = new Set();
       if (cands.ok && cands.body.candidates.length) {
         box.appendChild(markBar(caseId, pid, picked, status));
         box.appendChild(candidatesTable(cands.body.candidates, picked));
       } else box.appendChild(el("p", "Nothing is waiting for the client's confirmation yet. Items appear here after a hunt imports program, autorun or download evidence (for example the Threat Hunt Starter bundle).", "ev-sub"));
-      box.appendChild(await domainsEditor(pid, status));
+      const editor = await domainsEditor(pid, status);
+      if (!live()) return;
+      box.appendChild(editor);
     }
     box.appendChild(status);
   }

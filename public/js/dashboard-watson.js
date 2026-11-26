@@ -170,11 +170,11 @@
       .catch(() => {});
   }
 
-  async function failure(r, action, stored) {
+  async function failure(r, action, stored, caseId) {
     const body = await r.json().catch(() => ({}));
     const why = body.error ? String(body.error) : "The Watson request failed (HTTP " + r.status + ")";
     if (r.status === 409 && body.error === "presidio_approval_required") {
-      if (typeof setPresidioPending === "function") setPresidioPending(body.findings);
+      if (typeof setPresidioPending === "function") setPresidioPending(body.findings, caseId); // #2904: dropped if the case changed
       return stored
         ? "The case keeps the paste as evidence. Presidio found new values that wait for approval. Approve or reject them in Anonymization. Then send a message, and Watson reads the paste."
         : "Presidio found new values that wait for approval. Approve or reject them in Anonymization. Then send again.";
@@ -212,7 +212,7 @@
           renderWatson(chat);
         }
       } else {
-        const text = await failure(r, action, out.stored);
+        const text = await failure(r, action, out.stored, caseId);
         if (live(caseId)) wNotice = { text };
       }
     } catch (e) {
@@ -287,7 +287,7 @@
       const r = await fetch(api(caseId, path), { method: "POST" });
       if (!live(caseId)) return;
       if (!r.ok) {
-        const text = await failure(r, "proposal", false);
+        const text = await failure(r, "proposal", false, caseId);
         if (!live(caseId)) return;
         if (pid) wCardErr.set(pid, text);
         if (!pid || watsonSectionRefused(el, text)) wNotice = { text }; // a section's Undo: shown where the analyst is

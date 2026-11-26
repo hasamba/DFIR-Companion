@@ -6,13 +6,37 @@
 (function () {
   // --- Correlation profile (per-case cross-source event merge window) -------------------------
   const CORR_PROFILE_WINDOWS = { strict: 0, moderate: 2, aggressive: 300 };
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function corrOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: a load for another case blanks the previous case's profile at once (no option selected,
+  // no window, no info — not a claim about this case); only the newest answer for it paints.
+  let corrCase = null;
+  let corrSeq = 0;
+  function blankCorrProfile() {
+    const sel = document.getElementById("corrProfileSel");
+    const winEl = document.getElementById("corrWindowSec");
+    const info = document.getElementById("corrProfileInfo");
+    if (sel) sel.value = "";
+    if (winEl) winEl.style.display = "none";
+    if (info) info.textContent = "";
+  }
   function loadCorrProfile(caseId) {
+    if (!corrOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (corrCase !== caseId) {
+      corrCase = caseId;
+      blankCorrProfile();
+    }
+    const seq = ++corrSeq;
     fetch(`/cases/${caseId}/correlation-profile`)
       .then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
       .then((p) => {
+        if (seq !== corrSeq || !corrOnScreen(caseId)) return;
         const sel = document.getElementById("corrProfileSel");
         const winEl = document.getElementById("corrWindowSec");
         if (!sel) return;

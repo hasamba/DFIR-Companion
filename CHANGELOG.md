@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)
+- **AI Agent Forensics findings filters** — the findings table filters by grade, rule and endpoint (when more than one), with shortened paths and hashes (full values on hover) (closes #2911)
+- **AI Agent Forensics finishes inside its time limit** — whole-disk Sigma file checks are opt-in, results import once every endpoint finishes instead of after 30 minutes, the card flags a run that hit the 2-hour limit and explains Velociraptor's Paused (closes #2907)
+- **AI Agent Forensics run status** — each run card shows Running / Finished / Stopped with endpoint counts, says where results go, and names its downloads and warnings in plain English (closes #2898)
 - **Telegram Apply / Reject buttons** — mirrored Watson proposals for a new finding, next step, report text or key question can be decided from the chat by an allowlisted user, recorded as "(via Telegram)" (closes #2712)
 - **Hidden panels load on reveal** — heavy panels in a section the dashboard view or Settings hides skip case open and live refreshes, and load once when shown (closes #2854)
 - **Cancel a running bundle hunt** — the hunt card's Cancel asks whether to also stop or delete the hunt in Velociraptor; the run form's pickers now read include labels / exclude labels
@@ -33,9 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Held rows graded at the next import** — rows an importer merged but never stamped are held from the demote too, rows a tagger failure held are graded at the next import (not only at restart) with the caps a full settle applies, Watson paste rows only ever get the held tagger and keep their proposals after a failed settle, and exports never show the internal grading mark (closes #2909)
+- **THOR via Velociraptor without scanner noise** — THOR's Info status lines and its Debug folder listing are no longer imported; licence banners and THOR errors are graded Info (closes #2884)
 - **Rows wait for the tagger before demote** — rows an import stamped but did not tag (a crash, or a tagger error) stay in the forensic timeline and are graded at the next start, not demoted untagged (closes #2891)
 - **Large SIEM / EVTX XML imports read in parts** — a SIEM JSON Lines or Windows Event XML export of 32 MB or more is read from disk piece by piece, so memory follows the rows, not the file; a large file of those kinds that is still read whole is charged by its size in the memory guard (closes #2823)
 - **Case switch leaves no previous-case panels** — the login graph, asset graph, duplicate hosts, activity log, playbook, pins and finding workflow never show the previous case's data, and a cancelled load's panels say nothing is loading (closes #2900)
+- **Case switch never filters the next case by the last one** — the previous case's time window and findings filters never hide the next case's timeline or findings, and its false positives, 2nd opinion, report details, Presidio values, hunts, banners, chips and settings never show on it, even when a read fails (closes #2904)
 - **Failed settles still grade their rows** — a dedicated import, NG-SIEM search, Watson paste, drop-folder batch, cloud collection page or import replay whose end-of-import settle fails still reports the failure, but its rows are graded before the next demote (part of #2891)
 - **No previous-case content after a case switch** — a heavy panel visible when you open another case shows "Loading this case's data…" until the new case's data arrives, and Attack Phases no longer redraws the previous case's phases (closes #2894)
 - **Stronger Telegram button tokens** — Apply / Reject buttons carry 128-bit tokens checked in constant time; buttons sent before the upgrade answer "expired", decide those in the dashboard (closes #2897)

@@ -300,6 +300,8 @@ describe("who may write the window", () => {
   // for a cell with more than one writer.
   const WRITERS = [
     { op: "receive", owner: "loadScope", why: "the case-load GET" },
+    // #2904: the same owner clears the previous case's window at the switch, before its GET.
+    { op: "receive", owner: "loadScope", why: "the case switch drops the previous case's window" },
     // handleCaseMessage since #1675: the socket's push handler, named so a reconnect reuses it.
     { op: "receive", owner: "handleCaseMessage", why: "another client's scope_changed broadcast" },
     { op: "confirm", owner: "applyScope", why: "this analyst's POST" },

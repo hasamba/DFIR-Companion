@@ -673,9 +673,14 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 
 /* AI Agent Forensics panel (#2690) */
 .aa-note { color: var(--text-muted); font-size: 12px; margin: 4px 0; }
+.aa-status { font-size: 13px; font-weight: 600; margin: 4px 0; }
 .aa-warn { color: var(--sev-medium, #e0a030); font-size: 12px; margin: 4px 0; }
 .aa-provisional { font-style: italic; }
 .aa-sensitive { color: var(--sev-high, #e05050); font-size: 11px; font-weight: 600; margin-left: 6px; }
+.aa-endpoint-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.aa-endpoint-bar input[type="search"] { flex: 1 1 200px; }
+.aa-online { font-size: 12px; white-space: nowrap; }
+.aa-seen { color: var(--text-muted); font-size: 11px; }
 .aa-endpoint-list { max-height: 180px; overflow: auto; border: 1px solid var(--border-color); padding: 4px; margin: 4px 0; }
 .aa-endpoint, .aa-scopes label { display: block; font-size: 12px; }
 .aa-cap { width: 70px; margin: 0 8px 0 4px; }
@@ -683,6 +688,21 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 .aa-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
 .aa-hits { width: 100%; border-collapse: collapse; font-size: 12px; }
 .aa-hits th, .aa-hits td { border-bottom: 1px solid var(--border-color); padding: 3px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+/* #2911: the findings table — filters above it, and columns sized to what they hold. */
+.aa-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 6px 0; font-size: 12px; }
+.aa-filter { display: inline-flex; align-items: center; gap: 4px; }
+.aa-filter select { font-size: 12px; max-width: 260px; }
+.aa-hit-count { opacity: 0.75; }
+.aa-findings-scroll { overflow-x: auto; }
+.aa-findings th { white-space: nowrap; position: sticky; top: 0; background: var(--panel-bg, inherit); }
+.aa-findings th, .aa-findings td { overflow-wrap: normal; }
+.aa-findings tbody tr:hover { background: rgba(127, 127, 127, 0.08); }
+.aa-grade { display: inline-block; padding: 1px 6px; border-radius: 8px; font-weight: 600; white-space: nowrap; }
+.aa-grade-cell, .aa-nowrap, .aa-rule { white-space: nowrap; }
+.aa-path { min-width: 220px; max-width: 420px; overflow-wrap: anywhere; font-family: var(--mono-font, monospace); font-size: 11px; }
+.aa-findings .aa-snippet { max-width: 320px; overflow-wrap: anywhere; }
+.aa-findings .aa-hash { white-space: nowrap; font-family: var(--mono-font, monospace); font-size: 11px; cursor: help; }
+.aa-source { min-width: 140px; }
 .aa-snippet { font-family: var(--font-mono, monospace); white-space: pre-wrap; }
 .aa-muted { color: var(--text-muted); font-size: 11px; }
 .aa-modal { max-width: 960px; max-height: 85vh; overflow: auto; }

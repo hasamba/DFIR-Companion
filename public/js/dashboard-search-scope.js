@@ -338,7 +338,7 @@
           const body = await r.json().catch(() => ({ error: REFUSED_UNREADABLE }));
           if (body.error === "presidio_approval_required") {
             if (typeof setPresidioPending === "function")
-              setPresidioPending(body.findings);
+              setPresidioPending(body.findings, caseId);
             document.getElementById("status").textContent =
               "synthesis held — Presidio found new value(s) to review (see Anonymization)";
             return null;

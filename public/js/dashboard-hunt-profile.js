@@ -30,14 +30,27 @@
     snapshotEmpty: { cls: "hp-pending", label: "empty snapshot" },
     pending: { cls: "hp-pending", label: "pending" },
   };
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function hpOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: the case whose hunts the panel lists, and the newest load. A load for another case
+  // blanks the previous case's list at once; only the newest answer for the case on screen paints.
+  let hpCase = null;
+  let hpSeq = 0;
   function loadHuntProfile(caseId) {
     const el = document.getElementById("huntProfile");
     if (!el) return;
     if (!caseId) { el.innerHTML = `<div class="hp-empty">—</div>`; return; }
+    if (!hpOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (hpCase !== caseId) { hpCase = caseId; el.innerHTML = ""; }
+    const seq = ++hpSeq;
+    const current = () => seq === hpSeq && hpOnScreen(caseId);
     fetch(`/cases/${encodeURIComponent(caseId)}/hunt-outcomes`)
       .then((r) => r.ok ? r.json() : null)
-      .then((p) => renderHuntProfile(p))
-      .catch(() => { el.innerHTML = `<div class="hp-empty" data-safe-style="color:var(--sev-high)">could not load the hunting profile — restart the companion server if this 404s</div>`; });
+      .then((p) => { if (current()) renderHuntProfile(p); })
+      .catch(() => { if (current()) el.innerHTML = `<div class="hp-empty" data-safe-style="color:var(--sev-high)">could not load the hunting profile — restart the companion server if this 404s</div>`; });
   }
   function renderHuntProfile(profile) {
     const el = document.getElementById("huntProfile");

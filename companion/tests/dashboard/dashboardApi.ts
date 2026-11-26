@@ -571,11 +571,32 @@ export interface VeloLabelsApi {
 export interface VeloClientsApi {
   veloClientsCutNotice(inv: { truncated?: unknown } | null): string;
   veloPickerRows(
-    clients: { clientId: string; hostname?: string; fqdn?: string }[] | null,
+    clients: { clientId: string; hostname?: string; fqdn?: string; lastSeen?: string }[] | null,
     query: string,
+    cap?: number,
+    opts?: { onlineOnly?: boolean; now?: number },
   ): { rows: { clientId: string; hostname?: string; fqdn?: string }[]; matched: number; total: number };
+  veloLastSeenMs(value: unknown): number | null;
+  veloIsOnline(client: { clientId: string; lastSeen?: string }, now?: number): boolean;
+  veloSeenAgo(client: { clientId: string; lastSeen?: string }, now?: number): string;
   veloPickerNote(view: { rows: unknown[]; matched: number; total: number }): string;
   veloPickerLabel(client: { clientId: string; hostname?: string; fqdn?: string }): string;
+}
+
+// public/js/dashboard-ai-agent-hits.js — the AI Agent findings table's filters and shortened cells.
+export interface AiAgentHitsApi {
+  aaHitFilterOptions(hits: { severity?: string; rule?: string; host?: string }[] | null): {
+    grades: string[];
+    rules: string[];
+    hosts: string[];
+  };
+  aaFilterHits<T extends { severity?: string; rule?: string; host?: string }>(
+    hits: T[] | null,
+    filter: { grade?: string; rule?: string; host?: string } | null,
+  ): T[];
+  aaHitCountNote(shown: number, total: number): string;
+  aaShortPath(path: unknown, max?: number): string;
+  aaShortHash(hash: unknown): string;
 }
 
 // public/js/dashboard-velo-hunt-cancel.js — a running hunt card's Cancel button + the cancelled line.

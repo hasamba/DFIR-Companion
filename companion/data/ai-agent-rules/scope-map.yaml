@@ -70,6 +70,12 @@ scopes:
       - "C:/Users/*/.cache/huggingface/hub/**/*.{pt,pth,bin,pkl,ckpt,keras,h5}"
       - "C:/Users/*/.lmstudio/models/**/*.{pt,pth,bin,pkl,ckpt,keras,h5}"
       - "C:/Users/*/.cache/lm-studio/models/**/*.{pt,pth,bin,pkl,ckpt,keras,h5}"
+  # #2907: no YARA files and no globs. Ticking it lets the compiled Sigma rules that search the whole
+  # C: drive run (model files, PROMPTFLUX scripts, ARTEX probe, SesameOp loader). On a real endpoint
+  # those walks ran one after another and used up the two-hour per-endpoint limit, so it is off.
+  whole-disk-files:
+    label: Whole-disk file checks (Sigma, slow)
+    default: false
   script-drops:
     label: Script drop locations (slow)
     default: false

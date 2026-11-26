@@ -987,6 +987,10 @@ section, and with no case open it opens the **sweep** view.
    left out and named: this version runs on Windows only. The filter searches the whole list (only
    2,000 matches are drawn, with a note); when the server cut the client list at 100,000, this picker
    and Settings → Velociraptor Triage say so and point to a fleet hunt or the Velociraptor GUI.
+   Each endpoint shows when Velociraptor last saw it ("seen 3 min ago"). **Online only** keeps the
+   endpoints seen in the last 15 minutes. **Refresh** reads the current client list from Velociraptor
+   and says when it was fetched; ticked endpoints stay ticked. Inside a case anyone with write access
+   can refresh; with no case open, only an administrator.
 2. Leave the three default scopes ticked (agent home folders, project instruction files, MCP server
    installs) or add the two slow ones (local model files, script drop locations).
 3. Press **Run**. Velociraptor runs the [ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit)
@@ -1008,9 +1012,34 @@ hits are never folded into one event. Below it: the
 hits table (grade, endpoint, rule, file, the **latest time the content could have been planted**,
 the matched text, the file's hashes, and the rule's author with a link to the rule), the **Sigma
 coverage per rule and endpoint** table, **Rules not run, and why**, the rule version, and a link to
-the collection in Velociraptor. **Report .md** and **Report .csv** download the same report;
-**Sigma coverage .csv** downloads the rule-by-endpoint table.
+the collection in Velociraptor. **Download report (Markdown)** and **Download findings
+(spreadsheet)** download the same report (the spreadsheet has one row per hit); **Download rule
+coverage (spreadsheet)** downloads the rule-by-endpoint table.
 
+Each run card starts with a **Status** line read live from each endpoint's collection in
+Velociraptor: **Running — 0 of 1 endpoint(s) finished; 1,172 rows collected so far**, **Finished —
+2 of 2 endpoint(s) done**, or **Stopped in Velociraptor** when the hunt was stopped before every
+endpoint finished. An endpoint Velociraptor has not reached yet is counted as **not started yet
+(offline?)**, and a collection that ended with an error is counted and named. The three newest cards check it when the panel
+opens; older cards have a **Check status** button. The card also says where results go: rule hits are
+added to the case's forensic timeline automatically once every endpoint's collection has ended (at
+the latest about 2 hours 15 minutes after the run started, the per-endpoint limit plus a grace period),
+or straight away when you press **Refresh results**, and the list of AI tools and MCP servers goes to
+the super-timeline. A collection that ended at the 2-hour limit is called out: its results may be
+partial. Velociraptor shows the run's hunt as **Paused** on purpose — that keeps it on the picked
+endpoints only — and it still runs on them; nobody needs to start it.
+
+The compiled Sigma rules that search the whole C: drive (model files, PROMPTFLUX scripts, the ARTEX
+probe file, SesameOp loader files) run only when **Whole-disk file checks (Sigma, slow)** is ticked:
+on a real endpoint those searches alone used up the 2-hour limit. Left unticked, the coverage report
+lists them as **not run: whole-disk file checks are off**. A sweep's hits reach a case only through **Add to case**. When the server's
+`Windows.Triage.Targets` is too old to know the AI-agent files, the card says the run still checks
+them for tampering and lists the AI tools, but does not save copies of the files in Velociraptor.
+
+- **Filtering the findings.** Above each run's findings table, **Grade** and **Rule** filters (and
+  **Endpoint**, when the run covers more than one) narrow the rows, with a "Showing N of M findings"
+  count. Long paths are cut in the middle and hashes shortened to their first 12 characters; hover a
+  cell for the full value. **Rule source** names who wrote the rule, with a link to it.
 - **Two hashes per matched file.** The **file** hash is taken on the endpoint after the YARA scan;
   the **preserved** hash is the hash of the copy kept in Velociraptor (from the run's own upload, or
   for agent-home files from the preservation collection's file list). The check says **same**
@@ -1022,8 +1051,8 @@ the collection in Velociraptor. **Report .md** and **Report .csv** download the 
 - **What "same" does not prove.** YARA, the hash and the upload each read the file separately, and
   the bytes YARA read are not separately hashed. If the file was replaced after YARA matched it but
   before it was hashed, both hashes describe the replacement and the check still says **same**. So
-  **same** does not prove that the preserved copy holds the matched bytes. The panel, **Report .md**
-  and **Report .csv** (column `hash_note`) say this beside the check.
+  **same** does not prove that the preserved copy holds the matched bytes. The panel, the Markdown
+  report and the findings spreadsheet (column `hash_note`) say this beside the check.
 - **Sigma coverage per rule and endpoint.** One row per Sigma rule, one column per endpoint. Each
   cell says whether the rule ran there and on what it ran (**live state**, **event history**, or
   **Sysmon event history**), with its hit count, or "not run: no Sysmon". A cell that says **not
