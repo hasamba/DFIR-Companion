@@ -67,7 +67,7 @@ function utf8Length(b: number): number {
 
 function decodeSeq(seq: readonly number[]): string | undefined {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(seq));
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Uint8Array.from(seq));
   } catch {
     return undefined;
   }

@@ -43,6 +43,12 @@ describe("matchedSnippet", () => {
     );
   });
 
+  it("keeps a byte order mark, leading or inside the match, and shows it", () => {
+    expect(matchedSnippet({ MatchedHex: hex("\ufeffa\ufeffb"), MatchedLength: 8 })).toBe(
+      "\\u{feff}a\\u{feff}b",
+    );
+  });
+
   it("keeps a byte that is not valid UTF-8 instead of replacing it", () => {
     expect(bytesToText([0x61, 0xff, 0xe2, 0x80])).toBe("a\\x{ff}\\x{e2}\\x{80}");
   });
