@@ -108,6 +108,15 @@
 
   // Reunited with the feature it belongs to. It sat in the custom-importers block by position,
   // which is why the whitelist extraction had to leave its button wired in the page.
+  // #2937: the Apply line speaks for one case. Another case opening (or a cancelled load) clears it, and
+  // an answer from before that writes nothing; reopening the same case keeps both.
+  let wlMsgCase = null;
+  function wlOnReset(c) {
+    if (wlMsgCase === null || c === wlMsgCase) return;
+    wlMsgCase = null;
+    const m = document.getElementById("wlApplyMsg");
+    if (m) m.textContent = "";
+  }
   function wlApplyToCase() {
     const caseId = document.getElementById("caseId").value.trim();
     const msg = document.getElementById("wlApplyMsg");
@@ -116,6 +125,12 @@
       return;
     }
     msg.textContent = "applying…";
+    wlMsgCase = caseId;
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function") DfirPanelDefer.onReset(wlOnReset);
+    const live =
+      typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.actionLive === "function"
+      ? DfirPanelDefer.actionLive(caseId)
+      : () => document.getElementById("caseId").value.trim() === caseId;
     const fpg = typeof falsePositiveGen === "function" ? falsePositiveGen() : undefined; // #2933
     fetch(`/cases/${caseId}/ioc-whitelist/apply`, {
       method: "POST",
@@ -130,10 +145,12 @@
         return r.json();
       })
       .then((j) => {
+        if (!live()) return;
         msg.textContent = `${j.matched} matched · ${j.added} newly marked false positive`;
         if (j.legitimate) commitFalsePositives(caseId, j.legitimate, fpg);
       })
       .catch((e) => {
+        if (!live()) return;
         msg.textContent =
           "failed: " +
           e.message +

@@ -489,13 +489,16 @@
     if (save) save.onclick = onSave;
   }
 
+  // #2937: is this visit (superCaseGen) still the one an action was sent in, for the case on screen?
+  const stLive = (caseId, gen = superCaseGen) => () => gen === superCaseGen && caseId === superCaseId();
   function saveStarredReport() {
-    const caseId = superCaseId();
+    const caseId = superCaseId(), live = stLive(caseId);
     if (!caseId || !lastStarredReport || lastStarredReport.caseId !== caseId) return;
+    const say = (t) => { const m = document.getElementById("stAiMsg"); if (m && live()) m.textContent = t; };
     fetch(`/cases/${caseId}/starred-report`, { method: "PUT", headers: { "content-type": "application/json" },
       body: JSON.stringify({ markdown: lastStarredReport.markdown, eventCount: lastStarredReport.eventCount }) })
-      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); const m = document.getElementById("stAiMsg"); if (m) m.textContent = "saved to case ✓"; })
-      .catch(e => { const m = document.getElementById("stAiMsg"); if (m) m.textContent = "save failed: " + e.message; });
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); say("saved to case ✓"); })
+      .catch(e => say("save failed: " + e.message));
   }
 
   // On case load: a previously-saved report reappears in the panel (read-only; no Save button).
@@ -751,21 +754,18 @@
     if (Date.parse(end) < Date.parse(start)) { superSaveMsg("To must be after From", false); return; }
     const label = window.prompt("Name this timeframe (e.g. Attacker session 1):", "");
     if (!label) return;
+    const live = stLive(caseId), say = (t, ok) => live() && superSaveMsg(t, ok); // #2937
     fetch(`/cases/${encodeURIComponent(caseId)}/dwell-windows`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ label, start, end })
     }).then(r => r.json().then(body => ({ ok: r.ok, body })))
       .then(({ ok, body }) => {
-        if (!ok) { superSaveMsg((body && body.error) || "failed to save timeframe", false); return; }
-        superSaveMsg("timeframe saved ✓", true);
+        if (!ok) { say((body && body.error) || "failed to save timeframe", false); return; }
+        say("timeframe saved ✓", true);
         loadSavedTimeframes(caseId);
-      }).catch(() => superSaveMsg("failed to save timeframe — restart the companion server if this 404s", false));
+      }).catch(() => say("failed to save timeframe — restart the companion server if this 404s", false));
   }
 
-  // --- Playbook (issue #36) -----------------------------------------------------
-  // Trackable checklist auto-derived (server-side) from the case's next steps + Critical/High
-  // findings, plus analyst-added custom tasks. GET re-syncs idempotently (analyst status/edits
-  // preserved), so loading the panel always reflects the latest synthesis.
   window.initSuperTimeline = initSuperTimeline;
   window.applyTimeframe = applyTimeframe;
   window.clearSuperTime = clearSuperTime;

@@ -83,15 +83,17 @@
     const caseId = veloCaseId();
     return caseId ? { ...body, caseId } : body;
   }
+  // #2937: only the newest client read paints, and only for the case it asked about.
   function loadVeloClients() {
+    const seq = ++veloClientsSeq, c = veloCaseId();
     fetch(`/velociraptor/clients${veloCaseQuery()}`)
       .then((r) => (r.ok ? r.json() : { updatedAt: "", clients: [] }))
-      .then(renderVeloClients)
+      .then((inv) => seq === veloClientsSeq && veloCaseId() === c && renderVeloClients(inv))
       .catch(() => {});
   }
   function doRefreshVeloClients() {
     const btn = document.getElementById("veloRefreshClientsBtn");
-    const msg = document.getElementById("veloClientsMsg");
+    const msg = document.getElementById("veloClientsMsg"), live = veloLive();
     if (!veloEnabled) {
       if (msg)
         msg.textContent =
@@ -107,22 +109,15 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (!live()) return; // #2937: the analyst switched case, or cancelled and reopened it
         if (!ok || j.error) {
-          if (msg)
-            msg.textContent =
-              "error: " +
-              (j.error || "refresh failed") +
-              " — try Reconnect if the server was down";
+          if (msg) msg.textContent = "error: " + (j.error || "refresh failed") + " — try Reconnect if the server was down";
           return;
         }
         renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [], setName: j.setName, truncated: j.truncated });
       })
-      .catch((e) => {
-        if (msg) msg.textContent = "error: " + e.message;
-      })
-      .finally(() => {
-        if (btn) btn.disabled = false;
-      });
+      .catch((e) => live() && msg && (msg.textContent = "error: " + e.message))
+      .finally(() => live() && btn && (btn.disabled = false));
   }
   // Save any unsaved field edits, then re-read .env, rebuild the Velociraptor client, and refresh
   // the inventory (the reachability probe). Works even when the API wasn't configured at boot or
@@ -131,10 +126,11 @@
   // implementation, so no copy can forget an after-effect (veloEnabled, clients, monitor picker).
   async function doVeloReconnect(btnId, msgId) {
     const btn = document.getElementById(btnId || "veloReconnectBtn");
-    const msg = document.getElementById(msgId || "veloClientsMsg");
+    const msg = document.getElementById(msgId || "veloClientsMsg"), live = veloLive();
     if (btn) btn.disabled = true;
     if (msg) msg.textContent = "saving…";
     const saved = await saveSettings();
+    if (!live()) return; // #2937: the owner change freed the button; reconnect nothing for a case left
     if (!saved) {
       if (msg) msg.textContent = "save failed — fix the error above and retry";
       if (btn) btn.disabled = false;
@@ -149,12 +145,9 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (!live()) return;
         if (!ok) {
-          if (msg)
-            msg.textContent =
-              "error: " +
-              (j.error || "reconnect failed") +
-              " — restart the companion server if this 404s";
+          if (msg) msg.textContent = "error: " + (j.error || "reconnect failed") + " — restart the companion server if this 404s";
           return;
         }
         // Reflect the (possibly newly) configured client across the velo UI without a page reload.
@@ -181,12 +174,8 @@
         _veloMonAutoBrowsed = false; // re-populate the event-artifact picker against the (re)connected server
         loadVeloMonitors(veloCaseId());
       })
-      .catch((e) => {
-        if (msg) msg.textContent = "error: " + e.message;
-      })
-      .finally(() => {
-        if (btn) btn.disabled = false;
-      });
+      .catch((e) => live() && msg && (msg.textContent = "error: " + e.message))
+      .finally(() => live() && btn && (btn.disabled = false));
   }
 
   // Two surfaces from one load: the run list on the dashboard (js/dashboard-velo-collect.js, where
@@ -268,7 +257,7 @@
     // Rapid dropdown/date changes fire overlapping fetches with no inherent ordering guarantee; a
     // monotonic sequence number lets a stale response recognize it's been superseded and no-op instead
     // of overwriting the preview with a mapping that doesn't match the currently selected scope.
-    const mySeq = ++veloTsPreviewSeq;
+    const mySeq = ++veloTsPreviewSeq, live = veloLive();
     fetch(
       `/velociraptor/bundles/${encodeURIComponent(bundleId)}/time-scope-preview`,
       {
@@ -284,7 +273,7 @@
           .catch(() => ({ ok: r.ok, j: {} })),
       )
       .then(({ ok, j }) => {
-        if (mySeq !== veloTsPreviewSeq) return; // a newer request superseded this one
+        if (mySeq !== veloTsPreviewSeq || !live()) return; // a newer request, a switch or a cancel
         if (!ok || j.error) {
           out.textContent = "⚠ " + (j.error || "preview failed");
           return;
@@ -327,10 +316,7 @@
             });
         });
       })
-      .catch((e) => {
-        if (mySeq !== veloTsPreviewSeq) return;
-        out.textContent = "⚠ " + e.message;
-      });
+      .catch((e) => mySeq === veloTsPreviewSeq && live() && (out.textContent = "⚠ " + e.message));
   }
 
   // Persist the previewed parameter names onto the bundle so a corrected mapping sticks for future
@@ -427,7 +413,7 @@
     const minSeverity = form.querySelector(".velo-minsev").value;
     const includeLabels = veloPickedLabels(form, "inc");
     const excludeLabels = veloPickedLabels(form, "exc");
-    const go = form.querySelector(".velo-run-go");
+    const go = form.querySelector(".velo-run-go"), live = veloLive();
     go.disabled = true;
     msg.textContent = "launching hunt…";
     // No timeoutSeconds here on purpose — the server uses the bundle's saved timeout (read fresh from disk).
@@ -448,6 +434,7 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (!live()) return; // #2937: the owner change closed this form
         if (!ok || j.error) {
           msg.textContent = "error: " + (j.error || "failed");
           return;
@@ -463,16 +450,8 @@
         }
         loadVeloHuntJobs(caseId);
       })
-      .catch(
-        (e) =>
-          (msg.textContent =
-            "error: " +
-            e.message +
-            " — restart the companion server if this 404s"),
-      )
-      .finally(() => {
-        go.disabled = false;
-      });
+      .catch((e) => live() && (msg.textContent = "error: " + e.message + " — restart the companion server if this 404s"))
+      .finally(() => live() && (go.disabled = false));
   }
 
   // Why an artifact needs importing again (#2700), in the analyst's words.
@@ -605,12 +584,16 @@
       .finally(() => live() && (go.disabled = false));
   }
 
-  let veloJobsCase = null, veloJobsSeq = 0, veloExtGen = 0; // #2904: whose hunts are shown; only the newest load paints
-  // #2933: an owner change (a cancel too) retires an external import's answer and its message (a re-import
-  // prompt would import into the new case), and frees Import.
+  let veloJobsCase = null, veloJobsSeq = 0, veloExtGen = 0, veloClientsSeq = 0; // #2904: whose hunts are shown; newest load paints
+  // #2933/#2937: veloExtGen is the module's owner generation. An owner change (a cancel too) retires the
+  // action answers (external import, refresh, reconnect, preview, run), clears their lines (a re-import
+  // prompt would import into the new case), frees their buttons and closes run forms (rebuilt on open).
+  const veloLive = (gen = veloExtGen, c = veloCaseId()) => () => gen === veloExtGen && veloCaseId() === c;
   function veloExtNewOwner() {
-    const m = document.getElementById("veloExtMsg"), go = document.getElementById("veloExtGo");
-    veloExtGen++, m && (m.textContent = ""), go && (go.disabled = false);
+    veloExtGen++;
+    ["veloExtMsg", "veloClientsMsg", "veloSettingsReconnectMsg"].forEach((id) => { const m = document.getElementById(id); if (m) m.textContent = ""; });
+    ["veloExtGo", "veloRefreshClientsBtn", "veloReconnectBtn", "veloSettingsReconnectBtn"].forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = false; });
+    document.querySelectorAll(".velo-run-form").forEach((f) => (f.style.display = "none"));
   }
   const veloJobsReset = (c) => c === null && (veloJobsSeq++, loadVeloHuntJobs(null)); // #2915: a cancelled load
   function loadVeloHuntJobs(caseId) {

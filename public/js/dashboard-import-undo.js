@@ -113,6 +113,12 @@
     if (!undoBtn || !redoBtn) return;
     const token = {};
     undoBusy.set(caseId, token);
+    // #2937: the bare state read and the failure alert belong to this case open only. The stack re-read
+    // and the import-meta reload are not gated: they guard themselves, and #2413 needs the re-read.
+    const live =
+      typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.actionLive === "function"
+        ? DfirPanelDefer.actionLive(caseId)
+        : () => caseId === undoCurrentCase();
     const active = which === "undo" ? undoBtn : redoBtn;
     active.textContent = which === "undo" ? "undoing…" : "redoing…";
     paintUndoButtons();
@@ -128,16 +134,18 @@
         if (caseId !== undoCurrentCase()) return; // the analyst moved on; that case's own load re-reads
         // The restore is instant + verbatim (no AI). Pull fresh state so findings/IOCs/timeline
         // all update at once; the server also broadcasts it over the WS.
-        fetch(`/cases/${caseId}/state`)
-          .then((r) => r.json())
-          .then(render)
-          .catch(() => {});
+        if (live())
+          fetch(`/cases/${caseId}/state`)
+            .then((r) => r.json())
+            .then((st) => live() && render(st))
+            .catch(() => {});
         loadImportMeta(caseId);
         return loadUndoStack(caseId); // still busy until the fresh stack is on screen
       })
       .catch((e) => {
         if (caseId !== undoCurrentCase()) return;
-        alert(
+        if (live())
+          alert(
           `${which} failed: ${e.message}\n(restart the companion server if this 404s)`,
         );
         return loadUndoStack(caseId);

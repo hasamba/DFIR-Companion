@@ -14,8 +14,20 @@
   // and — for the single-IOC case — an option to promote the value into the global
   // IOC whitelist. Same overlay/modal structural pattern as the tag modal above.
   let fpTarget = null; // { kind, ref, label, extraRefs: [{kind, ref, label}], onDone? } while the modal is open
+  // #2937: each open numbers the modal. An answer for an earlier modal (or from before another case
+  // opened / a cancelled load) touches neither the modal open now nor its buttons.
+  let fpOpenSeq = 0;
+  const fpActionLive = (caseId) =>
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.actionLive === "function"
+      ? DfirPanelDefer.actionLive(caseId)
+      : () => document.getElementById("caseId").value.trim() === caseId;
+  const fpStill = (caseId, seq = fpOpenSeq, live = fpActionLive(caseId)) => () => seq === fpOpenSeq && live();
 
   function openFalsePositiveModal(kind, ref, label, extraRefs, onDone) {
+    fpOpenSeq++;
+    const ask = document.getElementById("fpAskAiBtn");
+    ask.disabled = false; // an earlier modal's Ask AI no longer frees it
+    ask.textContent = "🔎 Ask AI for similar";
     fpTarget = {
       kind,
       ref,
@@ -39,7 +51,7 @@
     if (kind === "event" || kind === "finding") {
       document.getElementById("fpCandidates").innerHTML =
         "loading similar items…";
-      const caseId = document.getElementById("caseId").value.trim();
+      const caseId = document.getElementById("caseId").value.trim(), still = fpStill(caseId);
       fetch(`/cases/${caseId}/false-positive/suggest`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -47,10 +59,10 @@
       })
         .then(async (r) => {
           const d = await r.json();
-          if (!fpHeld(r.status, d)) renderFpCandidates(d);
+          if (still() && !fpHeld(r.status, d)) renderFpCandidates(d);
         })
         .catch(() => {
-          document.getElementById("fpCandidates").innerHTML = "";
+          if (still()) document.getElementById("fpCandidates").innerHTML = "";
         });
       document.getElementById("fpAskAiBtn").style.display =
         typeof isFpAiConfigured === "function" && isFpAiConfigured()
@@ -136,8 +148,8 @@
         const btn = document.getElementById("fpAskAiBtn");
         btn.disabled = true;
         btn.textContent = "asking…";
+        const caseId = document.getElementById("caseId").value.trim(), still = fpStill(caseId);
         try {
-          const caseId = document.getElementById("caseId").value.trim();
           const r = await fetch(`/cases/${caseId}/false-positive/suggest`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -148,14 +160,13 @@
             }),
           });
           const d = await r.json().catch(() => ({}));
-          if (fpHeld(r.status, d)) return;
+          if (!still() || fpHeld(r.status, d)) return;
           if (!r.ok) showFpAiFailure((d && d.error) || `HTTP ${r.status}`);
           else renderFpCandidates(d, fpAiNote(d));
         } catch (err) {
-          showFpAiFailure((err && err.message) || "request failed");
+          if (still()) showFpAiFailure((err && err.message) || "request failed");
         } finally {
-          btn.disabled = false;
-          btn.textContent = "🔎 Ask AI for similar";
+          if (still()) (btn.disabled = false), (btn.textContent = "🔎 Ask AI for similar");
         }
       });
     // Select-all for the AI/deterministic candidate list (re-rendered on open + "Ask AI for
@@ -214,7 +225,7 @@
           !fpTarget.extraRefs.length &&
           document.getElementById("fpAddToWhitelist").checked;
         const caseId = document.getElementById("caseId").value.trim();
-        const onDone = fpTarget.onDone;
+        const onDone = fpTarget.onDone, seq = fpOpenSeq, live = fpActionLive(caseId);
         const fpg = typeof falsePositiveGen === "function" ? falsePositiveGen() : undefined; // #2933
         document.getElementById("fpMsg").textContent =
           `marking ${items.length} false positive…`;
@@ -245,13 +256,13 @@
             markers = await r.json();
           }
           commitFalsePositives(caseId, markers, fpg);
-          closeFalsePositiveModal();
+          if (!live()) return; // #2937: another case opened, or the load was cancelled
+          if (seq === fpOpenSeq) closeFalsePositiveModal(); // never a modal opened after this Save
           if (onDone) onDone();
           document.getElementById("status").textContent =
             "marked false positive — conclusions out of date (see AI status)";
         } catch (err) {
-          document.getElementById("fpMsg").textContent =
-            `error: ${err.message}`;
+          if (seq === fpOpenSeq && live()) document.getElementById("fpMsg").textContent = `error: ${err.message}`;
         }
       });
   }
