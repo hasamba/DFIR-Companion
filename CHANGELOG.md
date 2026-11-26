@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stronger Telegram button tokens** — Apply / Reject buttons carry 128-bit tokens checked in constant time; buttons sent before the upgrade answer "expired", decide those in the dashboard (closes #2897)
 - **Velociraptor row host names stay whole** — long Velociraptor rows (YARA, Sigma, detections, USN, MFT, processes, network connections, downloads, generic) keep the whole "@ HOST", not a cut-off fragment (closes #2885)
 - **Failed hunt settle re-graded** — rows from a hunt collect whose end-of-import settle fails, and rows from uploaded reports such as THOR, are graded before the next demote (closes #2852)
 - **Hunt settle failures after stamping** — a settle that fails mid-stamp, or a failed pre-import read, no longer leaves hunt rows ungraded; recovery also survives a restart (closes #2888)

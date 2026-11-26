@@ -1,9 +1,10 @@
+import { timingSafeEqual } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { StateLock } from "../../analysis/stateLock.js";
 import { atomicWrite } from "../../storage/atomicWrite.js";
-import { newActionToken } from "./watsonMirrorActions.js";
+import { isCurrentActionToken, newActionToken } from "./watsonMirrorActions.js";
 
 // #2647: the Telegram mirror's durable state, one GLOBAL JSON file beside the chat bindings
 // (notifications/watson-mirror.json) — never under cases/. Older code ignores it, so a rollback is
@@ -21,6 +22,13 @@ export const MIRROR_SEEN_MAX = 1000;
 export const MIRROR_PENDING_MAX = 5000;
 /** #2712: button tokens kept per chat; the oldest buttons stop working past this many. */
 export const MIRROR_ACTIONS_MAX = 300;
+
+/** #2897: constant-time token comparison; unequal lengths never reach timingSafeEqual (it would throw). */
+function tokensEqual(stored: string, candidate: string): boolean {
+  const a = Buffer.from(stored, "utf8");
+  const b = Buffer.from(candidate, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 const retrySchema = z.object({ attempt: z.number().int().nonnegative(), nextAt: z.string() });
 const actionSchema = z.object({ token: z.string().min(1), proposalId: z.string().min(1) });
@@ -233,26 +241,36 @@ export class WatsonMirrorStore {
     return this.mutate((f) => {
       const cur = f.chats[chatId];
       if (!cur || cur.enabledAt !== enabledAt || proposalIds.length === 0) return { out: {} };
-      const known = new Map(cur.actions.map((a) => [a.proposalId, a.token]));
+      // #2897: a pre-upgrade (96-bit) token is never re-used on a new button, and is dropped on this write.
+      const current = cur.actions.filter((a) => isCurrentActionToken(a.token));
+      const known = new Map(current.map((a) => [a.proposalId, a.token]));
       const fresh = [...new Set(proposalIds)]
         .filter((id) => !known.has(id))
         .map((proposalId) => ({ token: newActionToken(), proposalId }));
       const out = Object.fromEntries(
         proposalIds.map((id) => [id, known.get(id) ?? fresh.find((a) => a.proposalId === id)!.token]),
       );
-      if (fresh.length === 0) return { out };
-      const actions = tail([...cur.actions, ...fresh], MIRROR_ACTIONS_MAX);
+      if (fresh.length === 0 && current.length === cur.actions.length) return { out };
+      const actions = tail([...current, ...fresh], MIRROR_ACTIONS_MAX);
       return { next: { ...f, chats: { ...f.chats, [chatId]: { ...cur, actions } } }, out };
     });
   }
 
-  /** #2712: the chat entry and proposal a button token belongs to, or undefined (unknown or expired). */
+  /**
+   * #2712: the chat entry and proposal a button token belongs to, or undefined (unknown or expired).
+   * #2897: only a current-length token is honoured, compared in constant time, and every stored token
+   * is compared (no early exit) so the response time does not depend on where a match sits.
+   */
   async findAction(token: string): Promise<{ entry: WatsonMirrorEntry; proposalId: string } | undefined> {
+    if (!isCurrentActionToken(token)) return undefined;
+    let found: { entry: WatsonMirrorEntry; proposalId: string } | undefined;
     for (const [chatId, c] of Object.entries((await this.read()).chats)) {
-      const hit = c.actions.find((a) => a.token === token);
-      if (hit) return { entry: { ...c, chatId }, proposalId: hit.proposalId };
+      for (const a of c.actions) {
+        if (tokensEqual(a.token, token) && !found)
+          found = { entry: { ...c, chatId }, proposalId: a.proposalId };
+      }
     }
-    return undefined;
+    return found;
   }
 
   /** Has this inbound update been accepted already? Read-only: a replay is ignored before any rate limit. */

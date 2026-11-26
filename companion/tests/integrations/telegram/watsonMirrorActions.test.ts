@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTION_TOKEN_LENGTH,
   buildMirrorKeyboard,
   encodeMirrorCallback,
+  isCurrentActionToken,
   MIRROR_PREVIEW_MAX,
   newActionToken,
   parseMirrorCallback,
@@ -95,11 +97,35 @@ describe("proposalPreview", () => {
 describe("callback data", () => {
   it("round-trips within Telegram's 64-byte limit", () => {
     const token = newActionToken();
-    expect(token).toMatch(/^[A-Za-z0-9_-]{16}$/);
+    expect(token).toMatch(/^[A-Za-z0-9_-]{22}$/);
     const data = encodeMirrorCallback("apply", token);
     expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
     expect(parseMirrorCallback(data)).toEqual({ action: "apply", token });
     expect(parseMirrorCallback(encodeMirrorCallback("reject", token))).toEqual({ action: "reject", token });
+  });
+
+  it("mints 128-bit tokens (#2897): 16 random bytes, 22 base64url characters, never repeated", () => {
+    const tokens = Array.from({ length: 500 }, () => newActionToken());
+    for (const t of tokens) {
+      expect(t).toHaveLength(ACTION_TOKEN_LENGTH);
+      expect(Buffer.from(t, "base64url")).toHaveLength(16);
+      expect(isCurrentActionToken(t)).toBe(true);
+    }
+    expect(new Set(tokens).size).toBe(tokens.length);
+    expect(Buffer.byteLength(encodeMirrorCallback("reject", tokens[0]))).toBe(27);
+  });
+
+  it("still parses a pre-upgrade 16-character button so it can be told it expired (#2897)", () => {
+    const legacy = "A".repeat(16);
+    expect(parseMirrorCallback(`wm:a:${legacy}`)).toEqual({ action: "apply", token: legacy });
+    expect(isCurrentActionToken(legacy)).toBe(false);
+  });
+
+  it("refuses token lengths that are neither current nor legacy (#2897)", () => {
+    for (const n of [15, 17, 21, 23, 32]) {
+      expect(parseMirrorCallback(`wm:a:${"A".repeat(n)}`), String(n)).toBeUndefined();
+      expect(isCurrentActionToken("A".repeat(n)), String(n)).toBe(false);
+    }
   });
 
   it("refuses forged, garbled and undo data", () => {
@@ -111,6 +137,7 @@ describe("callback data", () => {
       "wm:a:short",
       "wm:a:AAAAAAAAAAAAAAAA:extra",
       "wm:a:AAAAAAAA/AAAAAAA",
+      "wm:a:AAAAAAAAAAA/AAAAAAAAAA",
       "apply wp-1",
     ]) {
       expect(parseMirrorCallback(bad), String(bad)).toBeUndefined();
@@ -119,8 +146,8 @@ describe("callback data", () => {
 
   it("labels buttons with a number only, never case content", () => {
     const kb = buildMirrorKeyboard([
-      { n: 1, token: "A".repeat(16) },
-      { n: 2, token: "B".repeat(16) },
+      { n: 1, token: "A".repeat(22) },
+      { n: 2, token: "B".repeat(22) },
     ]);
     expect(kb?.inline_keyboard.map((r) => r.map((b) => b.text))).toEqual([
       ["Apply 1", "Reject 1"],
