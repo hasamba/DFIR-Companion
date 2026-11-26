@@ -380,6 +380,18 @@ describe("renderVqlRows", () => {
   it("escapes a column name, which is whatever the query selected", () => {
     expect(f.renderVqlRows({ rows: [{ [XSS]: 1 }], total: 1 })).not.toContain("<img");
   });
+
+  // #2923: the wrapper scrolls (max-height 260px) and a table holds nothing focusable, so without a
+  // tab stop a keyboard user cannot scroll it. The caller names the region; the default is generic.
+  it("makes the scrolling wrapper a named, keyboard-focusable region", () => {
+    expect(f.renderVqlRows({ rows, total: 2 })).toContain(
+      '<div class="vql-result-wrap" tabindex="0" role="region" aria-label="Query results">',
+    );
+    expect(f.renderVqlRows({ rows, total: 2 }, "Sigma hunt results")).toContain(
+      'aria-label="Sigma hunt results"',
+    );
+    expect(f.renderVqlRows({ rows, total: 2 }, ATTR_BREAK)).not.toContain('" onmouseover="');
+  });
 });
 
 describe("jobRowHtml", () => {

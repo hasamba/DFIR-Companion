@@ -59,7 +59,7 @@
         }
         const n = (j.rows || []).length;
         if (n) {
-          target.innerHTML = renderVqlRows(j);
+          target.innerHTML = renderVqlRows(j, "Collection plan results");
           return n;
         }
         if ((j.flowState || "").toUpperCase() === "FINISHED") {

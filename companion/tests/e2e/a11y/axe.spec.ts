@@ -64,6 +64,11 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
     const perRule: Record<string, number> = {};
     for (const v of run.violations) perRule[v.id] = (perRule[v.id] ?? 0) + v.nodes.length;
     results[scope] = perRule;
+    // Name the offending nodes in the run output, so a red ledger says WHICH element regressed
+    // instead of only a count.
+    for (const v of run.violations) {
+      for (const n of v.nodes) console.log(`[axe] ${scope} / ${v.id}: ${n.target.join(" ")}`);
+    }
   };
 
   // 1. The empty dashboard, before any case is connected.
@@ -87,6 +92,27 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
   await waitForStableCockpit(page);
   await scan("dashboard-case");
 
+  // 2b. The same case in the Analyst view, which shows every section. The default Now view hides
+  //     most of them and axe skips display:none, so without this scope most panels were never
+  //     scanned at all (#2923). Switched through the real view menu, so the panels the default
+  //     view deferred (#2854) load the way they do for an analyst.
+  await page.locator("#dashViewBtn").click();
+  const menu = page.locator("#dashViewMenu");
+  await expect(menu).toBeVisible();
+  await menu.locator('.dv-item[data-view="analyst"]').click();
+  await expect(menu).toBeHidden();
+  // The swimlane is one of the deferred panels Analyst shows: its labels prove the deferred loads
+  // started; networkidle waits for the rest of their requests to settle before the scan.
+  await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({
+    timeout: 30_000,
+  });
+  await page.waitForLoadState("networkidle");
+  // The Timeline Gaps table is the node this scope first caught (#2923). Require it painted, so a
+  // failed panel load cannot quietly drop the regression target out of the scan.
+  await expect(page.locator("#timelineGaps .vql-result-wrap")).toBeVisible({ timeout: 30_000 });
+  await waitForStableCockpit(page);
+  await scan("dashboard-case-analyst");
+
   // 3. Representative dialogs. Modals are the surface this issue changed most, so they are scanned
   //    open — a closed modal is display:none and axe skips it entirely, which would have let the
   //    dialog work land with no scan coverage at all.
@@ -101,5 +127,5 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
   // No pass/fail assertion on the counts here on purpose: the gate is the ledger comparison in
   // scripts/check-a11y.mjs, so a pre-existing violation does not fail the run while a NEW one does.
   // This only guards the scan itself — an empty result set means the scan silently did nothing.
-  expect(Object.keys(results)).toHaveLength(5);
+  expect(Object.keys(results)).toHaveLength(6);
 });

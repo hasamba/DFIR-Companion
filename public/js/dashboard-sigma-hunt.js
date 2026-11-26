@@ -593,7 +593,7 @@
         }
         const n = (j.rows || []).length;
         target.innerHTML = n
-          ? renderVqlRows(j)
+          ? renderVqlRows(j, "Sigma hunt results")
           : "<span data-safe-style='color:var(--text-muted)'>no results yet — endpoints report on their next poll. Click ↻ to refresh.</span>";
         return n;
       })

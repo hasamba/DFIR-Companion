@@ -66,7 +66,7 @@
     }).join("");
     el.innerHTML =
       `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-bottom:6px">Periodic traffic is a hunting lead, not a verdict — legitimate software also polls on a timer. Confirm the destination reputation and the owning process.</div>` +
-      `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+      `<div class="vql-result-wrap" tabindex="0" role="region" aria-label="Beacon candidates"><table class="vql-result"><thead><tr>` +
       `<th>Severity</th><th>Source</th><th>Destination</th><th>Interval</th><th>Jitter</th><th>Events</th><th>When</th>` +
       `</tr></thead><tbody>${rows}</tbody></table></div>`;
   }
@@ -205,7 +205,7 @@
       ? `<div class="cc-caveats" data-safe-style="margin-top:8px;font-size:11px;color:var(--text-muted)">${caveats.map(c => `<div>${esc(c)}</div>`).join("")}</div>`
       : "";
     el.innerHTML =
-      `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+      `<div class="vql-result-wrap" tabindex="0" role="region" aria-label="Cloud coverage"><table class="vql-result"><thead><tr>` +
       `<th>Provider</th><th>Scope</th><th>Records</th><th>Range</th><th>Categories</th>` +
       `</tr></thead><tbody>${rows}</tbody></table></div>` + caveatsHtml + renderCloudWeaknesses();
   }

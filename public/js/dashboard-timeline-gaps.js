@@ -91,7 +91,7 @@
       .join("");
     el.innerHTML =
       `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-bottom:6px">A coverage gap is a lead, not proof — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is High only when a Medium-or-higher row sits at its edge or the case records a log clear (EID 1102/104) or an audit-policy change (EID 4719); otherwise it is Low. A reboot or shutdown at the gap edge explains the silence, and a silence that ends on the collection's own first row is the wait before collection (Info). Confirm against the collection scope and host clocks.</div>` +
-      `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+      `<div class="vql-result-wrap" tabindex="0" role="region" aria-label="Timeline gaps"><table class="vql-result"><thead><tr>` +
       `<th>Severity</th><th>Type</th><th>Duration</th><th>When</th><th>Silent sources</th><th>Still active</th>` +
       `</tr></thead><tbody>${rows}</tbody></table></div>`;
   }

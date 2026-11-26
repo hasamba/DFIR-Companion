@@ -82,7 +82,7 @@
     const self = esc(String(d.selfFactor != null ? d.selfFactor : d.spikeFactor));
     el.innerHTML =
       `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-bottom:6px">An event-rate spike is a triage lead — a host flooding logs can be an attacker running recon, ransomware encrypting, or a noisy EDR rule. <strong>peer</strong> = busier than other assets this bucket; <strong>self</strong> = bursting above its own normal rate. Verify each against the raw timeline; suppress noise with the <em>false-positive</em> tag to drop it from the baseline. Bucket: ${esc(String(d.bucketMinutes))} min · peer ${esc(String(d.spikeFactor))}× / self ${self}×.</div>` +
-      `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+      `<div class="vql-result-wrap" tabindex="0" role="region" aria-label="Timeline anomalies"><table class="vql-result"><thead><tr>` +
       `<th>Severity</th><th>Asset</th><th title="peer = vs other assets this bucket; self = vs this asset's own baseline">Type</th><th>Bucket</th><th>Events</th><th>Baseline</th><th>Ratio</th>` +
       `</tr></thead><tbody>${rows}</tbody></table></div>`;
   }
