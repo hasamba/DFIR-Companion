@@ -68,6 +68,8 @@ export interface ImportIngestDeps {
   redactErr: (err: unknown) => string;
   /** Content-based tagger run over just the events an import added (see analysis/taggerAuto.ts). */
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** The held tagger for a Watson paste's rows a settle meets (#2918, composition/importTaggers.ts). */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   getControl: (caseId: string) => Promise<AiControl>;
   applyWhitelistToCase: (caseId: string) => Promise<{ matched: number; added: number }>;
   applyNsrlToCase: (caseId: string) => Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
@@ -509,7 +511,13 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
 
   // The forensic gate's demote, and the settle tail both streamed entry points share (#1874).
   const demote = createImportDemote({ options, runStateExclusive });
-  const settleDeps: StreamedSettleDeps = { options, runStateExclusive, autoTagImported, demote };
+  const settleDeps: StreamedSettleDeps = {
+    options,
+    runStateExclusive,
+    autoTagImported,
+    demote,
+    tagHeld: deps.tagHeld,
+  };
   // The section's snapshot (analysis/importBaseline.ts). Best-effort: null means no diff, never a failed import.
   const baselineOf = async (caseId: string): Promise<ImportBaseline | null> =>
     options.stateStore

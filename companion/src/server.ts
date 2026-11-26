@@ -14,7 +14,7 @@ import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
 import { ImportLock } from "./analysis/importLock.js";
 import { createCaseImportMemoryGuard } from "./analysis/importMemoryGuard.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
-import { importTagger } from "./routes/routeSettleDeps.js";
+import { createImportTaggers } from "./composition/importTaggers.js";
 import {
   isHostAllowed,
   parseAllowedOrigins,
@@ -138,11 +138,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   options.jobManager?.useModelResolver(jobModelResolver(options.pipeline));
   options.jobManager?.useServedModels(servedModels); // #1601: stamp the version each AI job ran on
 
-  // Automatic tagging of an import's new events, after they are dual-written into the super-timeline:
-  // the content tagger (Timesketch tagger analyzer, ported; TAGGER_AUTO-gated — analysis/taggerAuto.ts)
-  // and the cloud collector's own calls (#2487). Best-effort + non-fatal. Bound once here so every
-  // import site can fire it; routes/routeSettleDeps.ts binds the same one.
-  const autoTagImported = importTagger({ options, store, runStateExclusive, logLine });
+  // The content tagger every import site fires, and the held tagger for a Watson paste's rows (#2918).
+  const { autoTagImported, tagHeld } = createImportTaggers({ options, store, runStateExclusive, logLine });
 
   // Diagnostics runtime state (#118): the capped error rings + per-importer health behind the
   // Health/Diagnostics page. See composition/diagnosticsRings.ts for why redaction is on the way in.
@@ -207,6 +204,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     recordImporterRun,
     redactErr,
     autoTagImported,
+    tagHeld,
     getControl,
     applyWhitelistToCase: appliers.applyWhitelistToCase,
     applyNsrlToCase: appliers.applyNsrlToCase,

@@ -35,8 +35,21 @@ function recordsOf(events: readonly ForensicEvent[]): Record<string, Record<stri
   return out;
 }
 
-async function pasteName(deps: WriterDeps, caseId: string, pasteId: string | undefined): Promise<string> {
-  if (!pasteId) return "(unknown paste)";
+/**
+ * #2918: a held card with no paste in the chat (a re-grade found it after a stop that came before the
+ * paste was recorded) names the stored file(s) its rows came from instead.
+ */
+function storedFilesOf(events: readonly ForensicEvent[]): string {
+  const files = [...new Set(events.flatMap((e) => e.sourceScreenshots))]
+    .filter((s) => typeof s === "string")
+    .sort();
+  if (!files.length) return "(unknown paste)";
+  return files.length > 3 ? `${files.slice(0, 3).join(", ")} and ${files.length - 3} more` : files.join(", ");
+}
+
+async function pasteName(deps: WriterDeps, caseId: string, p: WatsonEventPromoteProposal): Promise<string> {
+  const pasteId = p.pasteId;
+  if (!pasteId) return storedFilesOf(p.events);
   // A plain read: the dispatcher holds this case's chat update, which load() does not queue behind.
   const chat = await deps.chatStore.load(caseId).catch(() => undefined);
   return chat?.pastes.find((x) => x.id === pasteId)?.filename ?? pasteId;
@@ -48,7 +61,7 @@ const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" 
 /** The case timeline note: the paste the rows came from, or how many raw rows Watson cited (no paste read). */
 async function noteFor(deps: WriterDeps, caseId: string, p: WatsonEventPromoteProposal): Promise<string> {
   if (isSuper(p)) return `Watson cited ${plural(p.events.length, "super-timeline row")}`;
-  return `Watson paste ${await pasteName(deps, caseId, p.pasteId)}`;
+  return `Watson paste ${await pasteName(deps, caseId, p)}`;
 }
 
 /**
