@@ -288,10 +288,20 @@
   // followed by a check that this render is still the newest for the case on screen: an older
   // render used to go on appending into the box after a newer one had cleared it.
   let baselineCase = null;
+  // #2915: a cancelled or failed case load blanks the panel and retires any render still running; the
+  // next open — the same case included — renders it again.
+  function onBaselineReset(caseId) {
+    if (caseId !== null) return;
+    baselineRenderGen++;
+    baselineCase = null;
+    const box = byId("clientBaselinePanel");
+    if (box) box.replaceChildren();
+  }
   async function loadClientBaseline(caseId, note = "") {
     const box = byId("clientBaselinePanel");
     if (!box || !caseId) return;
     if (!baselineOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onBaselineReset);
     if (baselineCase !== caseId) {
       baselineCase = caseId;
       box.replaceChildren();

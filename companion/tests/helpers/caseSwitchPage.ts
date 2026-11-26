@@ -1,5 +1,6 @@
-// A fake dashboard page for the case-switch suites (#2900, #2904): stable elements, a #caseId
-// that names the case on screen, and a fetch the test answers by hand, in the order it chooses.
+// A fake dashboard page for the case-switch suites (#2900, #2904, #2915): stable elements, a #caseId
+// that names the case on screen, a fetch the test answers by hand, in the order it chooses, and a
+// DfirPanelDefer whose reset listeners the test fires (cancel()).
 
 export interface Pending {
   url: string;
@@ -22,7 +23,9 @@ export interface FakeEl {
   dataset: Record<string, string>;
   hidden?: boolean;
   children: unknown[];
-  addEventListener(): void;
+  addEventListener(type?: string, fn?: () => void): void;
+  /** Runs the listeners added for `type` (a click on a button the module built). */
+  fire(type: string): void;
   setAttribute(name: string, value: string): void;
   removeAttribute(): void;
   appendChild(child: unknown): unknown;
@@ -44,6 +47,7 @@ export function fakePage(caseId = "CASE-A") {
   const el = (id: string): FakeEl => {
     let e = els.get(id);
     if (!e) {
+      const listeners: Record<string, (() => void)[]> = {};
       const made: FakeEl = {
         id,
         value: "",
@@ -57,7 +61,10 @@ export function fakePage(caseId = "CASE-A") {
         style: {},
         dataset: {},
         children: [],
-        addEventListener: () => {},
+        addEventListener: (type, fn) => {
+          if (type && fn) (listeners[type] ??= []).push(fn);
+        },
+        fire: (type) => (listeners[type] ?? []).forEach((fn) => fn()),
         setAttribute: (name, value) => {
           if (name.startsWith("data-")) made.dataset[name.slice(5)] = value;
         },
@@ -78,13 +85,14 @@ export function fakePage(caseId = "CASE-A") {
         focus: () => {},
         classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
       };
-      // As in a browser, writing textContent replaces the markup.
+      // As in a browser, writing textContent replaces the markup and the child nodes.
       let text = "";
       Object.defineProperty(made, "textContent", {
         get: () => text,
         set: (v: string) => {
           text = v;
           made.innerHTML = v;
+          made.children = [];
         },
       });
       els.set(id, made);
@@ -110,6 +118,14 @@ export function fakePage(caseId = "CASE-A") {
       });
     });
   const timers: (() => void)[] = [];
+  // The reset hook of js/dashboard-panel-defer.js: the same dedupe-by-identity contract.
+  const resetListeners: ((caseId: string | null) => void)[] = [];
+  const DfirPanelDefer = {
+    stoppedText: "Not loaded — the case load was stopped. Open a case to load this panel.",
+    onReset: (fn: (caseId: string | null) => void) => {
+      if (!resetListeners.includes(fn)) resetListeners.push(fn);
+    },
+  };
   const globals: Record<string, unknown> = {
     document: {
       getElementById: el,
@@ -133,6 +149,7 @@ export function fakePage(caseId = "CASE-A") {
     DfirTimelineView: { timeQuery: () => "", search: () => "", excludeTerms: () => [] },
     DfirState: { lastFt: () => null, lastState: () => null, lastSuperData: () => null },
     activeCaseId: caseId,
+    DfirPanelDefer,
   };
   return {
     el,
@@ -146,5 +163,13 @@ export function fakePage(caseId = "CASE-A") {
       el("caseId").value = id;
       if (sandbox) (sandbox as { activeCaseId?: string }).activeCaseId = id;
     },
+    // A cancelled (or failed) case load, as abandonCaseLoad runs it: #caseId is emptied
+    // (clearLoadedCase), DfirPanelDefer.reset(null) tells every listener, activeCaseId goes last.
+    cancel: (sandbox?: object) => {
+      el("caseId").value = "";
+      resetListeners.forEach((fn) => fn(null));
+      if (sandbox) (sandbox as { activeCaseId?: string | null }).activeCaseId = null;
+    },
+    resetListenerCount: () => resetListeners.length,
   };
 }

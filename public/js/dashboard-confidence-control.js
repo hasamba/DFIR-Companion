@@ -74,8 +74,17 @@
     set("hideAutoFindings", "checked", false);
     set("hideGapFindings", "checked", false);
   }
+  // #2915: a cancelled or failed case load forgets whose filters the controls hold and retires a read on
+  // its way. The values stay — they filter the view the cancel left on screen, which is not redrawn —
+  // and the next open, the same case included, resets and reads them again.
+  function onConfReset(caseId) {
+    if (caseId !== null) return;
+    confLoadGen++;
+    confCase = null;
+  }
   function loadConfidenceControl(caseId) {
     if (!confOnScreen(caseId)) return; // a late caller (an owed reload) for a case the analyst left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onConfReset);
     resetConfidenceControlsFor(caseId);
     // The analyst's own edit is still waiting to save; its echo will re-read the newer value.
     if (confPending && confPending.caseId === caseId) return;

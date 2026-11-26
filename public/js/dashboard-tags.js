@@ -244,13 +244,23 @@
   // case drops the previous case's tags — and closes an open tag editor, whose save would
   // land on this case — at once (no render: this case's render reads the empty index).
   let tagsCase = null;
+  function clearTags(caseId) {
+    tagsCase = caseId;
+    tagsByTarget = new Map(); // the stars were reset with the case switch (dashboard-case-connect.js)
+    if (tagTarget) closeTagModal();
+  }
+  // #2915: a cancelled or failed case load drops the index, the lock (the aborted fetch never
+  // settles) and an open editor — no render, as at the switch. The next open — the same case
+  // included — reads the tags again.
+  function onTagsReset(caseId) {
+    if (caseId !== null) return;
+    resetTagLoads();
+    clearTags(null);
+  }
   function loadTags(caseId) {
     if (!tagsOnScreen(caseId)) return; // a late caller for a case the analyst has left
-    if (tagsCase !== caseId) {
-      tagsCase = caseId;
-      tagsByTarget = new Map(); // the stars were reset with the case switch (dashboard-case-connect.js)
-      if (tagTarget) closeTagModal();
-    }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onTagsReset);
+    if (tagsCase !== caseId) clearTags(caseId);
     if (tagsLoad) {
       tagsAgain = caseId;
       return;

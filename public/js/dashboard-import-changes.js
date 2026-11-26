@@ -42,15 +42,30 @@
   // (no re-render — this case's render follows); only the newest answer for the case on screen paints.
   let importMetaCase = null;
   let importMetaSeq = 0;
+  function clearImportMeta(caseId) {
+    importMetaCase = caseId;
+    newEventKeys = new Set();
+    newIocKeys = new Set();
+    hideBanner("importMeta");
+    hideBanner("iocImportMeta");
+  }
+  // #2915: a cancelled or failed case load drops all three banners (and the "new" rows, and the held
+  // list's re-poll); the next open — the same case included — reads them again.
+  function onImportChangesReset(caseId) {
+    if (caseId !== null) return;
+    importMetaSeq++, dropSeq++, heldSeq++;
+    clearImportMeta(null);
+    dropCase = heldCase = null;
+    clearTimeout(heldTimer);
+    hideBanner("dropStatus");
+    hideBanner("dropHeld");
+  }
+  const icListenReset = () =>
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onImportChangesReset);
   function loadImportMeta(caseId) {
     if (!icOnScreen(caseId)) return; // a late caller for a case the analyst has left
-    if (importMetaCase !== caseId) {
-      importMetaCase = caseId;
-      newEventKeys = new Set();
-      newIocKeys = new Set();
-      hideBanner("importMeta");
-      hideBanner("iocImportMeta");
-    }
+    icListenReset();
+    if (importMetaCase !== caseId) clearImportMeta(caseId);
     const seq = ++importMetaSeq;
     fetch(`/cases/${caseId}/import-meta`)
       .then((r) => r.json())
@@ -64,6 +79,7 @@
   let dropSeq = 0;
   function loadDropStatus(caseId) {
     if (!icOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    icListenReset();
     if (dropCase !== caseId) {
       dropCase = caseId;
       hideBanner("dropStatus");
@@ -83,6 +99,7 @@
   let heldSeq = 0;
   function loadDropHeld(caseId) {
     if (!icOnScreen(caseId)) return; // #2904: a late caller for a case the analyst has left
+    icListenReset();
     clearTimeout(heldTimer);
     if (heldCase !== caseId) {
       heldCase = caseId;
