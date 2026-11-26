@@ -200,3 +200,36 @@ describe("a failed scope read says so (#2915)", () => {
     expect(unreadable(t)).toBe(false);
   });
 });
+
+// #2929: an answer that is not a window object (null, a list, a string, a number) is a failed read —
+// never "no window", which would show the timeline unfiltered with the chip saying "none".
+const NOT_A_WINDOW: [string, unknown][] = [
+  ["null", null],
+  ["a list", []],
+  ["a string", "x"],
+  ["a number", 7],
+];
+describe("a /scope answer that is not an object is a failed read (#2929)", () => {
+  it.each(NOT_A_WINDOW)("%s: the chip says it could not load", async (_name, body) => {
+    const t = scopePage();
+    t.p.switchCase("CASE-B");
+    t.sb.loadScope("CASE-B");
+    t.p.requests[0].answer(body);
+    await drainAll();
+    expect(unreadable(t)).toBe(true);
+    expect(chipText(t)).not.toContain("none (all events)");
+  });
+
+  it.each(NOT_A_WINDOW)("%s on a re-read keeps the window already held", async (_name, body) => {
+    const t = scopePage();
+    t.p.switchCase("CASE-B");
+    t.sb.loadScope("CASE-B");
+    t.p.requests[0].answer(B_WINDOW);
+    await drainAll();
+    t.sb.loadScope("CASE-B");
+    t.p.requests[1].answer(body);
+    await drainAll();
+    expect(unreadable(t)).toBe(false);
+    expect(t.sb.DfirScope.get()).toEqual(B_WINDOW);
+  });
+});

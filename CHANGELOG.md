@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Old action answers stay out after a cancel and reopen** — custody Verify, duplicate-host merge / dismiss / undo, tagger row tags, Presidio decisions, pins, finding status, playbook hunt suggestions, report details and source-trust saves no longer paint an answer from before a cancelled load, and Verify cannot be pressed twice; a malformed time-window answer counts as a failed read (closes #2929)
 - **Scope and light panels after a cancel or a failed read** — a live scope change wins over an older scope read, a cancelled case load clears the comments, tags, report details, custody and other light panels, and a failed scope read says "could not load the time window" with Retry instead of "none (all events)" (closes #2915)
 - **Result tables scroll from the keyboard** — scrolling result tables (Timeline Gaps, Timeline Anomalies, Beacon Candidates, Cloud Coverage, hunt and query results) take keyboard focus and are announced by name, so keyboard and screen-reader users can scroll them (closes #2923)
 - **Cross-case capture warning on a phone** — the "screenshots are arriving for another case" banner wraps instead of pushing the dashboard sideways at narrow widths (closes #2919)

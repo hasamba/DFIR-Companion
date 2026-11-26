@@ -111,7 +111,11 @@
   // #2904: a load for another case blanks the previous case's details at once — its text must not
   // sit in this case's form, not even when this case's read fails.
   let rmShownFor = "";
+  // #2929: a Save runs in one generation, which moves only when the form's owner changes (a cancel
+  // included): a Save begun before a cancel and a reopen of the same case sends and paints nothing.
+  let rmSaveGen = 0;
   function blankReportMeta(caseId) {
+    rmSaveGen++;
     rmShownFor = caseId;
     rmFilledFor = "";
     fillReportMeta({});
@@ -137,15 +141,17 @@
   function saveReportMeta(edits) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return Promise.resolve();
-    if (rmFilledFor === caseId) return putReportMeta(caseId, edits);
+    const gen = rmSaveGen;
+    const live = () => gen === rmSaveGen && rmOnScreen(caseId);
+    if (rmFilledFor === caseId) return putReportMeta(caseId, edits, live);
     const st = document.getElementById("rmStatus");
     st.textContent = "loading case details…";
     return fetchReportMeta(caseId)
-      .then(() => putReportMeta(caseId, edits))
-      .catch((e) => (st.textContent = "save failed: " + e.message));
+      .then(() => (live() ? putReportMeta(caseId, edits, live) : undefined))
+      .catch((e) => live() && (st.textContent = "save failed: " + e.message));
   }
 
-  function putReportMeta(caseId, edits) {
+  function putReportMeta(caseId, edits, live) {
     for (const [id, value] of Object.entries(edits || {})) {
       const el = document.getElementById(id);
       if (el) el.value = value;
@@ -192,13 +198,14 @@
         return r.json();
       })
       .then((m) => {
-        if (!rmOnScreen(caseId)) return; // #2904: saved, but the analyst is on another case now
+        if (!live()) return; // #2904/#2929: saved, but the form now shows another case or a reopen
         fillReportMeta(m);
         rmFilledFor = caseId;
         st.textContent = "saved ✓";
-        setTimeout(() => (st.textContent = ""), 2500);
+        setTimeout(() => live() && st.textContent === "saved ✓" && (st.textContent = ""), 2500);
       })
       .catch((e) => {
+        if (!live()) return;
         st.textContent =
           e.message === STALE_TEXT
             ? STALE_TEXT

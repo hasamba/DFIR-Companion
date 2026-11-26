@@ -319,9 +319,14 @@
   }
   let fpLoadSeq = 0;
   let fpLoadedCaseId = null;
+  // #2929: an un-mark or Save answer paints only in the generation it was sent in. It moves when an
+  // owner changes (a cancel included), never on a same-case reload.
+  let fpGen = 0;
+  const fpLive = (caseId, gen = fpGen) => () => gen === fpGen && fpOnScreen(caseId);
   // #2904: the panel's rows (and their un-mark buttons) are the previous case's too — blank, not
   // "Nothing marked", which would be a claim about this case before its answer.
   function clearFalsePositives(caseId) {
+    fpGen++;
     fpLoadedCaseId = caseId;
     fpMarkers = [];
     const el = document.getElementById("false-positive");
@@ -433,6 +438,7 @@
     if (!fpOnScreen(caseId)) return; // a late caller for a case the analyst has left
     fpListenReset();
     if (stCase !== caseId) {
+      fpGen++;
       stCase = caseId;
       renderSourceTrust(null); // the previous case's overrides must not be saved onto this one
       const msg = document.getElementById("sourceTrustMsg");
@@ -478,6 +484,7 @@
             }
           });
         msg.textContent = "saving…";
+        const live = fpLive(caseId);
         fetch(`/cases/${caseId}/source-trust`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
@@ -488,11 +495,12 @@
             return r.json();
           })
           .then((p) => {
-            if (!fpOnScreen(caseId)) return; // #2904: the analyst switched case meanwhile
+            if (!live()) return; // #2904/#2929: the analyst switched case, or cancelled and reopened it
             renderSourceTrust(p);
             msg.textContent = "saved — applies on next synthesis";
           })
           .catch((err) => {
+            if (!live()) return;
             msg.textContent =
               "failed: " +
               err.message +
@@ -545,6 +553,7 @@
         const ci = mid.indexOf(":");
         const unKind = ci >= 0 ? mid.slice(0, ci) : "ioc";
         const unRef = ci >= 0 ? mid.slice(ci + 1) : mid;
+        const live = fpLive(caseId);
         fetch(`/cases/${caseId}/false-positive/remove`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -555,7 +564,7 @@
             return r.json();
           })
           .then((markers) => {
-            commitFalsePositives(caseId, markers);
+            if (live()) commitFalsePositives(caseId, markers); // #2929
             const tid = unKind === "ioc" ? qaResolveIocId(unRef, null) : unRef;
             qaAudit(caseId, unKind, tid, `un-marked false positive: ${unRef}`);
           })

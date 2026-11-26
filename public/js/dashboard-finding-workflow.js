@@ -32,11 +32,13 @@
   // assignees and statuses at once (this case's state render reads the cleared map).
   let workflowCase = null;
   let workflowSeq = 0;
+  let workflowGen = 0; // #2929: a PATCH answer paints only in the generation it was sent in (owner change / cancel)
   // #2915: a cancelled or failed case load drops the map too (no render — the view the cancel left is
   // not redrawn); the next open — the same case included — reads it again.
   function onWorkflowReset(caseId) {
     if (caseId !== null) return;
     workflowSeq++;
+    workflowGen++;
     workflowCase = null;
     workflowByFinding = new Map();
   }
@@ -44,6 +46,7 @@
     if (!workflowOnScreen(caseId)) return; // a late caller for a case the analyst has left
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onWorkflowReset);
     if (workflowCase !== caseId) {
+      workflowGen++;
       workflowCase = caseId;
       workflowByFinding = new Map();
     }
@@ -97,6 +100,7 @@
   function patchFindingWorkflow(fid, patch) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId || !fid) return;
+    const gen = workflowGen;
     fetch(
       `/cases/${caseId}/findings/${encodeURIComponent(String(fid))}/workflow`,
       {
@@ -108,7 +112,7 @@
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         // Reconcile locally for instant feedback; the WS finding_workflow_changed also arrives.
-        if (data && "record" in data && workflowOnScreen(caseId)) {
+        if (data && "record" in data && gen === workflowGen && workflowOnScreen(caseId)) {
           if (data.record) workflowByFinding.set(String(fid), data.record);
           else workflowByFinding.delete(String(fid));
           if (DfirState.lastState()) render(DfirState.lastState());
