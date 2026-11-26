@@ -31,9 +31,19 @@ import { maxEventsDefault } from "./eventAggregate.js";
  *   176,000-180,000-event case (a 50,000-row SIEM file; small Velociraptor and SIEM files) complete
  *   under 4,144 MB (`=4096`). 36 KB is 1.3x the first and 1.5x the second. (#1874's figure was 48 KB:
  *   the same SIEM import completed under 1.5 GB.)
- * - Not covered by either figure: a large file read whole whose kept rows are capped. A 100 MB SIEM
- *   file kept at 2,000 rows peaked about 0.9 GB above the idle server with 660 MB of live heap, against
- *   estimates of 250 MB and 70 MB. Its memory follows the file, not the events.
+ * - A large file read whole costs memory per BYTE, not per kept row: a 100 MB SIEM file kept at
+ *   2,000 rows peaked about 0.9 GB above the idle server with 660 MB of live heap, against estimates
+ *   of 250 MB and 70 MB (#2814). Since #2823 the formats that measured this read in parts instead: a
+ *   SIEM / EDR JSON Lines export and a Windows Event XML export of 32 MB or more stream from disk
+ *   (analysis/ingest/windowsLogFileImport.ts), so the decoded text, its lines and the parsed records
+ *   never exist at once. What such an import still holds grows with its distinct aggregation groups,
+ *   held DNS rows and IOCs — far below the file for repetitive logs, and bounded by the rows for
+ *   unique ones. A file of those two kinds that cannot stream (one JSON document, UTF-16, or under
+ *   32 MB) is still read whole, and its caller says so (`wholeRead`): the incoming part of the
+ *   estimate is then the LARGER of the event figure and 10 bytes RSS / 7 bytes heap per input byte
+ *   (the 100 MB measurement, rounded up; extrapolated to other sizes and shapes). Max, not a sum, so
+ *   an import whose events already dominate is not charged twice; the case term is still added, as
+ *   the file cost measured on top of it. Every other kind passes no such hint and is unchanged.
  * The case count comes from the index, so it is exact, not sampled from GC timing. The rows an
  * import will add are estimated from the file's size — about one event per 200 bytes, which
  * over-counts every format we measured — capped by DFIR_MAX_EVENTS. When the caller does not know
@@ -57,6 +67,8 @@ import { maxEventsDefault } from "./eventAggregate.js";
 export const IMPORT_RSS_BYTES_PER_EVENT = 128 * 1024;
 export const IMPORT_HEAP_BYTES_PER_EVENT = 36 * 1024;
 export const IMPORT_INPUT_BYTES_PER_EVENT = 200;
+export const IMPORT_RSS_BYTES_PER_INPUT_BYTE = 10;
+export const IMPORT_HEAP_BYTES_PER_INPUT_BYTE = 7;
 const UNSIZED_INCOMING_EVENTS = 2000;
 
 export class ImportMemoryRefusedError extends Error {
@@ -89,6 +101,8 @@ export interface MemoryAssessmentInput extends MemorySnapshot {
   reservedHeapBytes?: number;
   /** The refusal's wording for what was stored and how to retry — see ImportAdmissionHint. */
   wording?: RefusalWording;
+  /** Size of a file the import reads whole (#2823): its bytes, not its kept rows, set the cost. */
+  wholeReadBytes?: number;
 }
 
 /**
@@ -108,11 +122,32 @@ export type MemoryAssessment =
 const gb = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 const count = (n: number): string => n.toLocaleString("en-US");
 
+const mb = (bytes: number): string => `${Math.round(bytes / 1024 ** 2).toLocaleString("en-US")} MB`;
+
+// The incoming part of the estimate: the event figure, or a whole-read file's figure when larger.
+function incomingCost(input: MemoryAssessmentInput): { rss: number; heap: number; fileDecides: boolean } {
+  const bytes = input.wholeReadBytes;
+  const fileBytes = typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  const eventsRss = input.incomingEvents * IMPORT_RSS_BYTES_PER_EVENT;
+  const fileRss = fileBytes * IMPORT_RSS_BYTES_PER_INPUT_BYTE;
+  return {
+    rss: Math.max(eventsRss, fileRss),
+    heap: Math.max(
+      input.incomingEvents * IMPORT_HEAP_BYTES_PER_EVENT,
+      fileBytes * IMPORT_HEAP_BYTES_PER_INPUT_BYTE,
+    ),
+    fileDecides: fileRss > eventsRss,
+  };
+}
+
 export function assessImportMemory(input: MemoryAssessmentInput): MemoryAssessment {
-  const events = input.caseEvents + input.incomingEvents;
-  const needBytes = events * IMPORT_RSS_BYTES_PER_EVENT;
+  const incoming = incomingCost(input);
+  const needBytes = input.caseEvents * IMPORT_RSS_BYTES_PER_EVENT + incoming.rss;
   const usable = input.availableBytes + input.rssBytes - input.reservedBytes;
-  const heapNeed = events * IMPORT_HEAP_BYTES_PER_EVENT;
+  const heapNeed = input.caseEvents * IMPORT_HEAP_BYTES_PER_EVENT + incoming.heap;
+  const what = incoming.fileDecides
+    ? `reading this ${mb(input.wholeReadBytes ?? 0)} file whole and processing it needs`
+    : null;
   const refused = (why: string, fix: string): MemoryAssessment => ({
     ok: false,
     needBytes,
@@ -123,7 +158,7 @@ export function assessImportMemory(input: MemoryAssessmentInput): MemoryAssessme
   });
   if (needBytes > usable) {
     return refused(
-      `processing another import needs about ${gb(needBytes)} of memory, but the server can use ` +
+      `${what ?? "processing another import needs"} about ${gb(needBytes)} of memory, but the server can use ` +
         `about ${gb(Math.max(0, usable))}${input.reservedBytes > 0 ? " while other imports run" : ""}.`,
       "Free memory on the machine, give the server more, or wait for other imports to finish.",
     );
@@ -133,7 +168,7 @@ export function assessImportMemory(input: MemoryAssessmentInput): MemoryAssessme
   const reservedHeap = input.reservedHeapBytes ?? 0;
   if (heapNeed > input.heapLimitBytes - reservedHeap) {
     return refused(
-      `processing it needs about ${gb(heapNeed)} of JavaScript heap, but the server's heap limit is ` +
+      `${what ?? "processing it needs"} about ${gb(heapNeed)} of JavaScript heap, but the server's heap limit is ` +
         `${gb(input.heapLimitBytes)}${reservedHeap > 0 ? `, ${gb(reservedHeap)} of it held by other imports` : ""}.`,
       reservedHeap > 0
         ? "Wait for other imports to finish, or restart the server with a larger heap (node --max-old-space-size=<MB>)."
@@ -154,6 +189,8 @@ export interface ImportAdmissionHint {
   /** The work is not bound by DFIR_MAX_EVENTS (a Sigma re-grade re-parses every stored file), so the
    *  estimate is not capped by it either. */
   uncapped?: boolean;
+  /** The file of `incomingBytes` is read whole into memory (#2823): it is charged by its size too. */
+  wholeRead?: boolean;
 }
 
 /** How the admission is held. */
@@ -220,7 +257,11 @@ interface Reservation {
   readonly needBytes: number;
   readonly heapNeedBytes: number;
   readonly wording?: RefusalWording;
+  readonly wholeReadBytes?: number;
 }
+
+const wholeReadBytesOf = (hint?: ImportAdmissionHint): number | undefined =>
+  hint?.wholeRead && typeof hint.incomingBytes === "number" ? hint.incomingBytes : undefined;
 
 export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemoryGuard {
   const probe = deps.probe ?? processMemorySnapshot;
@@ -248,6 +289,7 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
       reservedBytes: othersBytes,
       reservedHeapBytes: othersHeap,
       wording: own.wording,
+      wholeReadBytes: own.wholeReadBytes,
       ...probe(),
     });
     if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message, othersBytes > 0 || othersHeap > 0);
@@ -256,6 +298,7 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
       needBytes: Math.max(own.needBytes, verdict.needBytes),
       heapNeedBytes: Math.max(own.heapNeedBytes, verdict.heapNeedBytes),
       wording: own.wording,
+      wholeReadBytes: own.wholeReadBytes,
     };
     hold(grown, own);
     sections.set(caseId, { token, held: grown });
@@ -273,12 +316,14 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
         return NOTHING_RESERVED;
       }
       const incomingEvents = estimateIncomingEvents(maxEvents(), hint);
+      const wholeReadBytes = wholeReadBytesOf(hint);
       const verdict = assessImportMemory({
         caseEvents,
         incomingEvents,
         reservedBytes: reserved,
         reservedHeapBytes: reservedHeap,
         wording: hint?.wording,
+        wholeReadBytes,
         ...probe(),
       });
       if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message, reserved > 0 || reservedHeap > 0);
@@ -287,6 +332,7 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
         needBytes: verdict.needBytes,
         heapNeedBytes: verdict.heapNeedBytes,
         wording: hint?.wording,
+        wholeReadBytes,
       };
       hold(admitted);
       const token = {};

@@ -66,9 +66,15 @@ export class WindowsEventBuilder {
   private readonly tally: SiemDebugTally; // #1736 — per-attempt mapping decisions
   private readonly clock = createClockDisputeTally(); // #2089 — Sysmon rows re-dated by the record time
 
+  /**
+   * `osBehaviour: false` leaves out the cross-row OS-behaviour rules (#1621), which buildSiemResult
+   * does not run: a SIEM JSON Lines file streamed from disk (#2823) then builds exactly what the
+   * whole-text SIEM importer builds, one record at a time.
+   */
   constructor(
     private readonly format: string,
     private readonly opts: SiemImportOptions = {},
+    private readonly rules: { osBehaviour?: boolean } = {},
   ) {
     this.tally = createSiemDebugTally(opts.debug, opts.minSeverity);
     this.aggregator = this.tally.watch(
@@ -90,9 +96,10 @@ export class WindowsEventBuilder {
     const mapped = windows ?? mapGeneric(record, host, rowSink);
     this.tally.row(windows !== null, mapped);
     if (windows) this.clock.note(record);
-    this.os.note(record, [mapped]);
+    const os = this.rules.osBehaviour !== false;
+    if (os) this.os.note(record, [mapped]);
     collectWindowsConnCandidate(this.conns, mapped);
-    if (isOsBehaviourCandidateRow(record)) {
+    if (os && isOsBehaviourCandidateRow(record)) {
       this.os.offer(record, [mapped]);
       this.held.push({ m: mapped, rowSink, ordinal: recordIndex });
       return;
@@ -106,7 +113,7 @@ export class WindowsEventBuilder {
 
   /** Judge the held rows, then add each to the aggregator, yielding the running count. Idempotent. */
   *drainHeld(): Generator<number> {
-    this.os.resolve();
+    if (this.rules.osBehaviour !== false) this.os.resolve();
     const held = this.held;
     this.held = [];
     for (const [i, { m, rowSink, ordinal }] of held.entries()) {

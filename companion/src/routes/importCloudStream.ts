@@ -14,6 +14,7 @@ import type { ImportBase, RouteContext } from "./context.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { importVeloFileLogged } from "./importVeloStream.js";
+import { importWindowsLogFileLogged, isWindowsLogStreamKind } from "./importWindowsLogStream.js";
 import { routeSettleDeps, type SettleContext } from "./routeSettleDeps.js";
 
 /**
@@ -129,7 +130,8 @@ async function importCloudFileLogged(
   }
 }
 
-/** Run a stored upload that reads from disk: Plaso, a streamed cloud export, or large Velociraptor JSON Lines. */
+/** Run a stored upload that reads from disk: Plaso, a streamed cloud export, large Velociraptor JSON Lines,
+ *  or a large SIEM JSON Lines / Windows Event XML export (#2823). */
 export function runDiskImport(
   ctx: SettleContext,
   kind: string,
@@ -140,6 +142,8 @@ export function runDiskImport(
 ): Promise<InvestigationState> {
   if (isStreamKind(kind)) return importCloudFileLogged(ctx, caseId, kind, storedPath, storedName, base);
   if (kind === "velociraptor") return importVeloFileLogged(ctx, caseId, storedPath, storedName, base); // #2705
+  if (isWindowsLogStreamKind(kind))
+    return importWindowsLogFileLogged(ctx, caseId, kind, storedPath, storedName, base); // #2823
   return importPlasoFileLogged(ctx, caseId, storedPath, storedName, base);
 }
 

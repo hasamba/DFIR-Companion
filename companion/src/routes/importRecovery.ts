@@ -11,6 +11,7 @@ import { cancellableByParse, isAiDependent } from "./importKinds.js";
 import { parseAssetHost } from "../analysis/assetHost.js";
 import { runDiskImport } from "./importCloudStream.js";
 import { isStreamKind } from "../analysis/ingest/cloudStreamProviders.js";
+import { isWindowsLogStreamKind } from "./importWindowsLogStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
 import { createSuperEvictionTally, type SuperEviction } from "../analysis/superTimelineStore.js";
@@ -21,7 +22,7 @@ import { decodeImportedText } from "../ingest/decodeText.js";
 
 // The kinds whose streamed first run read the stored file from disk: a resume reads it the same way.
 const readsStoredFile = (kind: string): boolean =>
-  kind === "plaso" || kind === "velociraptor" || isStreamKind(kind);
+  kind === "plaso" || kind === "velociraptor" || isStreamKind(kind) || isWindowsLogStreamKind(kind); // #2823
 
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
