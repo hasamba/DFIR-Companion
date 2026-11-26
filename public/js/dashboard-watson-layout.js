@@ -209,6 +209,28 @@
     document.addEventListener("pointerup", stop);
   }
 
+  // The full panel covers the content below the top toolbar. The header wraps and collapses, so its
+  // bottom edge is written to --watson-top whenever it changes (a ResizeObserver, or resize as the
+  // fallback). dashboard-watson.js calls these by name (moved from there for its 400-line limit).
+  function watsonSyncTop() {
+    const h = typeof document.querySelector === "function" ? document.querySelector("header") : null;
+    const root = document.documentElement;
+    if (!h || !h.getBoundingClientRect || !root || !root.style || !root.style.setProperty) return;
+    root.style.setProperty("--watson-top", Math.max(0, Math.round(h.getBoundingClientRect().bottom)) + "px");
+  }
+  function watsonWatchHeader() {
+    const h = typeof document.querySelector === "function" ? document.querySelector("header") : null;
+    if (!h) return;
+    if (typeof ResizeObserver === "function") new ResizeObserver(watsonSyncTop).observe(h);
+    else window.addEventListener("resize", watsonSyncTop);
+    watsonSyncTop();
+  }
+  // A Hunt query's copy button: the <pre> beside it goes to the clipboard.
+  function watsonCopyQuery(el) {
+    const pre = el.parentElement && el.parentElement.querySelector("pre");
+    if (pre && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent).catch(() => {});
+  }
+
   function initWatsonLayout() {
     const saved = Number(store.get(WIDTH_KEY));
     if (saved) applyWidth(saved);
@@ -249,4 +271,7 @@
   window.watsonJumpSync = watsonJumpSync;
   window.watsonSetInputHeight = watsonSetInputHeight;
   window.watsonJumpEnd = watsonJumpEnd;
+  window.watsonSyncTop = watsonSyncTop;
+  window.watsonWatchHeader = watsonWatchHeader;
+  window.watsonCopyQuery = watsonCopyQuery;
 })();

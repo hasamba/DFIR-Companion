@@ -22,7 +22,7 @@
   // Risky cards whose second confirmation is on screen (by proposal id); cleared on a case switch.
   const wRiskArmed = new Set();
   // Risky launches whose "Yes, launch it" request is in flight: the button stays disabled (M-5).
-  const wRiskSending = new Set();
+  const wRiskSending = new Map(); // pid -> the token of its launch request in flight (#2943)
 
   const num = (n) => esc(String(Number(n) || 0));
   const rowsText = (n) => `${num(n)} row${Number(n) === 1 ? "" : "s"}`;
@@ -162,6 +162,9 @@
   }
 
   const currentCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
+  // #2943: an answer paints only while the owner it was sent under holds (dashboard-watson.js).
+  const actionLive = (caseId) =>
+    typeof watsonActionLive === "function" ? watsonActionLive(caseId) : () => caseId === currentCase();
 
   function showError(el, text) {
     const host = el.parentElement;
@@ -181,6 +184,7 @@
     const caseId = currentCase();
     const outcome = el.dataset.outcome;
     if (!caseId || (outcome !== "launched" && outcome !== "retry")) return;
+    const live = actionLive(caseId);
     try {
       const r = await fetch(
         `/cases/${encodeURIComponent(caseId)}/watson/proposals/${encodeURIComponent(el.dataset.pid)}/resolve`,
@@ -188,9 +192,9 @@
       );
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error ? String(body.error) : "HTTP " + r.status);
-      if (caseId === currentCase() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
+      if (live() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
     } catch (e) {
-      showError(el, "Watson could not update the launch: " + (e && e.message ? e.message : "network error"));
+      if (live()) showError(el, "Watson could not update the launch: " + (e && e.message ? e.message : "network error"));
     }
   }
 
@@ -203,7 +207,9 @@
     const caseId = currentCase();
     const pid = String(el.dataset.pid || "");
     if (!caseId || !pid || wRiskSending.has(pid)) return; // one request at a time (M-5)
-    wRiskSending.add(pid);
+    const live = actionLive(caseId);
+    const token = {};
+    wRiskSending.set(pid, token);
     el.disabled = true;
     try {
       const r = await fetch(
@@ -213,15 +219,18 @@
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error ? String(body.error) : "HTTP " + r.status);
       el.disabled = false;
-      if (caseId === currentCase() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
+      if (live() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
     } catch (e) {
-      showError(el, "Watson could not launch: " + (e && e.message ? e.message : "network error"));
+      if (live()) showError(el, "Watson could not launch: " + (e && e.message ? e.message : "network error"));
     } finally {
       // Whatever the outcome, a further launch of this card asks for the second confirmation again (M-7).
       // A refused click's button stays disabled (its message stays beside it) until the next render,
       // which draws "Review risk and launch…" again.
-      wRiskSending.delete(pid);
-      wRiskArmed.delete(pid);
+      // #2943: after an owner change watsonCaseReset already cleared both, and a newer launch may hold them.
+      if (wRiskSending.get(pid) === token) {
+        wRiskSending.delete(pid);
+        wRiskArmed.delete(pid);
+      }
     }
   }
 

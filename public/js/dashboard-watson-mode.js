@@ -15,6 +15,9 @@
   let wMode = "approve";
 
   const currentCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
+  // #2943: an answer counts only while the owner it was sent under holds (dashboard-watson.js).
+  const actionLive = (caseId) =>
+    typeof watsonActionLive === "function" ? watsonActionLive(caseId) : () => caseId === currentCase();
 
   function modeHtml(mode) {
     const btn = (m) =>
@@ -81,6 +84,7 @@
   async function chainPost(path, body, failText) {
     const caseId = currentCase();
     if (!caseId) return;
+    const live = actionLive(caseId);
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/watson/${path}`, {
         method: "POST",
@@ -90,10 +94,10 @@
       const reply = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(reply.error ? String(reply.error) : "HTTP " + r.status);
     } catch (e) {
-      alert(failText + (e && e.message ? e.message : "network error"));
+      if (live()) alert(failText + (e && e.message ? e.message : "network error"));
     }
     // The GET carries the whole panel state (mode, Velociraptor, run); it shows the saved chain either way.
-    if (typeof loadWatson === "function") loadWatson(caseId);
+    if (live() && typeof loadWatson === "function") loadWatson(caseId);
   }
 
   // data-act="watsonChainSet" (change on the number box) and "watsonChainStop" (dashboard-data-act.js).
@@ -118,6 +122,7 @@
     const caseId = currentCase();
     if (!caseId || !MODES.includes(mode) || mode === wMode) return;
     if (mode === "auto" && !confirm(AUTO_CONFIRM)) return;
+    const live = actionLive(caseId);
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/watson/mode`, {
         method: "POST",
@@ -126,8 +131,9 @@
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error ? String(body.error) : "HTTP " + r.status);
-      if (caseId === currentCase() && MODES.includes(body.mode)) wMode = body.mode;
+      if (live() && MODES.includes(body.mode)) wMode = body.mode;
     } catch (e) {
+      if (!live()) return; // #2943: the owner changed; the new case's GET sets the mode
       alert("The companion could not change Watson's mode: " + (e && e.message ? e.message : "network error"));
       if (typeof loadWatson === "function") loadWatson(caseId); // the GET re-syncs the mode shown (G15)
     }

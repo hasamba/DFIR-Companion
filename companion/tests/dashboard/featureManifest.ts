@@ -1972,7 +1972,7 @@ export const FEATURES: Feature[] = [
   {
     // Watson panel's "Mirrored to Telegram" list with its Off button (#2647).
     file: "dashboard-watson-mirror.js",
-    publish: ["watsonMirrorListHtml", "watsonMirrorRefresh", "watsonMirrorOff"],
+    publish: ["watsonMirrorListHtml", "watsonMirrorRefresh", "watsonMirrorOff", "watsonMirrorReset"],
     private: ["wMirrors", "wMirrorSeq", "currentCase", "api", "OFF_TIP"],
   },
   {
@@ -2080,6 +2080,9 @@ export const FEATURES: Feature[] = [
       "watsonBoardFiltered",
       "watsonBoardCountText",
       "watsonSetBoardFilter",
+      "watsonSyncTop",
+      "watsonWatchHeader",
+      "watsonCopyQuery",
     ],
     private: [
       "WIDTH_KEY",
@@ -2146,6 +2149,7 @@ export const FEATURES: Feature[] = [
       "watsonSendSettled",
       "watsonNoCaseHtml",
       "watsonSendHeaders",
+      "watsonStopReset",
     ],
     private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "pollSync", "KEY_BYTES"],
   },
@@ -2168,6 +2172,7 @@ export const FEATURES: Feature[] = [
       "setWatsonPanelState",
       "loadWatson",
       "watsonAct",
+      "watsonActionLive",
     ],
     private: [
       "wChat",
@@ -2175,7 +2180,9 @@ export const FEATURES: Feature[] = [
       "wEarlier",
       "wMore",
       "wCase",
+      "wLoaded",
       "wSeq",
+      "wGen",
       "wSeen",
       "wNotice",
       "wCardErr",

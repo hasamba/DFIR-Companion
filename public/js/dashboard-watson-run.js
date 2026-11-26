@@ -9,7 +9,7 @@
 (function () {
   const REFETCH_MS = 15000; // while a run shows, re-read the chat: a watson_changed ping may be missed
   const wPendingKey = new Map(); // case id -> { text, key }
-  const wStopping = new Set(); // case ids with a stop request in flight
+  const wStopping = new Map(); // case id -> the token of its stop request in flight
   let wPoll = null; // { caseId, timer } while a run shows
 
   const selectedCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
@@ -69,16 +69,18 @@
   // POST the stop, then re-read the chat. Returns null on success, else the text to show the analyst.
   // A repeat click while the request is in flight is ignored. An answer that arrives after the analyst
   // selected another case neither re-reads nor reports: it belongs to a case the panel no longer shows.
-  async function watsonStop(caseId) {
+  // #2943: `live` (dashboard-watson.js) also fails once the owner changed; watsonStopReset frees the lock.
+  async function watsonStop(caseId, live = () => caseId === selectedCase()) {
     if (wStopping.has(caseId)) return null;
-    wStopping.add(caseId);
+    const token = {};
+    wStopping.set(caseId, token);
     try {
       const why = await stopRequest(caseId);
-      if (caseId !== selectedCase()) return null;
+      if (caseId !== selectedCase() || !live()) return null;
       if (why === null && typeof loadWatson === "function") loadWatson(caseId);
       return why;
     } finally {
-      wStopping.delete(caseId);
+      if (wStopping.get(caseId) === token) wStopping.delete(caseId); // a newer visit's stop keeps its lock
     }
   }
 
@@ -108,9 +110,11 @@
     return key ? { "Idempotency-Key": key } : {};
   }
 
-  // Keep the key only after a lost answer: the resend must be the same request.
-  function watsonSendSettled(caseId, networkFailed) {
-    if (!networkFailed) wPendingKey.delete(caseId);
+  // Keep the key only after a lost answer: the resend must be the same request. With `key`, only that
+  // send's key goes (#2943: an older visit's send settling must not drop a newer send's retry key).
+  function watsonSendSettled(caseId, networkFailed, key) {
+    const held = wPendingKey.get(caseId);
+    if (!networkFailed && (key === undefined || (held && held.key === key))) wPendingKey.delete(caseId);
   }
 
   window.watsonWorkingHtml = watsonWorkingHtml;
@@ -120,4 +124,5 @@
   window.watsonSendKey = watsonSendKey;
   window.watsonSendHeaders = watsonSendHeaders;
   window.watsonSendSettled = watsonSendSettled;
+  window.watsonStopReset = () => wStopping.clear(); // the owner changed (dashboard-watson.js)
 })();

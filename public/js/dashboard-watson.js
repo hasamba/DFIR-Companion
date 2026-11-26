@@ -17,15 +17,15 @@
   let wQuestions = [];
   let wEarlier = []; // older turns paged back from the history file, oldest first, read-only
   let wMore = null; // true/false once a history page said whether older turns remain; null = not asked yet
-  let wCase = null;
-  let wSeq = 0;
-  let wSeen = 0;
+  let wCase = null; // the owner: the case the panel belongs to (the reset hook moves it at every switch)
+  let wLoaded = null; // the case whose chat read was started (loadWatson's onlyIfNew)
+  let wSeq = 0, wGen = 0, wSeen = 0; // wGen: the owner generation an action's answer must still be in (#2943)
   let wNotice = null; // { text } — a warning shown under the log
   const wCardErr = new Map(); // proposal id (or "t:"+turn id for an add) -> the refusal message, shown on the card
   let wEmpty = false; // the case has no forensic events and no findings (#2468)
   let wNoAi = false; // the server has no Watson provider: the panel is hidden
   let wState = null; // "rail" | "open" | "full", seeded from storage on first use (a blocked store still switches)
-  const wBusy = new Set(); // case ids with a request in flight
+  const wBusy = new Map(); // case id -> the generation of its request in flight
   const CHAT_CAP = 400; // the server keeps this many turns in the chat file (WATSON_MAX_TURNS)
 
   const currentCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
@@ -33,6 +33,7 @@
   const api = (caseId, path) => `/cases/${encodeURIComponent(caseId)}/watson${path}`;
   // The answer to a request started on `caseId` may still be shown: that case is still the open one.
   const live = (caseId) => caseId === currentCase() && (!wCase || wCase === caseId);
+  const act = (caseId, gen = wGen) => () => gen === wGen && live(caseId); // captured when an action starts
 
   // ── Rendering ──────────────────────────────────────────────────────────────────────────
   function pendingCount() {
@@ -97,21 +98,6 @@
     }
     return wState;
   }
-  // The full panel covers the content below the top toolbar. The header wraps and collapses, so its
-  // bottom edge is written to --watson-top whenever it changes (a ResizeObserver, or resize as the fallback).
-  function syncTop() {
-    const h = typeof document.querySelector === "function" ? document.querySelector("header") : null;
-    const root = document.documentElement;
-    if (!h || !h.getBoundingClientRect || !root || !root.style || !root.style.setProperty) return;
-    root.style.setProperty("--watson-top", Math.max(0, Math.round(h.getBoundingClientRect().bottom)) + "px");
-  }
-  function watchHeader() {
-    const h = typeof document.querySelector === "function" ? document.querySelector("header") : null;
-    if (!h) return;
-    if (typeof ResizeObserver === "function") new ResizeObserver(syncTop).observe(h);
-    else window.addEventListener("resize", syncTop);
-    syncTop();
-  }
   function applyPanel() {
     const panel = document.getElementById("watsonPanel");
     if (!panel) return;
@@ -119,7 +105,7 @@
     panel.classList.toggle("watson-collapsed", s === "rail");
     panel.classList.toggle("watson-fullscreen", s === "full");
     panel.classList.toggle("watson-hidden", wNoAi);
-    if (s === "full") syncTop();
+    if (s === "full" && typeof watsonSyncTop === "function") watsonSyncTop(); // dashboard-watson-layout.js
     const b = document.body.classList;
     b.toggle("watson-rail-open", !wNoAi && s === "rail");
     b.toggle("watson-panel-open", !wNoAi && s === "open");
@@ -145,19 +131,13 @@
   function loadWatson(caseId, onlyIfNew) {
     const id = caseId || currentCase();
     if (!id || id !== currentCase()) return Promise.resolve(); // never for a case that is not selected (F8)
-    if (onlyIfNew && wCase === id) return Promise.resolve();
-    if (wCase !== id) {
-      const stale = !!(wCase && wChat);
-      wCase = id; wChat = null;
-      if (stale) renderWatson(); // the old case's run line and stop icon go now, not when the GET returns
-      wEarlier = []; wMore = null; wSeen = 0;
-      wNotice = null;
-      wCardErr.clear();
-      watsonCaseReset(); // the chip and the mode wait for this case's GET (G15, G19)
-    }
+    if (onlyIfNew && wLoaded === id) return Promise.resolve();
+    if (wCase !== id) newOwner(id, wCase !== null); // a first owner (none known yet) retires nothing
+    wLoaded = id;
     const seq = ++wSeq;
     return fetch(api(id, ""))
       .then((r) => {
+        if (seq !== wSeq) return null;
         if (r.status === 501) setNoAi(true);
         return r.ok ? r.json() : null;
       })
@@ -168,6 +148,24 @@
         if (typeof watsonMirrorRefresh === "function") watsonMirrorRefresh(id); // #2647 Telegram mirror
       })
       .catch(() => {});
+  }
+
+  // The owner changed: every answer, read and busy mark of the previous owner retires; the chat waits for this case's GET.
+  function newOwner(id, retire) {
+    const stale = !!(wCase && wChat) || (retire && wBusy.size > 0);
+    if (retire) { wGen++; wSeq++; wBusy.clear(); } // the send guard, stop icon and working line drop the old requests
+    wCase = id; wLoaded = null; wChat = null;
+    wEarlier = []; wMore = null; wSeen = 0; wNotice = null;
+    wCardErr.clear();
+    watsonCaseReset(); // the chip, the mode and the launch locks wait for this case's GET (G15, G19)
+    if (retire && typeof watsonStopReset === "function") watsonStopReset(); // dashboard-watson-run.js
+    if (retire && typeof watsonMirrorReset === "function") watsonMirrorReset(); // dashboard-watson-mirror.js
+    if (stale) renderWatson(); // the old case's run line and stop icon go now, not when the GET returns
+  }
+  // DfirPanelDefer.reset: every case open (with its id) and a cancel (null). A reopen of the owner moves nothing.
+  function onWatsonReset(caseId) {
+    if (caseId !== null && caseId === wCase) return;
+    newOwner(caseId, true);
   }
 
   async function failure(r, action, stored, caseId, ppg) {
@@ -186,13 +184,13 @@
   }
 
   // POST to the case the action started on. { ok, stored, transport }: stored is true once the server kept a paste; transport is "lost" when no readable answer came back.
-  async function post(caseId, path, payload, action, headers) {
-    const out = { ok: false, stored: false, transport: "response" };
+  async function post(caseId, path, payload, action, headers, ok = act(caseId)) {
+    const out = { ok: false, stored: false, transport: "response" }, gen = wGen;
     let answered = false, ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined; // #2933
     if (!caseId) { wNotice = { text: "No case is open. Open a case first." }; renderWatson(); }
     if (!caseId || wBusy.has(caseId)) return out;
-    wBusy.add(caseId);
-    if (live(caseId)) {
+    wBusy.set(caseId, gen);
+    if (ok()) {
       wNotice = null;
       renderWatson();
     }
@@ -207,23 +205,23 @@
       if (r.ok) {
         const chat = await r.json().catch((e) => { answered = false; throw e; });
         out.ok = true;
-        if (live(caseId)) {
+        if (ok()) {
           wNotice = null;
           renderWatson(chat);
         }
       } else {
         const text = await failure(r, action, out.stored, caseId, ppg);
-        if (live(caseId)) wNotice = { text };
+        if (ok()) wNotice = { text };
       }
     } catch (e) {
       if (!answered) out.transport = "lost";
-      if (live(caseId)) wNotice = { text: "Watson request failed: " + (e && e.message ? e.message : "network error") };
+      if (ok()) wNotice = { text: "Watson request failed: " + (e && e.message ? e.message : "network error") };
     } finally {
-      wBusy.delete(caseId);
-      if (live(caseId)) renderWatson();
+      if (wBusy.get(caseId) === gen) wBusy.delete(caseId); // an older owner's request never clears a newer mark
+      if (ok()) renderWatson();
     }
     // a stored paste or a held round still changed the chat
-    if (!out.ok && action && live(caseId)) loadWatson(caseId);
+    if (!out.ok && action && ok()) loadWatson(caseId);
     return out;
   }
 
@@ -234,10 +232,11 @@
     const caseId = currentCase();
     if (!text || wBusy.has(caseId)) return;
     input.value = "";
-    return post(caseId, "/message", { text }, "message", watsonSendHeaders(caseId, text)).then((r) => {
-      watsonSendSettled(caseId, r.transport === "lost");
+    const ok = act(caseId), headers = watsonSendHeaders(caseId, text);
+    return post(caseId, "/message", { text }, "message", headers, ok).then((r) => {
+      watsonSendSettled(caseId, r.transport === "lost", headers["Idempotency-Key"]); // only this send's key
       // a failed send keeps what the analyst typed, in the case they typed it for
-      if (!r.ok && !input.value && (live(caseId) || !caseId)) input.value = text;
+      if (!r.ok && !input.value && (ok() || !caseId)) input.value = text;
     });
   }
   function sendPaste(el) {
@@ -253,9 +252,10 @@
     }
     area.value = "";
     box.classList.remove("watson-on");
-    return post(caseId, "/paste", { text }, "paste").then((r) => {
+    const ok = act(caseId);
+    return post(caseId, "/paste", { text }, "paste", undefined, ok).then((r) => {
       // A stored paste is evidence already: putting it back would invite a duplicate.
-      if (!r.ok && !r.stored && !area.value && (live(caseId) || !caseId)) area.value = text;
+      if (!r.ok && !r.stored && !area.value && (ok() || !caseId)) area.value = text;
     });
   }
 
@@ -267,7 +267,7 @@
     const f = el.files && el.files[0];
     el.value = "";
     if (!f) return;
-    const caseId = currentCase(); // before the file is read: the paste belongs to this case
+    const caseId = currentCase(), ok = act(caseId); // before the file is read: the paste goes to this case; its answer paints only in this visit
     const refuse = !isTextFile(f)
       ? "Watson reads only text files (text, JSON, XML, CSV, TSV or log). Choose a different file."
       : f.size > PASTE_LIMIT_BYTES ? "That file is larger than 50 MB. Use a smaller file." : "";
@@ -276,30 +276,30 @@
       return renderWatson();
     }
     const text = await f.text();
-    return post(caseId, "/paste", { text, filename: f.name }, "paste");
+    return post(caseId, "/paste", { text, filename: f.name }, "paste", undefined, ok);
   }
 
   // A write that answers { chat, state?: { keyQuestions } } (a proposal decision, an added answer).
   async function decide(path, pid, el) {
-    const caseId = currentCase(), ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined;
+    const caseId = currentCase(), ok = act(caseId), ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined;
     wNotice = null;
     try {
       const r = await fetch(api(caseId, path), { method: "POST" });
-      if (!live(caseId)) return;
+      if (!ok()) return;
       if (!r.ok) {
         const text = await failure(r, "proposal", false, caseId, ppg);
-        if (!live(caseId)) return;
+        if (!ok()) return;
         if (pid) wCardErr.set(pid, text);
         if (!pid || watsonSectionRefused(el, text)) wNotice = { text }; // a section's Undo: shown where the analyst is
         return renderWatson();
       }
       if (pid) wCardErr.delete(pid);
       const body = await r.json();
-      if (!live(caseId)) return;
+      if (!ok()) return;
       if (body.state && Array.isArray(body.state.keyQuestions)) wQuestions = body.state.keyQuestions;
       renderWatson(body.chat);
     } catch (e) {
-      if (!live(caseId)) return;
+      if (!ok()) return;
       wNotice = { text: "Watson request failed: " + (e && e.message ? e.message : "network error") };
       renderWatson();
     }
@@ -312,31 +312,28 @@
     const caseId = currentCase();
     const oldest = wEarlier[0] || (wChat && wChat.turns[0]);
     if (!caseId || !oldest || wBusy.has(caseId)) return;
-    wBusy.add(caseId);
+    const ok = act(caseId), gen = wGen;
+    wBusy.set(caseId, gen);
     try {
       const r = await fetch(api(caseId, `/history?before=${encodeURIComponent(oldest.id)}&limit=100`));
       if (!r.ok) throw new Error("HTTP " + r.status);
       const page = await r.json();
-      if (!live(caseId)) return;
+      if (!ok()) return;
       wEarlier = [...(Array.isArray(page.turns) ? page.turns : []), ...wEarlier];
       wMore = page.more === true;
     } catch (e) {
-      if (live(caseId)) wNotice = { text: "Watson could not load earlier messages: " + (e && e.message ? e.message : "network error") };
+      if (ok()) wNotice = { text: "Watson could not load earlier messages: " + (e && e.message ? e.message : "network error") };
     } finally {
-      wBusy.delete(caseId);
-      if (live(caseId)) renderWatson();
+      if (wBusy.get(caseId) === gen) wBusy.delete(caseId);
+      if (ok()) renderWatson();
     }
   }
   const newThread = () => post(currentCase(), "/new-thread", {}, "thread");
 
-  function copyQuery(el) {
-    const pre = el.parentElement && el.parentElement.querySelector("pre");
-    if (pre && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent).catch(() => {});
-  }
   const VERBS = {
     send,
-    stop: () => watsonStop(currentCase()).then((t) => { if (t) { wNotice = { text: t }; renderWatson(); } }),
-    copy: copyQuery,
+    stop: (el, ok = act(currentCase())) => watsonStop(currentCase(), ok).then((t) => { if (t && ok()) { wNotice = { text: t }; renderWatson(); } }),
+    copy: (el) => watsonCopyQuery(el), // dashboard-watson-layout.js
     collapse: () => setWatsonPanelState("rail"),
     open: () => setWatsonPanelState("open"),
     fullScreen: () => setWatsonPanelState("full"),
@@ -373,7 +370,8 @@
     const panel = document.getElementById("watsonPanel");
     if (panel) panel.innerHTML = watsonPanelHtml();
     applyPanel();
-    watchHeader();
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function") DfirPanelDefer.onReset(onWatsonReset);
+    if (typeof watsonWatchHeader === "function") watsonWatchHeader();
     if (typeof DfirState !== "undefined" && DfirState.onLastStateChange) {
       DfirState.onLastStateChange((st) => {
         wQuestions = st && Array.isArray(st.keyQuestions) ? st.keyQuestions : [];
@@ -397,4 +395,5 @@
   window.setWatsonPanelState = setWatsonPanelState;
   window.loadWatson = loadWatson;
   window.watsonAct = watsonAct;
+  window.watsonActionLive = (caseId) => act(caseId); // the helper modules' POST answers (velo, mode)
 })();
