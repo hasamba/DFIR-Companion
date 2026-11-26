@@ -73,13 +73,29 @@
     if (typeof watsonMarkReportSlots === "function") watsonMarkReportSlots(m); // "Watson" badge on the fields it wrote
   }
 
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function rmOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: every GET takes a generation, and its answer fills the form only when it is the newest
+  // GET and its case is still on screen. A superseded read whose case the newer read already filled
+  // resolves (a save may go on); any other stale answer rejects, so no save PUTs a form it did not fill.
+  let rmGen = 0;
+  const RM_CASE_CHANGED = "the case on screen changed";
   function fetchReportMeta(caseId) {
+    const gen = ++rmGen;
     return fetch(`/cases/${caseId}/report-meta`)
       .then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
       .then((m) => {
+        if (!rmOnScreen(caseId)) throw new Error(RM_CASE_CHANGED);
+        if (gen !== rmGen) {
+          if (rmFilledFor === caseId) return;
+          throw new Error(RM_CASE_CHANGED);
+        }
         fillReportMeta(m);
         rmFilledFor = caseId;
       });
@@ -92,7 +108,18 @@
     return fetchReportMeta(caseId).catch(() => {});
   }
 
+  // #2904: a load for another case blanks the previous case's details at once — its text must not
+  // sit in this case's form, not even when this case's read fails.
+  let rmShownFor = "";
   function loadReportMeta(caseId) {
+    if (!rmOnScreen(caseId)) return Promise.resolve(); // a late caller for a case the analyst left
+    if (rmShownFor !== caseId) {
+      rmShownFor = caseId;
+      rmFilledFor = "";
+      fillReportMeta({});
+      const st = document.getElementById("rmStatus");
+      if (st) st.textContent = ""; // a save of the previous case's form may still say "saving…"
+    }
     return fetchReportMeta(caseId).catch(() => {});
   }
 
@@ -156,6 +183,7 @@
         return r.json();
       })
       .then((m) => {
+        if (!rmOnScreen(caseId)) return; // #2904: saved, but the analyst is on another case now
         fillReportMeta(m);
         rmFilledFor = caseId;
         st.textContent = "saved ✓";

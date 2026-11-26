@@ -235,7 +235,22 @@
   // late — neither paints nor releases the newer fetch's lock nor takes its trailing fetch.
   let tagsLoad = null; // { caseId } of the fetch holding the lock, or null
   let tagsAgain = null; // the case a change arrived for while a fetch was out
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function tagsOnScreen(caseId) {
+    const el = typeof document === "undefined" ? null : document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: the case whose tags the index holds. Event ids recur across cases, so a load for another
+  // case drops the previous case's tags — and closes an open tag editor, whose save would
+  // land on this case — at once (no render: this case's render reads the empty index).
+  let tagsCase = null;
   function loadTags(caseId) {
+    if (!tagsOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (tagsCase !== caseId) {
+      tagsCase = caseId;
+      tagsByTarget = new Map(); // the stars were reset with the case switch (dashboard-case-connect.js)
+      if (tagTarget) closeTagModal();
+    }
     if (tagsLoad) {
       tagsAgain = caseId;
       return;
@@ -269,6 +284,7 @@
       .then(({ list, version }) => {
         if (token && tagsLoad !== token) return; // abandoned — a newer load owns the tag list now
         if (tagsAgain !== null && tagsAgain !== caseId) return; // the analyst moved to another case meanwhile
+        if (!tagsOnScreen(caseId)) return; // #2904: the same, when no newer load was queued
         noteTaggerVersion(version);
         tagsByTarget = new Map();
         (list || []).forEach((t) => {

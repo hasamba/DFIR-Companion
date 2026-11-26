@@ -25,10 +25,29 @@
       `title="Comments — collaborate with other investigators">${ICON_COMMENT}${list.length ? " " + list.length : ""}</button>`
     );
   }
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function commentsOnScreen(caseId) {
+    const el = typeof document === "undefined" ? null : document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: target ids recur across cases, so the previous case's threads must not stay to be
+  // matched against this case's rows. A load for another case drops them — and closes an open
+  // thread, whose post would land on this case — at once (no render: this case's render reads the
+  // empty index). Only the newest answer for the case on screen is applied.
+  let commentsCase = null;
+  let commentsSeq = 0;
   function loadComments(caseId) {
+    if (!commentsOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (commentsCase !== caseId) {
+      commentsCase = caseId;
+      commentsByTarget = new Map();
+      if (commentTarget) closeCommentModal();
+    }
+    const seq = ++commentsSeq;
     fetch(`/cases/${caseId}/comments`)
       .then((r) => r.json())
       .then((list) => {
+        if (seq !== commentsSeq || !commentsOnScreen(caseId)) return;
         commentsByTarget = new Map();
         (list || []).forEach((c) => {
           // Indexed under the event it now lives on as well (#1715) — see annotationKeys().

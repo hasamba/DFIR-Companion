@@ -26,18 +26,52 @@
       .toLowerCase()
       .replace(/\s+/g, " ");
   const evKey = (e) => `${evNorm(e.timestamp)}|${evNorm(e.description)}`;
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function icOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: hide a banner the previous case left, without repainting anything else.
+  function hideBanner(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = "";
+    el.style.display = "none";
+  }
+  // #2904: a load for another case drops the previous case's "new" rows and both banners at once
+  // (no re-render — this case's render follows); only the newest answer for the case on screen paints.
+  let importMetaCase = null;
+  let importMetaSeq = 0;
   function loadImportMeta(caseId) {
+    if (!icOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (importMetaCase !== caseId) {
+      importMetaCase = caseId;
+      newEventKeys = new Set();
+      newIocKeys = new Set();
+      hideBanner("importMeta");
+      hideBanner("iocImportMeta");
+    }
+    const seq = ++importMetaSeq;
     fetch(`/cases/${caseId}/import-meta`)
       .then((r) => r.json())
-      .then(renderImportMeta)
+      .then((m) => seq === importMetaSeq && icOnScreen(caseId) && renderImportMeta(m))
       .catch(() => {});
   }
   // Evidence drop folder (#auto-import inbox): show where to drop + the last sweep's result, and
   // list any files that failed (they sit in drop/_failed/). Backed by GET /cases/:id/drop-status.
+  // #2904: same rule for the two drop-folder banners — their buttons act on the case they name.
+  let dropCase = null;
+  let dropSeq = 0;
   function loadDropStatus(caseId) {
+    if (!icOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (dropCase !== caseId) {
+      dropCase = caseId;
+      hideBanner("dropStatus");
+    }
+    const seq = ++dropSeq;
     fetch(`/cases/${caseId}/drop-status`)
       .then((r) => (r.ok ? r.json() : null))
-      .then(renderDropStatus)
+      .then((d) => seq === dropSeq && icOnScreen(caseId) && renderDropStatus(d))
       .catch(() => {});
     loadDropHeld(caseId);
   }
@@ -45,11 +79,19 @@
   // tool prompt above and this one never hide each other. A held file appears without any import
   // finishing, so the list re-polls every 30 s while a case is open (a small GET).
   let heldTimer = null;
+  let heldCase = null;
+  let heldSeq = 0;
   function loadDropHeld(caseId) {
+    if (!icOnScreen(caseId)) return; // #2904: a late caller for a case the analyst has left
     clearTimeout(heldTimer);
+    if (heldCase !== caseId) {
+      heldCase = caseId;
+      hideBanner("dropHeld");
+    }
+    const seq = ++heldSeq;
     fetch(`/cases/${encodeURIComponent(caseId)}/drop/held`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => renderDropHeld(caseId, d))
+      .then((d) => seq === heldSeq && icOnScreen(caseId) && renderDropHeld(caseId, d))
       .catch(() => {});
     heldTimer = setTimeout(() => {
       const open = (document.getElementById("caseId").value || "").trim();

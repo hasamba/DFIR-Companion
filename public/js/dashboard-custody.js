@@ -71,10 +71,39 @@
     el.innerHTML = `<div data-safe-style="font-size:12px;color:var(--text-muted);margin-bottom:6px">${byPath.size} artifact(s), ${custodyRecords.length} recorded event(s).</div>` + rows.join("");
   }
 
+  // #2904: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function custodyOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2904: a load for another case drops the previous case's records and verification result at
+  // once — a blank panel, not "No custody records", which would be a claim about this case before
+  // its answer — and frees the Verify button. Only the newest answer for the case on screen paints.
+  let custodyCase = null;
+  let custodySeq = 0;
+  function clearCustodyFor(caseId) {
+    custodyCase = caseId;
+    custodyRecords = [];
+    custodyFailedPaths = new Set();
+    custodyVerifiedAt = null;
+    const el = document.getElementById("custodyPanel");
+    if (el) el.innerHTML = "";
+    const msg = document.getElementById("custodyVerifyMsg");
+    if (msg) msg.textContent = "";
+    const btn = document.getElementById("custodyVerifyBtn");
+    if (btn) btn.disabled = false;
+  }
   function loadCustody(caseId) {
+    if (!custodyOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (custodyCase !== caseId) clearCustodyFor(caseId);
+    const seq = ++custodySeq;
     fetch(`/cases/${caseId}/custody`)
       .then(r => r.ok ? r.json() : { records: [] })
-      .then(d => { custodyRecords = d.records || []; renderCustody(); })
+      .then(d => {
+        if (seq !== custodySeq || !custodyOnScreen(caseId)) return;
+        custodyRecords = d.records || [];
+        renderCustody();
+      })
       .catch(() => {});
     const link = document.getElementById("custodyManifestLink");
     if (link) link.href = `/cases/${caseId}/custody/manifest`;
@@ -102,6 +131,7 @@
       fetch(`/cases/${caseId}/custody/verify`)
         .then(r => r.ok ? r.json() : null)
         .then(d => {
+          if (!custodyOnScreen(caseId)) return; // #2904: the analyst switched case meanwhile
           if (!d) { if (msg) msg.textContent = "Verification unavailable."; return; }
           custodyFailedPaths = new Set((d.mismatches || []).map(m => m.artifactPath));
           custodyVerifiedAt = new Date().toISOString();
@@ -114,8 +144,8 @@
           }
           renderCustody();
         })
-        .catch(() => { if (msg) msg.textContent = "Verification failed to run."; })
-        .finally(() => { verifyBtn.disabled = false; });
+        .catch(() => { if (msg && custodyOnScreen(caseId)) msg.textContent = "Verification failed to run."; })
+        .finally(() => { if (custodyOnScreen(caseId)) verifyBtn.disabled = false; });
     });
   }
 

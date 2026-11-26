@@ -34,11 +34,26 @@
   // modal's "Ask AI for similar" button. Distinct from the per-case `aiEnabled` toggle above (whether
   // AI analysis is turned ON for the currently-loaded case) — do not conflate the two.
   let fpAiConfigured = false;
+  // #2904: the case whose record the panel shows, and the newest load. A load for another case hides
+  // the previous case's panel (and drops its record) at once; only the newest answer paints.
+  let soCase = null;
+  // Strict, unlike stillOpen(): after a cancel #caseId is "" and the cancelled case's answer is dropped.
+  const soOnScreen = (caseId) => {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  };
+  let soSeq = 0;
   function loadSecondOpinion(caseId) {
+    if (!soOnScreen(caseId)) return; // a late caller (a debounced reload) for a case the analyst left
+    if (soCase !== caseId) {
+      soCase = caseId;
+      renderSecondOpinion(null);
+    }
+    const seq = ++soSeq;
     fetch(`/cases/${caseId}/second-opinion`)
       .then((r) => r.json())
       .then((rec) => {
-        if (stillOpen(caseId)) renderSecondOpinion(rec);
+        if (seq === soSeq && soOnScreen(caseId)) renderSecondOpinion(rec);
       })
       .catch(() => {});
   }
@@ -178,6 +193,7 @@
     const el = document.getElementById("secondOpinionPanel");
     if (!el) return;
     lastSecondOpinionRec = rec;
+    if (rec) soCase = currentCaseId() || soCase; // #2904: the record shown is the case on screen's
     if (!rec || !rec.generatedAt) {
       el.innerHTML = "";
       el.style.display = "none";
@@ -450,7 +466,7 @@
       return;
     }
     if (r.status === 409 && body && body.error === "presidio_approval_required") {
-      if (typeof setPresidioPending === "function") setPresidioPending(body.findings);
+      if (typeof setPresidioPending === "function") setPresidioPending(body.findings, caseId);
       refereeStatus("referee held — Presidio found new value(s) to review (see Anonymization)");
       return;
     }
@@ -545,7 +561,7 @@
           if (body.error === "presidio_approval_required") {
             if (btn) btn.disabled = false;
             if (typeof setPresidioPending === "function")
-              setPresidioPending(body.findings);
+              setPresidioPending(body.findings, caseId);
             document.getElementById("status").textContent =
               "second opinion held — Presidio found new value(s) to review (see Anonymization)";
             return null;
