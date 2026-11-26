@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,8 @@ import type { RouteContext } from "../../src/routes/context.js";
 import { caseCollectImporter } from "../../src/routes/cloudCollectImporter.js";
 import type { CollectionSummaryRequest } from "../../src/integrations/cloudCollect/collectSummary.js";
 import { isLineageRow, lineageIssuance, lineageUse } from "../helpers/awsLineageRecords.js";
+import { trailRecord } from "../helpers/cloudCollectFakes.js";
+import { failSettleAfterStamp } from "../helpers/settleFailure.js";
 
 // #2482 (branch review) — the collection summary is landed and settled by the production importer.
 // A crash after the summary committed but before its settle leaves rows the replay's baseline
@@ -78,6 +80,7 @@ beforeEach(async () => {
   } as unknown as RouteContext;
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -123,5 +126,50 @@ describe("collection summary settle on replay (#2482)", () => {
     await importer.withImportSection("c1", () => importer.importSummary("c1", req));
     const rows = (await stateStore.load("c1")).forensicTimeline.filter(isLineageRow);
     expect(rows.map((e) => e.severity)).toEqual(["High"]);
+  });
+});
+
+// #2891 (gap 3): a page or summary whose settle fails still fails the collection, but the rows it
+// already merged are stamped, dual-written and tagged first, so the next demote cannot move them
+// out untagged (that used to wait for an analyst's Resume).
+describe("a failed settle still grades the rows before the collection fails (#2891)", () => {
+  it("a summary: the rule raises the Low lineage before demote, and the error surfaces", async () => {
+    const req = await request();
+    const fired = failSettleAfterStamp(stateStore);
+    const importer = caseCollectImporter(ctx);
+    await expect(importer.withImportSection("c1", () => importer.importSummary("c1", req))).rejects.toThrow(
+      "out of memory",
+    );
+    expect(fired()).toBe(true);
+    const rows = (await stateStore.load("c1")).forensicTimeline.filter(isLineageRow);
+    expect(rows.map((e) => e.severity)).toEqual(["High"]);
+    const superRows = (await superStore.query("c1", { limit: 100 })).events.filter(isLineageRow);
+    expect(superRows.map((e) => e.id)).toEqual([rows[0].id]);
+  });
+
+  it("a page: its rows are stamped, dual-written and demoted, and the error surfaces", async () => {
+    const path = join(root, "p000001-ct.json");
+    await writeFile(path, JSON.stringify({ Records: [1, 2].map((i) => trailRecord(i)) }));
+    const label = "evidence/cloud/cc-fail/p000001-ct.json";
+    const fired = failSettleAfterStamp(stateStore);
+    const importer = caseCollectImporter(ctx);
+    const page = {
+      kind: "aws" as const,
+      path,
+      label,
+      idPrefix: "ccfailp1",
+      importedAt: "2026-10-02T00:00:00Z",
+      collectionId: "cc-fail",
+    };
+    await expect(importer.withImportSection("c1", () => importer.importPage("c1", page))).rejects.toThrow(
+      "out of memory",
+    );
+    expect(fired()).toBe(true);
+    const mine = (e: { sourceScreenshots: string[] }) => e.sourceScreenshots.includes(label);
+    const superRows = (await superStore.query("c1", { limit: 100 })).events.filter(mine);
+    expect(superRows.length).toBeGreaterThan(0); // dual-written: nothing lost to the demote
+    // Nothing of the page is left below the case's Medium gate, and what stays carries the stamp.
+    const kept = (await stateStore.load("c1")).forensicTimeline.filter(mine);
+    expect(kept.every((e) => e.importBatchId && e.severity !== "Info" && e.severity !== "Low")).toBe(true);
   });
 });

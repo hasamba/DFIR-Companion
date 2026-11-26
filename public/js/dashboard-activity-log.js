@@ -46,13 +46,32 @@
         .join("") +
       "</table>";
   }
+  // #2900: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function activityOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2900: the case whose rows the panel holds, and the newest load. A load for another case blanks
+  // the previous case's rows at once (blank, not "No activity recorded yet", which is a claim).
+  let activityCase = null;
+  let activitySeq = 0;
   function loadActivityLog(caseId) {
+    if (!activityOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (activityCase !== caseId) {
+      activityCase = caseId;
+      const el = document.getElementById("activityLogPanel");
+      if (el) el.innerHTML = "";
+    }
+    const seq = ++activitySeq;
     const qs = activityFilterValue
       ? `?category=${encodeURIComponent(activityFilterValue)}`
       : "";
     fetch(`/cases/${caseId}/activity-log${qs}`)
       .then((r) => (r.ok ? r.json() : []))
-      .then(renderActivityLog)
+      .then((entries) => {
+        if (seq !== activitySeq || !activityOnScreen(caseId)) return;
+        renderActivityLog(Array.isArray(entries) ? entries : []);
+      })
       .catch(() => {});
   }
   function initActivityLog() {

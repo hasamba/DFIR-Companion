@@ -21,14 +21,26 @@
   };
 
   let phasesData = [];
-  const phOpen = new Set(); // ids of expanded phases — persist across re-renders
+  // #2894: the case phasesData was fetched for. The phases are only ever drawn for that case, so a
+  // switch (even one where the hidden section never loads for the new case) cannot redraw the old
+  // case's phases against the new timeline.
+  let phasesCase = "";
+  const phOpen = new Set(); // ids of expanded phases — persist across re-renders of ONE case
   let phasesTimer = null;
+  const caseOnScreen = () => {
+    const el = document.getElementById("caseId");
+    return el ? String(el.value || "").trim() : "";
+  };
+  const phasesOnScreen = () => (phasesCase === caseOnScreen() ? phasesData : []);
 
   function loadPhases(caseId) {
     if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("phases", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/phases`)
       .then((r) => r.json())
       .then((p) => {
+        if (caseId !== caseOnScreen()) return; // the analyst has left this case
+        if (caseId !== phasesCase) phOpen.clear(); // expansions belong to one case
+        phasesCase = caseId;
         phasesData = Array.isArray(p) ? p : [];
         renderPhases();
       })
@@ -47,7 +59,8 @@
   function renderPhases() {
     const el = document.getElementById("phases");
     if (!el) return;
-    if (!phasesData.length) {
+    const phases = phasesOnScreen();
+    if (!phases.length) {
       el.innerHTML =
         "<span data-safe-style='color:var(--text-muted)'>No dated events to group into phases yet.</span>";
       return;
@@ -58,7 +71,7 @@
     // Honor the global search-bar filter: keep only each phase's matching events, and drop phases
     // with none — so "I searched an IP" narrows the phases the same way it narrows the timeline.
     const filtered = _hasActiveFilter();
-    const rows = phasesData
+    const rows = phases
       .map((p, i) => {
         const ids = (p.eventIds || []).map(String);
         const matchIds = filtered
@@ -114,9 +127,9 @@
 
   // Expand/collapse a phase to reveal its events (event-delegated; survives re-renders).
 
-  // The refresh fan-out's question: is there anything to redraw?
+  // The refresh fan-out's question: is there anything to redraw — for the case on screen?
   function hasPhases() {
-    return phasesData.length > 0;
+    return phasesOnScreen().length > 0;
   }
 
   // Delegated expand/collapse on the phase list — binds to markup, so it is load-time work.

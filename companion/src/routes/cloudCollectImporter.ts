@@ -8,7 +8,11 @@
 // A page of a kind that summarizes per collection skips its own whole-export summaries; the
 // collection summary (#2482) is landed and settled here like a page, under its fixed label.
 
-import { captureImportBaseline, releaseImportBaseline } from "../analysis/importBaseline.js";
+import {
+  captureImportBaseline,
+  releaseImportBaseline,
+  type ImportBaseline,
+} from "../analysis/importBaseline.js";
 import { summarizesPerCollection } from "../analysis/ingest/cloudStreamProviders.js";
 import { collectionCoverageGroup } from "../analysis/cloudCoverageFold.js";
 import {
@@ -19,8 +23,20 @@ import {
 import type { CollectionSummaryRequest } from "../integrations/cloudCollect/collectSummary.js";
 import type { RouteContext } from "./context.js";
 import { runDiskImport } from "./importCloudStream.js";
-import { settleForensicImport } from "./importSettle.js";
+import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
+
+/**
+ * The settle of a page or summary. A failure still fails the collection, but only after the rows the
+ * import merged are stamped, dual-written and tagged (#2891): the next demote is case-wide, and a
+ * Resume that would settle them may never come. Called inside the engine's import section.
+ */
+function settleCollected(ctx: RouteContext, caseId: string, baseline: ImportBaseline, label: string) {
+  const settle = routeSettleDeps(ctx);
+  if (!settle) return Promise.resolve(null);
+  const target = { caseId, storedNames: [label], tag: "cloud-collect" };
+  return settleImportOrRecoverThenThrow(settle, target, baseline, label);
+}
 
 function stateStoreOf(ctx: RouteContext) {
   const store = ctx.options.stateStore;
@@ -78,7 +94,7 @@ async function importSummary(
       await ctx.options.superTimelineStore?.appendReporting(caseId, rebuilt); // dedups by id
       await settle.autoTagImported(caseId, rebuilt);
     }
-    await settleForensicImport(settle, caseId, baseline, req.label);
+    await settleCollected(ctx, caseId, baseline, req.label);
   } finally {
     await releaseImportBaseline(store, baseline);
   }
@@ -105,8 +121,7 @@ export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
           coverageGroup: collectionCoverageGroup(page.collectionId),
           ...(signal ? { signal } : {}),
         });
-        const settle = routeSettleDeps(ctx);
-        if (settle) await settleForensicImport(settle, caseId, baseline, page.label);
+        await settleCollected(ctx, caseId, baseline, page.label);
       } finally {
         await releaseImportBaseline(store, baseline);
       }

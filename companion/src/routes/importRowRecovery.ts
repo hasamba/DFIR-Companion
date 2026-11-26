@@ -185,6 +185,31 @@ export async function settleOrRecover<T>(
   }
 }
 
+/**
+ * The settle for a path whose settle failure must still FAIL the import (#2891: the dedicated import
+ * routes, the NG-SIEM search, a Watson paste, a cloud collection page, the import replay). Same
+ * preset batch id and same rule as `settleOrRecover` — recovery only for a failure before grading
+ * completed — but the original error is RETHROWN once the rows are settled, so the caller's failure
+ * report is unchanged. Wrap ONLY the settle call; the caller holds the case's import section.
+ */
+export async function settleImportOrRecoverThenThrow(
+  settleDeps: SettleDeps,
+  t: ImportRecoveryTarget,
+  before: InvestigationState | ImportBaseline,
+  label?: string,
+): Promise<SettledImport> {
+  const batchId = randomUUID();
+  try {
+    return await settleForensicImport(settleDeps, t.caseId, before, label, { importBatchId: batchId });
+  } catch (err) {
+    if (!failedAfterGrading(err)) {
+      const deps = recoveryDepsFromSettle(settleDeps);
+      await recoverImportRows(deps, { ...t, batchId, cause: "whose settle failed" });
+    }
+    throw err;
+  }
+}
+
 /** The pre-import snapshot could not be read, so the settle cannot run: settle the rows without it. */
 export async function recoverWithoutSnapshot(
   deps: RowRecoveryDeps,

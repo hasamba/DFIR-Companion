@@ -1,4 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CaseStore } from "../../src/storage/caseStore.js";
+import { StateStore } from "../../src/analysis/stateStore.js";
+import { StateLock } from "../../src/analysis/stateLock.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
+import { buildRuntimePipeline } from "../../src/composition/aiProviders.js";
+import { createImportDemote } from "../../src/composition/importDemote.js";
+import type { AppOptions } from "../../src/composition/appOptions.js";
+import { failSettleAfterStamp } from "../helpers/settleFailure.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
 import { landSearchResult, importRows, type SiemSearchSpec } from "../../src/routes/crowdstrikeSiemImport.js";
 import type { RouteContext } from "../../src/routes/context.js";
@@ -105,5 +117,68 @@ describe("importRows (#2666)", () => {
       finished: true,
     });
     expect(r.events).toBe(0);
+  });
+});
+
+// #2891 (gap 3): a search whose settle fails still fails, but the rows the importer merged are
+// stamped, dual-written and demoted first — the next import's demote cannot move them untagged.
+describe("landSearchResult when the settle fails (#2891)", () => {
+  let root: string | undefined;
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (root) await rm(root, { recursive: true, force: true });
+    root = undefined;
+  });
+
+  async function realCtx() {
+    root = await mkdtemp(join(tmpdir(), "dfir-ngsiem-settle-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(store);
+    const lock = new StateLock();
+    const runStateExclusive = <T>(c: string, fn: () => Promise<T>) => lock.runExclusive(c, fn);
+    const superTimelineStore = new SuperTimelineStore(store);
+    const pipeline = buildRuntimePipeline({
+      stateStore,
+      store,
+      stateLock: lock,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const options = {
+      pipeline,
+      stateStore,
+      superTimelineStore,
+      forensicGateControlStore: new ForensicGateControlStore(store),
+    } as unknown as AppOptions;
+    const demote = createImportDemote({ options, runStateExclusive });
+    const ctx = {
+      store,
+      options,
+      importLock: new ImportLock(),
+      runStateExclusive,
+      demoteForensic: demote.demoteForensic,
+      serverLogger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
+      resynthesizeInBackground: () => undefined,
+      pushImportCheckpoint: async () => undefined,
+    } as unknown as RouteContext;
+    return { ctx, stateStore, superTimelineStore };
+  }
+
+  it("fails the search, after its rows are stamped, dual-written and demoted", async () => {
+    const { ctx, stateStore, superTimelineStore } = await realCtx();
+    const fired = failSettleAfterStamp(stateStore);
+    const rows = [
+      { ...row, "@id": "a", aid: "aid-1", ImageFileName: "\\Device\\x\\a.exe" },
+      { ...row, "@id": "b", ComputerName: "WS-02", aid: "aid-2", ImageFileName: "\\Device\\x\\b.exe" },
+    ];
+    await expect(landSearchResult(ctx, spec, result({ rows }))).rejects.toThrow("out of memory");
+    expect(fired()).toBe(true);
+    const mine = (e: { sourceScreenshots: string[] }) =>
+      e.sourceScreenshots.some((s) => s.includes("crowdstrike-ngsiem"));
+    const superRows: { id: string; sourceScreenshots: string[] }[] = [];
+    for await (const b of superTimelineStore.eventBatches("c1")) superRows.push(...b.filter(mine));
+    expect(superRows.length).toBeGreaterThan(0); // dual-written: nothing lost to a demote
+    const kept = (await stateStore.load("c1")).forensicTimeline.filter(mine);
+    expect(kept.every((e) => e.importBatchId && e.severity !== "Info")).toBe(true);
   });
 });

@@ -1,12 +1,25 @@
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MIRROR_SENT_MAX,
   MIRROR_SEEN_MAX,
   WatsonMirrorStore,
 } from "../../../src/integrations/telegram/watsonMirrorStore.js";
+
+// #2897: the token lookup must go through crypto.timingSafeEqual; wrap the real one to observe it.
+const timingSafe = vi.hoisted(() => ({ calls: 0 }));
+vi.mock("node:crypto", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...real,
+    timingSafeEqual: (a: NodeJS.ArrayBufferView, b: NodeJS.ArrayBufferView) => {
+      timingSafe.calls += 1;
+      return real.timingSafeEqual(a, b);
+    },
+  };
+});
 
 // #2647: the per-chat mirror state, in one JSON file beside the chat bindings (notifications/),
 // never under cases/. Absent entry = mirroring off.
@@ -122,6 +135,45 @@ describe("#2712 button tokens", () => {
     expect(hit?.proposalId).toBe("wp-2");
     expect(hit?.entry).toMatchObject({ chatId: "100", caseId: "c1" });
     expect(await store.findAction("AAAAAAAAAAAAAAAA")).toBeUndefined();
+  });
+
+  it("matches a token only exactly, with a constant-time comparison (#2897)", async () => {
+    await enable("100");
+    const { "wp-1": token } = await store.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-1"]);
+    const flipped = (token[0] === "A" ? "B" : "A") + token.slice(1);
+    expect(await store.findAction(flipped)).toBeUndefined();
+    expect(await store.findAction(token.slice(0, 16))).toBeUndefined();
+    expect(await store.findAction(token + "A")).toBeUndefined();
+    expect(await store.findAction("")).toBeUndefined();
+    const before = timingSafe.calls;
+    expect((await store.findAction(token))?.proposalId).toBe("wp-1");
+    expect(timingSafe.calls).toBeGreaterThan(before);
+  });
+
+  it("never honours or re-uses a pre-upgrade 16-character token (#2897)", async () => {
+    await enable("100");
+    const { "wp-cur": current } = await store.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-cur"]);
+    const saved = JSON.parse(await readFile(file, "utf8"));
+    const legacy = "L".repeat(16);
+    saved.chats["100"].actions.push(
+      { token: legacy, proposalId: "wp-old" },
+      { token: "M".repeat(16), proposalId: "wp-x" },
+    );
+    await writeFile(file, JSON.stringify(saved));
+
+    expect(await store.findAction(legacy)).toBeUndefined();
+
+    const out = await store.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-cur", "wp-old"]);
+    expect(out["wp-cur"]).toBe(current);
+    expect(out["wp-old"]).not.toBe(legacy);
+    expect(out["wp-old"]).toHaveLength(22);
+
+    const reopened = new WatsonMirrorStore(file);
+    const actions = JSON.parse(await readFile(file, "utf8")).chats["100"].actions as Array<{ token: string }>;
+    expect(actions.every((a) => a.token.length === 22)).toBe(true);
+    expect((await reopened.findAction(out["wp-old"]))?.proposalId).toBe("wp-old");
+    const again = await reopened.actionTokens("100", "2026-11-19T10:00:00.000Z", ["wp-old"]);
+    expect(again["wp-old"]).toBe(out["wp-old"]);
   });
 
   it("arms no buttons for another enablement or a chat that is off", async () => {

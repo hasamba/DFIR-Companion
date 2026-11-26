@@ -22,7 +22,8 @@
 // loader makes — and the mask comes off only once every panel of the section has succeeded for this
 // case, so a panel built from two answers, or a section holding two panels that retry on separate
 // timers (sec-d3fend), stays masked until all of them are in. A failed answer keeps the
-// mask and says so instead of exposing the old case.
+// mask and says so instead of exposing the old case. The same holds for a panel that is VISIBLE
+// when the case changes (#2894): the case-open fan-out masks it and tracks its load in place.
 (function () {
   "use strict";
 
@@ -62,6 +63,9 @@
   };
   const LOADING = "Loading this case's data…";
   const FAILED = "This panel could not be loaded for this case. It retries on the next update.";
+  // #2900: a cancelled (or failed) case load leaves nothing loading, so the mask must not say it is.
+  const STOPPED = "Not loaded — the case load was stopped. Open a case to load this panel.";
+  const resetListeners = []; // #2900: panels outside PANELS that keep their own placeholder
 
   const pending = new Set(); // keys skipped while hidden, loaded on reveal
   const loadedOnPage = new Set(); // sections some load has started for on this page
@@ -140,22 +144,41 @@
 
   // The case-open fan-out keeps only the panels that will really load, so the strip's "N of M
   // panels loaded" counts real loads. A dropped panel loads when its section is shown.
+  //
+  // A SHOWN panel whose section holds another case's content (#2894) — it loaded for an earlier
+  // case on this page, or was masked while hidden — is masked here, at the switch, and its load
+  // stays in the fan-out, tracked in place: same moment, same lanes, same abort signal, same strip
+  // count. Its own successful paint for this case lifts the mask; a failure shows the failure line.
+  // This runs after the case's saved view is applied, so "shown" is the new case's layout.
   function eagerOnly(entries) {
     const caseId = caseOnScreen();
-    return (Array.isArray(entries) ? entries : []).filter((entry) => {
+    const kept = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
       const def = PANELS[entry[0]];
-      if (!def) return true;
-      if (!isShown(def[0])) {
-        defer(entry[0], def[0], caseId);
-        return false;
+      if (!def) kept.push(entry);
+      else if (!isShown(def[0])) defer(entry[0], def[0], caseId);
+      else if (!isMasked(def[0]) && !(loadedOnPage.has(def[0]) && owner.get(entry[0]) !== caseId))
+        kept.push(entry);
+      else {
+        setMask(def[0], LOADING);
+        pending.delete(entry[0]);
+        kept.push([entry[0], trackedRun(entry[0], caseId, entry[1]), ...entry.slice(2)]);
       }
-      if (isMasked(def[0])) {
-        pending.add(entry[0]);
-        queueFlush();
-        return false;
+    }
+    return kept;
+  }
+  function trackedRun(key, caseId, run) {
+    return () => {
+      const rec = newRecord(key, caseId);
+      try {
+        trackFetches(key, rec, run);
+      } catch (err) {
+        rec.failed = true;
+        seal(rec);
+        throw err; // the runner records the panel as failed, as before
       }
-      return true;
-    });
+      seal(rec);
+    };
   }
 
   // ── tracked reveal loads ──────────────────────────────────────────────────────────────────────
@@ -229,40 +252,55 @@
     if (backstop === null) end(bad);
     return res;
   }
-  function runTracked(key, rec, run) {
-    const inner = () => {
-      const before = globalThis.fetch;
-      if (typeof before === "function") {
-        globalThis.fetch = function (...args) {
-          rec.left++;
-          let p;
-          try {
-            p = before.apply(this, args);
-          } catch (err) {
+  function newRecord(key, caseId) {
+    const gen = (loadGen.get(key) || 0) + 1;
+    loadGen.set(key, gen);
+    return { key, sec: PANELS[key][0], gen, caseId, left: 0, failed: false, sealed: false };
+  }
+  // The loader's synchronous body has run: every request it will make is counted. One with none
+  // settles at once, so a loader with nothing to ask for this case never stays masked.
+  function seal(rec) {
+    rec.sealed = true;
+    if (rec.left === 0) finish(rec);
+  }
+  // Count every request the loader's SYNCHRONOUS body makes. Nested inside runPanelLoaders' own
+  // per-loader wrapper when the case-open fan-out or the reloader runs it, so its lanes, abort
+  // signal and tally see the same requests.
+  function trackFetches(key, rec, run) {
+    const before = globalThis.fetch;
+    if (typeof before === "function") {
+      globalThis.fetch = function (...args) {
+        rec.left++;
+        let p;
+        try {
+          p = before.apply(this, args);
+        } catch (err) {
+          requestDone(rec, true);
+          throw err;
+        }
+        if (!p || typeof p.then !== "function") {
+          requestDone(rec, true);
+          return p;
+        }
+        return p.then(
+          (res) => watchAnswer(res, rec),
+          (err) => {
             requestDone(rec, true);
             throw err;
-          }
-          if (!p || typeof p.then !== "function") {
-            requestDone(rec, true);
-            return p;
-          }
-          return p.then(
-            (res) => watchAnswer(res, rec),
-            (err) => {
-              requestDone(rec, true);
-              throw err;
-            },
-          );
-        };
-      }
-      tracking = key;
-      try {
-        run();
-      } finally {
-        tracking = null;
-        globalThis.fetch = before;
-      }
-    };
+          },
+        );
+      };
+    }
+    tracking = key;
+    try {
+      run();
+    } finally {
+      tracking = null;
+      globalThis.fetch = before;
+    }
+  }
+  function runTracked(key, rec, run) {
+    const inner = () => trackFetches(key, rec, run);
     const clp = typeof window !== "undefined" ? window.DfirCaseLoadProgress : null;
     if (clp && typeof clp.runPanelReload === "function") clp.runPanelReload(key, rec.caseId, inner);
     else inner();
@@ -282,12 +320,9 @@
     const records = [];
     for (const key of due) {
       pending.delete(key);
-      const [sec, loaderName] = PANELS[key];
-      const loader = globalThis[loaderName];
+      const loader = globalThis[PANELS[key][1]];
       if (typeof loader !== "function") continue;
-      const gen = (loadGen.get(key) || 0) + 1;
-      loadGen.set(key, gen);
-      const rec = { key, sec, gen, caseId, left: 0, failed: false, sealed: false };
+      const rec = newRecord(key, caseId);
       records.push(rec);
       try {
         runTracked(key, rec, () => loader(caseId));
@@ -295,18 +330,36 @@
         rec.failed = true;
       }
     }
-    for (const rec of records) {
-      rec.sealed = true;
-      if (rec.left === 0) finish(rec);
-    }
+    records.forEach(seal);
   }
 
   // A case switch or a cancelled load: nothing pending survives, and no answer still on its way
   // may lift a mask. Masks stay — the content under them is still the old case's.
-  function reset() {
+  //
+  // #2900: `caseId` names the case now opening, or none after a cancel or a failed load. With no
+  // case nothing is loading, so a "Loading…" mask says the load stopped instead; the next case open
+  // turns those back into "Loading…" (eagerOnly tracks a shown one in the fan-out, a hidden one
+  // loads on reveal). A failure line is left as it is.
+  function reset(caseId) {
     pending.clear();
     tracking = null;
     for (const [key, gen] of loadGen) loadGen.set(key, gen + 1);
+    const opening = !!String(caseId || "").trim();
+    for (const sec of new Set(Object.values(PANELS).map((def) => def[0]))) {
+      const text = isMasked(sec) ? sectionEl(sec).dataset.panelStale : null;
+      if (!opening && text === LOADING) setMask(sec, STOPPED);
+      else if (opening && text === STOPPED) setMask(sec, LOADING);
+    }
+    for (const fn of resetListeners) {
+      try {
+        fn(opening ? String(caseId).trim() : null);
+      } catch {
+        /* one panel's placeholder must not stop the reset */
+      }
+    }
+  }
+  function onReset(fn) {
+    if (typeof fn === "function" && !resetListeners.includes(fn)) resetListeners.push(fn);
   }
 
   window.DfirPanelDefer = {
@@ -314,6 +367,8 @@
     eagerOnly,
     flushRevealed,
     reset,
+    onReset,
+    stoppedText: STOPPED,
     panels: () => JSON.parse(JSON.stringify(PANELS)),
   };
 })();

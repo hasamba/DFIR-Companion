@@ -26,7 +26,9 @@ import {
   type CloudStreamDisclosure,
 } from "../analysis/cloudStreamDisclosure.js";
 import { getServerLogger } from "../logging/serverLogger.js";
-import { settleForensicImport, type SettledImport } from "../routes/importSettle.js";
+import { randomUUID } from "node:crypto";
+import { failedAfterGrading, settleForensicImport, type SettledImport } from "../routes/importSettle.js";
+import { recoverImportRows, recoveryDepsFromSettle } from "../routes/importRowRecovery.js";
 import { recordImportRun, type ImportRunContext } from "../routes/importRunRecorder.js";
 import { importSettleDeps, type StreamedSettleDeps } from "./importIngestSettle.js";
 
@@ -161,15 +163,32 @@ async function foldAll(deps: BatchTailDeps, a: BatchTailArgs): Promise<void> {
   }
 }
 
-// The one seam, with the deferred super-row tags in the settle's own tagger call.
+// The one seam, with the deferred super-row tags in the settle's own tagger call. A settle that throws
+// before grading completed settles the batch's rows here, still inside the section, in ONE pass over
+// every file (a pass per file would demote the others' rows before their tag) — then rethrows, so the
+// crash marker stays and the next sweep re-runs its idempotent recovery (#2891). Until then another
+// import's case-wide demote could have moved them out untagged.
 async function settleBatch(deps: BatchTailDeps, a: BatchTailArgs): Promise<SettledImport | null> {
   const base = importSettleDeps(deps.settleDeps);
   if (!base) return null;
   const pending = a.collect.superPending;
   const tag = async (caseId: string, rows: ForensicEvent[]): Promise<void> =>
     base.autoTagImported(caseId, [...pending.splice(0), ...rows]);
+  const importBatchId = randomUUID();
   try {
-    return await settleForensicImport({ ...base, autoTagImported: tag }, a.caseId, a.baseline, a.label);
+    return await settleForensicImport({ ...base, autoTagImported: tag }, a.caseId, a.baseline, a.label, {
+      importBatchId,
+    });
+  } catch (err) {
+    if (!failedAfterGrading(err)) {
+      const storedNames = a.collect.imported.map((f) => f.storedName);
+      const target = { caseId: a.caseId, storedNames, tag: "drop", batchId: importBatchId };
+      await recoverImportRows(recoveryDepsFromSettle(base), {
+        ...target,
+        cause: "whose batch settle failed",
+      });
+    }
+    throw err;
   } finally {
     // A batch that added no forensic row never reached the tagger: its super rows are tagged here.
     if (pending.length) await base.autoTagImported(a.caseId, pending.splice(0)).catch(() => undefined);

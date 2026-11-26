@@ -104,11 +104,13 @@ async function harness(opts: { lock?: ImportLock; tagFailsOnce?: boolean; marker
   const demote = createImportDemote({ options, runStateExclusive });
   const tagger = importTagger({ options, store, runStateExclusive, logLine: () => {} });
   let tagFails = opts.tagFailsOnce ?? false;
+  const offered: string[] = []; // every row id the tagger was handed, once it ran
   const autoTagImported: typeof tagger = async (caseId, added) => {
     if (tagFails) {
       tagFails = false;
       throw new Error("tagger store unavailable");
     }
+    offered.push(...added.map((e) => e.id));
     return tagger(caseId, added);
   };
   const importLock = opts.lock ?? new ImportLock();
@@ -153,6 +155,7 @@ async function harness(opts: { lock?: ImportLock; tagFailsOnce?: boolean; marker
     pushImportCheckpoint,
     importLock,
     runStateExclusive,
+    offered,
   };
 }
 
@@ -417,6 +420,17 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     expect(ok.every((x) => /settle step failed/.test(x.warning ?? ""))).toBe(true);
     const marker = createDropBatchMarker(h.store);
     expect((await marker.read("c1"))?.length).toBe(h.files.length); // every file that reached its import
+    // #2891: graded IN the section, before any other import's demote could run — not only at the
+    // next sweep. One recovery over every file's rows: nothing of the batch is left below the gate.
+    const names = new Set((await marker.read("c1")) ?? []);
+    expect(names.size).toBeGreaterThan(1);
+    const left = (await h.stateStore.load("c1")).forensicTimeline.filter((e) =>
+      e.sourceScreenshots.some((s) => names.has(s)),
+    );
+    expect(left.every((e) => e.importBatchId && e.severity !== "Info")).toBe(true);
+    expect(left.length).toBeGreaterThan(0);
+    const offered = new Set(h.offered);
+    expect(left.every((e) => offered.has(e.id))).toBe(true); // every forensic row reached the tagger
     // A second batch must not write over (or clear) the unsettled one: it imports one by one instead.
     const again = await h.batch.ingestDiskBatch(
       "c1",

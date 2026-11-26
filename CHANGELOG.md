@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **THOR via Velociraptor without scanner noise** — THOR's Info status lines and its Debug folder listing are no longer imported; licence banners and THOR errors are graded Info (closes #2884)
+- **Case switch leaves no previous-case panels** — the login graph, asset graph, duplicate hosts, activity log, playbook, pins and finding workflow never show the previous case's data, and a cancelled load's panels say nothing is loading (closes #2900)
+- **Failed settles still grade their rows** — a dedicated import, NG-SIEM search, Watson paste, drop-folder batch, cloud collection page or import replay whose end-of-import settle fails still reports the failure, but its rows are graded before the next demote (part of #2891)
+- **No previous-case content after a case switch** — a heavy panel visible when you open another case shows "Loading this case's data…" until the new case's data arrives, and Attack Phases no longer redraws the previous case's phases (closes #2894)
+- **Stronger Telegram button tokens** — Apply / Reject buttons carry 128-bit tokens checked in constant time; buttons sent before the upgrade answer "expired", decide those in the dashboard (closes #2897)
 - **Velociraptor row host names stay whole** — long Velociraptor rows (YARA, Sigma, detections, USN, MFT, processes, network connections, downloads, generic) keep the whole "@ HOST", not a cut-off fragment (closes #2885)
 - **Failed hunt settle re-graded** — rows from a hunt collect whose end-of-import settle fails, and rows from uploaded reports such as THOR, are graded before the next demote (closes #2852)
 - **Hunt settle failures after stamping** — a settle that fails mid-stamp, or a failed pre-import read, no longer leaves hunt rows ungraded; recovery also survives a restart (closes #2888)
