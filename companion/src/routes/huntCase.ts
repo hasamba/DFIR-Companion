@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { isHuntType } from "../analysis/incidentTypes.js";
+import { isArchivedProfile } from "../analysis/clientProfile.js";
 import { loadHuntFramingFor } from "../analysis/huntFramingLoad.js";
 import { huntCoverageFromJobs } from "../analysis/huntFraming.js";
 import { loadHuntJobsSafe } from "../analysis/huntFramingLoad.js";
@@ -55,6 +56,7 @@ export function registerHuntCaseRoutes(app: Express, ctx: RouteContext): void {
         items: (rec?.grades ?? []).map(reportItemOf),
         regradeAvailable: hunt && !!options.huntGradingDeps,
         ...(profile ? { clientName: profile.name, currentBaselineVersion: profile.version } : {}),
+        ...(profile && isArchivedProfile(profile) ? { clientArchived: true } : {}),
         ...(rec?.baselineVersion !== undefined ? { baselineVersion: rec.baselineVersion } : {}),
         ...(record.convertedFrom
           ? { convertedFrom: record.convertedFrom, convertedAt: record.convertedAt }

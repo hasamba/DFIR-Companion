@@ -5,6 +5,7 @@
 // the client's blocked / approved download sources. Seeing a program never approves it: only a mark
 // does, saved with who, when and its source. Editing a profile is the instance administrator's
 // (the server answers 403 to anyone else); earlier hunts are listed only when the viewer may open them.
+// Creating, editing, archiving and deleting a client (#2941) are shown to the administrator only.
 //
 // Every server- or evidence-derived string is written with textContent, never innerHTML.
 (function () {
@@ -83,44 +84,74 @@
     return s && s.trim() ? s.trim() : null;
   }
 
+  // #2941: client management is the instance administrator's (js/dashboard-client-admin.js).
+  const isAdmin = () => typeof isClientAdmin === "function" && typeof clientAdminBar === "function" && isClientAdmin();
+  const optionLabel = (c) => `${c.name}${c.archived ? " (archived)" : ""}`;
+  let showArchived = false; // the administrator's "Show archived clients" tick box
+
   async function linkRow(caseId, info, status) {
-    const list = await call("/client-profiles");
+    const admin = isAdmin();
+    const list = await call(admin && showArchived ? "/client-profiles?includeArchived=1" : "/client-profiles");
+    const clients = list.ok && Array.isArray(list.body) ? list.body.slice() : [];
+    // An archived client stays visible while this case is linked to it, so the box shows the real link.
+    if (info.client && !clients.some((p) => p.id === info.client.id)) clients.push(info.client);
     const select = el("select", null, "toolbar-select");
     select.id = "cbClientSelect";
-    select.appendChild(el("option", "— pick a client —"));
-    for (const p of list.ok && Array.isArray(list.body) ? list.body : []) {
-      const o = el("option", p.name);
+    select.appendChild(el("option", "— pick a client —")).value = "";
+    for (const p of clients) {
+      const o = el("option", optionLabel(p));
       o.value = p.id;
       if (info.client && info.client.id === p.id) o.selected = true;
       select.appendChild(o);
     }
+    if (info.client) select.value = info.client.id;
     const link = button("Link case to client");
     link.addEventListener("click", async () => {
-      if (!select.value || select.selectedIndex === 0) return;
+      if (!select.value) return;
+      const picked = clients.find((p) => p.id === select.value);
+      if (picked && picked.archived) return void (status.textContent = "This client is archived. Unarchive it before linking a case to it.");
       const r = await send("POST", huntUrl(caseId, "client"), { clientId: select.value });
       status.textContent = r.ok ? "Linked." : `Link failed: ${r.status === 403 ? "linking needs case administrator rights" : r.body.error || r.status}`;
       if (r.ok) loadClientBaseline(caseId);
     });
-    const create = button("New client…");
-    create.addEventListener("click", async () => {
-      const name = window.prompt("Client name (e.g. “Client A”):", "");
-      if (!name || !name.trim()) return;
-      const r = await send("POST", "/client-profiles", { name: name.trim() });
-      status.textContent = r.ok ? `Client “${r.body.name}” created — link it above.` : `Create failed: ${failText(r)}`;
-      if (r.ok) loadClientBaseline(caseId);
-    });
     const controls = el("div", null, "cb-link-row");
-    controls.append(select, link, create);
+    controls.append(select, link);
+    if (admin) {
+      // #2735/#2941: creating a client is the instance administrator's, as in the New Case dialog.
+      const create = button("New client…");
+      create.addEventListener("click", async () => {
+        const name = window.prompt("Client name (e.g. “Client A”):", "");
+        if (!name || !name.trim()) return;
+        const r = await send("POST", "/client-profiles", { name: name.trim() });
+        status.textContent = r.ok ? `Client “${r.body.name}” created — link it above.` : `Create failed: ${failText(r)}`;
+        if (r.ok) loadClientBaseline(caseId, status.textContent);
+      });
+      controls.appendChild(create);
+    }
     const row = field("Client", controls);
     row.classList.add("cb-link");
     row.querySelector("label").htmlFor = select.id;
+    const bar = admin
+      ? clientAdminBar({
+          select,
+          clients,
+          status,
+          showArchived,
+          onToggleArchived: (on) => {
+            showArchived = on;
+            loadClientBaseline(caseId);
+          },
+          onChanged: (note) => loadClientBaseline(caseId, note),
+        })
+      : null;
+    if (bar) row.appendChild(bar);
     return row;
   }
 
   function summary(caseId, info) {
     const box = el("div", null, "cb-summary");
     const c = info.client;
-    box.appendChild(el("p", `${c.name} · baseline version ${info.currentVersion}${info.pinnedVersion !== null ? ` · this case graded against version ${info.pinnedVersion}` : ""} · ${info.pending} item(s) waiting for the client`));
+    box.appendChild(el("p", `${optionLabel(c)} · baseline version ${info.currentVersion}${info.pinnedVersion !== null ? ` · this case graded against version ${info.pinnedVersion}` : ""} · ${info.pending} item(s) waiting for the client`));
     if (info.pinnedVersion !== null && info.currentVersion !== info.pinnedVersion)
       box.appendChild(el("p", "The baseline changed since this case was graded. Use “Re-grade with current baseline” in the Threat Hunt panel to apply it here.", "ev-sub"));
     if (c.defaultServerSetId) box.appendChild(el("p", `Default server set for new hunt cases: ${c.defaultServerSetId}`, "ev-sub"));

@@ -303,6 +303,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   // AI Agent Forensics panel + sweep view (#2690).
   "/js/dashboard-ai-agent.js": "application/javascript; charset=utf-8",
   "/js/dashboard-hunt-case.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-client-admin.js": "application/javascript; charset=utf-8",
   "/js/dashboard-client-baseline.js": "application/javascript; charset=utf-8",
   "/js/dashboard-wizard-server-set.js": "application/javascript; charset=utf-8",
   // Case templates and incident types — the new-case template picker and its caches.

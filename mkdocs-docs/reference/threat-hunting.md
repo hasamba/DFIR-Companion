@@ -32,6 +32,28 @@ example "Client A"). It keeps the client's reviewed baseline across hunt cases.
   the **Servers** box with it, unless you already chose a set there. It never changes an existing
   case and never decides which hosts belong to the client.
 
+#### Edit, archive or delete a client
+
+The instance administrator manages clients in the **Client Baseline** panel. Pick the client in the
+**Client** box, then press one of the buttons under it. The buttons act on the client in the box,
+whether or not this case is linked to it, and never change the case's link. Members do not see them.
+
+- **Edit client…** changes the client's name and its default server set. The change goes into the
+  client's audit trail.
+- **Archive client** hides the client from the **New Case** Client box and from the panel's Client
+  box. Nothing is removed: baseline answers, versions, audit trail and linked cases all stay. Linked
+  cases keep working and keep their grading, and show the client as "Client A (archived)". No new
+  case can be linked to an archived client. Tick **Show archived clients** to list archived
+  clients again, then pick one and press **Unarchive client** to bring it back.
+- **Delete client…** asks first, naming the client. It works only when no case is linked to the
+  client, archived cases included. Otherwise the panel names the linked cases and suggests
+  **Archive client** instead. Delete removes the client record with its baseline answers, versions
+  and audit trail, and cannot be undone.
+
+Every edit, archive and unarchive goes into the client's audit trail. Archive, unarchive and delete
+also go into the instance authentication audit (team mode; global administrators can inspect it), so the deletion stays on record
+after the client's own trail is gone.
+
 ### 3. Run the hunt
 
 Run the built-in **Threat Hunt Starter** bundle (Fleet Collection panel), or any other hunt. The
@@ -165,7 +187,9 @@ synthesis.
 ### Who sees what (team mode)
 
 - Everyone signed in sees the list of client names. The public demo shows no client profiles.
-- Only the instance administrator sees and edits a full client profile.
+- Only the instance administrator sees and edits a full client profile, and only the
+  administrator can create, edit, archive, unarchive or delete a client. Members see only the
+  clients that are not archived.
 - Earlier hunts of the same client are listed only when you can open them, including their case
   password when they have one.
 - The client's name and its blocked and approved domains are masked before every AI call when
