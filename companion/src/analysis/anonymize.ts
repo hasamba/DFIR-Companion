@@ -14,8 +14,8 @@ import {
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
-import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
-import type { SeparatorFlags } from "./anonIpv6Scan.js";
+import { findIpv6Literals, groupAsRead, ipv4TailJoin, ipv6Mask } from "./anonIpv6Scan.js";
+import type { Ipv6Grade, Ipv6Span, SeparatorFlags } from "./anonIpv6Scan.js";
 import {
   NETBIOS_ACCT,
   UPN_ACCT,
@@ -508,6 +508,7 @@ export function createAnonymizer(
   const IPV6_SENTINEL = "\uE000";
   const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
+  const IPV6_RESTORE_RE = /\uE000IPV6:(\d+)\uE000((?:\.\d{1,3}){3}\b)?/g; // + a dotted IPv4 tail (#2990)
   // null: a plain address. failClosed / separated: an address after a word:: separator (#2976, #2979).
   type Reserved = { value: string; category: AnonTokenCategory | null } & SeparatorFlags;
 
@@ -532,23 +533,23 @@ export function createAnonymizer(
     return { text: out + text.slice(at), literals };
   }
 
+  // A dotted IPv4 tail the detector cut ("fd00::192" + ".168.1.5") joins the token (#2990).
   function restoreIpv6Literals(t: string, literals: Reserved[]): string {
-    return t.replace(IPV6_PLACEHOLDER_RE, (m, i: string, at: number, w: string) => {
-      const entry = literals[Number(i)]; // undefined: never invent a value (the strip above)
-      return entry === undefined ? m : ends.ended(ipv6Token(entry), entry.value, at, at + m.length, w);
+    const base = (ip: string) => (isInternalIpv6(ip) ? "IP" : policy.maskPublicIps ? "EXTIP" : null);
+    const range = (read: string) => rangeCategory(compiled, read); // #2946: a custom range names it
+    const tail = { suppressed, crossers: policy.categories.PHONE ? [PHONE_IL, PHONE_NANP] : [] };
+    return t.replace(IPV6_RESTORE_RE, (m, idxStr: string, cut = "", at: number) => {
+      // A token right before a digit gets a delimiter at the end (#2992); a tail left after it cannot.
+      const out = (r: string, v: string, rest: string) =>
+        rest ? r + rest : ends.ended(r, v, at, at + m.length, t);
+      const entry = literals[Number(idxStr)];
+      if (entry === undefined) return m; // belt-and-braces with the strip above: never invent a value
+      if (entry.category) return out(mintCustom(entry.category, entry.value), entry.value, cut);
+      const d = ipv6Mask<AnonTokenCategory>(entry, { range, closed: "IP", base, suppressed });
+      if (!d) return out(entry.value + cut, entry.value + cut, ""); // in clear: the IPv4 pass masks the tail
+      const j = ipv4TailJoin(entry.value, cut, t.slice(at + m.length, at + m.length + 32), d.forced, tail);
+      return out(d.forced ? forcing(() => assign(d.cat, j.value)) : assign(d.cat, j.value), j.value, j.rest);
     });
-  }
-  function ipv6Token(entry: Reserved): string {
-    if (entry.category) return mintCustom(entry.category, entry.value);
-    const ip = entry.value;
-    const read = entry.separated === "alone" ? `::${ip}` : ip; // as read before the split (#2979)
-    const ranged = rangeCategory(compiled, read); // #2946: a custom range names the category
-    if (ranged) return forcing(() => assign(ranged, ip));
-    // Never back in clear through a suppression of its value (#2976), but "::a00:5" stays one (#2979).
-    if (read !== ip && suppressed.has(read.toLowerCase())) return ip;
-    if (entry.failClosed) return forcing(() => assign("IP", ip));
-    if (isInternalIpv6(ip)) return assign("IP", ip);
-    return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
   }
 
   function anonIpv4(t: string): string {

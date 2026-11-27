@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI Agent Forensics report section** — the case report lists each run launched in or filed into the case, with inventory, matched text, both hashes, Sigma coverage and the rules not run (closes #2721)
 
 ### Fixed
+- **IPv6 with a dotted IPv4 tail masked whole** — an address such as `fd00::192.168.1.5` is one token instead of masking only up to the first octet and sending the rest of the IPv4 in clear (closes #2990)
 - **A custom value before an @domain restores** — a custom value (or a masked account) right before `@` and a domain no longer leaves a token inside the email token, so the answer restores to the original text (closes #2991)
 - **More Evtx:: shapes keep their separator** — an internal address alone after `word::`, one with a non-internal tail, and one after a redacted secret that ran up to the `::` are each one masked token with the `::` kept (closes #2979)
 - **Masked token before a digit** — a token placed right before a digit (glued IPv6 text, a padded encoded command) gets a `·` delimiter, so restore gives back the right value instead of reading another token (closes #2992)
