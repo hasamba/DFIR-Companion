@@ -989,12 +989,13 @@ describe("anonymizer — token-shaped literals already in the text (#2569)", () 
     );
   });
 
-  it("a literal equal to a token minted by an EARLIER apply() call is escaped, never restored", () => {
+  it("a literal equal to a token minted by an EARLIER apply() call is escaped, and restores as itself", () => {
     const a = createAnonymizer(policy({ HOST: true }), HOST);
     expect(a.apply("logon WS-FIN-07")).toBe("logon ANON_HOST_1");
     const masked = a.apply("cmd ANON_HOST_1");
     expect(masked).toBe("cmd ANON-LITERAL_HOST_1");
-    expect(a.restore(masked)).toBe("cmd ANON-LITERAL_HOST_1");
+    // #3001: restore() undoes its own escape, once; never the real host (#2569).
+    expect(a.restore(masked)).toBe("cmd ANON_HOST_1");
   });
 
   it("a lower-case literal reserves its number too", () => {

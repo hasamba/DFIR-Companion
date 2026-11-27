@@ -14,6 +14,7 @@ import {
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
+import { literalEscapes } from "./anonTokenLiterals.js";
 import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
 import type { Ipv6Grade, Ipv6Span } from "./anonIpv6Scan.js";
 import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
@@ -620,7 +621,7 @@ export function createAnonymizer(
     ends.start(t, toReal);
     // A literal token in the input is never minted later, and one minted already is escaped (#2569).
     // A literal equal to a SAVED token is escaped too (#2657), or the saved value could adopt it.
-    const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok));
+    const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok), escapes);
     for (const lit of scan.literals) reserved.add(lit);
     t = scan.text;
     // One-way secrets go before anything is tokenized or set aside, so a secret that is also a
@@ -669,8 +670,9 @@ export function createAnonymizer(
     return t.replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
   }
 
+  const escapes = literalEscapes(TOKEN_RE.source); // restore() undoes apply()'s escapes; restore ONCE (#3001)
   function restore(text: string): string {
-    return READERS.replace(text, (tok) => toReal.get(tok));
+    return escapes.restore(text, READERS, (tok) => toReal.get(tok));
   }
 
   function restoreDeep<T>(value: T): T {

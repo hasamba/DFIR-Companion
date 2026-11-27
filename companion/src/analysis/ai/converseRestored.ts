@@ -220,6 +220,8 @@ async function sendPrepared(
   }
 }
 
+// Each piece (call inputs, assistant text, final answer) is restored exactly once (#3001): restored
+// text may hold a planted literal equal to a minted token, and a second restore would make it real.
 function restoreResult(result: ConverseResult, anon: Anonymizer | null): ConverseRestoredResult {
   // Keys too (review I2): maskDeep with restore walks keys and string leaves alike.
   const calls = result.calls.map((c) => ({
