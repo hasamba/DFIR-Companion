@@ -166,6 +166,12 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     ["x dc:fd00:1:2:3:4:5:6:7 y", "x dc:ANON_IP_1 y"],
     ["x 0:fd00:abcd:: y", "x 0:ANON_IP_1 y"],
     ["x 2019:fd00:1:2:3:4:5:6:7 y", "x 2019:ANON_IP_1 y"],
+    // #2968: a single colon that closes a phrase ends the address.
+    ["x fd00::1: y", "x ANON_IP_1: y"],
+    ["x dc:fd00::1: y", "x dc:ANON_IP_1: y"],
+    ["peer fd00::1: connection reset", "peer ANON_IP_1: connection reset"],
+    ["x fd00::1:", "x ANON_IP_1:"],
+    ["(fd00:abcd::1:)", "(ANON_IP_1:)"],
   ])("%s -> %s", (input, expected) => {
     const { out, back } = run(input, true, range, false);
     expect(out).toBe(expected);
@@ -181,6 +187,8 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     "x fc:fd00::1Method y",
     "x fd0:fd00::1_eth0 y",
     "x dc:fd00:1:2:3:4:5:6:7:8 y",
+    "x fd00::1:: y",
+    "x dc:fd00::1:y",
   ])("never hides the front of a longer token: %s", (input) => {
     expect(run(input, true, range, false).out).toBe(input);
   });
@@ -188,6 +196,9 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
   it("never hides part of an address outside the range", () => {
     expect(run("x 2001:fd00::1 y", true, range, false).out).toBe("x 2001:fd00::1 y");
     expect(run("x 2001:fd00:1:2:3:4:5:6 y", true, range, false).out).toBe("x 2001:fd00:1:2:3:4:5:6 y");
+    // #2968: a closing colon is not a colon run that goes on.
+    expect(run("x 2001:fd00::1: y", true, range, false).out).toBe("x 2001:fd00::1: y");
+    expect(run("x 2001:fd00:1:2:3:4:5:6: y", true, range, false).out).toBe("x 2001:fd00:1:2:3:4:5:6: y");
   });
 
   it.each([
@@ -200,6 +211,12 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     "SHA1 ab:cd:fd:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:01",
     "fp fd:3a:11:22:33:44:55:66 seen",
     "dc:fd00:1:2:3:4:5:6",
+    // #2968: the same shapes followed by a closing colon.
+    "mac 00:1a:2b:3c:4d:5e: seen",
+    "at 12:34:56: local",
+    "use std::os::fd:: x",
+    "fp 12:34:fd:00:11:22:33:44:55:66: x",
+    "fp fd:3a:11:22:33:44:55:66: seen",
   ])("leaves %s byte-identical (#2965)", (input) => {
     expect(run(input, true, range, false).out).toBe(input);
   });
@@ -281,5 +298,35 @@ describe.each([true, false])("IPv6 link-local first group, maskPublicIps=%s (#29
     expect(out).toBe(expected);
     expect(back).toBe(input);
     expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+});
+
+// #2968: with the IP category on, an internal address after a label and before a closing colon
+// ("x dc:fd00::1: y") was sent in clear; a plain "x fd00::1: y" was already masked.
+describe.each([true, false])("IPv6 before a closing colon, maskPublicIps=%s (#2968)", (mask) => {
+  it.each([
+    ["x fd00::1: y", "x ANON_IP_1: y", "fd00::1"],
+    ["x dc:fd00::1: y", "x dc:ANON_IP_1: y", "fd00::1"],
+    ["peer node12:fe80::1: reset", "peer node12:ANON_IP_1: reset", "fe80::1"],
+    ["x dc:fd00::1:", "x dc:ANON_IP_1:", "fd00::1"],
+  ])("%s -> %s", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+
+  it("a public address before a closing colon is masked whole, never split", () => {
+    const input = "x 2001:fd00::1: y";
+    expect(run(input, mask).out).toBe(mask ? "x ANON_EXTIP_1: y" : input);
+  });
+
+  it.each([
+    "mac 00:1a:2b:3c:4d:5e: seen",
+    "at 12:34:56: local",
+    "use std::os::fd:: x",
+    "fp fd:3a:11:22:33:44:55:66: x",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
   });
 });

@@ -53,7 +53,13 @@ function stickyAt(text: string, at: number): RegExpExecArray | null {
   return re.exec(text);
 }
 
-const endsToken = (text: string, end: number) => ENDS_TOKEN.test(text.slice(end, end + 1));
+// One colon that closes a phrase ("peer fd00::1: reset"): followed by a space, punctuation or the
+// end, never by another ":" or a word character, so a colon run that goes on is not one (#2968).
+const CLOSING_COLON = /^:(?![\p{L}\p{N}_:])/u;
+const closingColonAt = (text: string, end: number) => CLOSING_COLON.test(text.slice(end, end + 2));
+
+const endsToken = (text: string, end: number) =>
+  ENDS_TOKEN.test(text.slice(end, end + 1)) || closingColonAt(text, end);
 
 // A real unique-local (fc00::/7) or link-local (fe80::/10) address opens with a FOUR-digit group;
 // a fingerprint or MAC byte run has two-digit groups, a code namespace like "fd::" too (#2956).
@@ -115,7 +121,9 @@ function retryRules(
 ): RetryRules | null {
   const unknown = opts.splitUnknown && g === null;
   // A range caller's grade is "keep" or null, never "weak", so a null run that goes on qualifies.
-  const runGoesOn = text[m.index + m[0].length] === ":";
+  // A closing colon does not go on: "2001:fd00::1: x" is one complete address (#2968).
+  const end = m.index + m[0].length;
+  const runGoesOn = text[end] === ":" && !closingColonAt(text, end);
   const shortLead = !opts.splitUnknown && g === null && !WIDE_START.test(m[0]);
   if (!glued && !unknown && !runGoesOn && !shortLead) return null;
   // A match that opens with a 2-3 digit "fd"/"fc" group was hidden whole before #2959, and one that
