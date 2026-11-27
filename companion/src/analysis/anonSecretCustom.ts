@@ -1,5 +1,6 @@
 import { findCustomSpans, type CompiledCustom } from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
+import { asDetectorRead, type Ipv6Span } from "./anonIpv6Scan.js";
 
 // The secret pass of the anonymizer, made aware of custom entities (#2952).
 //
@@ -54,13 +55,14 @@ export function redactSecretsWithCustom(
   text: string,
   compiled: CompiledCustom,
   sentinel: string,
-  addresses: () => Interval[],
+  addresses: () => Array<Interval & Pick<Ipv6Span, "separated">>,
 ): string {
   const redacted = redactToSentinel(text, sentinel);
   if (!redacted.includes(sentinel)) return redacted;
   const custom = findCustomSpans(text, compiled);
   if (custom.length === 0) return redacted;
-  return coverCustomSecrets(text, redacted, sentinel, custom, addresses());
+  // An address split off a separator by #2979 is joined as it was read before, "::" included.
+  return coverCustomSecrets(text, redacted, sentinel, custom, addresses().map(asDetectorRead));
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

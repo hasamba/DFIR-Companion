@@ -14,7 +14,8 @@ import {
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { scanTokenLiterals } from "./anonTokenLiterals.js";
-import { findIpv6Literals, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
+import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
+import type { SeparatorFlags } from "./anonIpv6Scan.js";
 import {
   NETBIOS_ACCT,
   UPN_ACCT,
@@ -510,8 +511,8 @@ export function createAnonymizer(
   const IPV6_SENTINEL = "\uE000";
   const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
-  // null: a plain address. failClosed: hidden as internal whatever its value grades (#2976).
-  type Reserved = { value: string; category: AnonTokenCategory | null; failClosed?: true };
+  // null: a plain address. failClosed / separated: an address after a word:: separator (#2976, #2979).
+  type Reserved = { value: string; category: AnonTokenCategory | null } & SeparatorFlags;
 
   // A custom value that extends past an address is set aside WITH it, as one span that carries
   // the custom category (#2950); anonCustom() mints it, so the custom value wins as one token.
@@ -526,12 +527,9 @@ export function createAnonymizer(
     const literals: Reserved[] = [];
     let out = "";
     let at = 0;
-    const failClosed = new Set(found.filter((f) => f.failClosed).map((f) => `${f.start}:${f.end}`));
-    for (const s of groupWithLiterals(text, compiled, found)) {
+    for (const s of groupAsRead(found, (read) => groupWithLiterals(text, compiled, read))) {
       out += `${text.slice(at, s.start)}${IPV6_SENTINEL}IPV6:${literals.length}${IPV6_SENTINEL}`;
-      const value = text.slice(s.start, s.end);
-      const closed = s.category === null && failClosed.has(`${s.start}:${s.end}`);
-      literals.push(closed ? { value, category: null, failClosed: true } : { value, category: s.category });
+      literals.push({ value: text.slice(s.start, s.end), category: s.category, ...s.flags });
       at = s.end;
     }
     return { text: out + text.slice(at), literals };
@@ -543,9 +541,11 @@ export function createAnonymizer(
       if (entry === undefined) return m; // belt-and-braces with the strip above: never invent a value
       if (entry.category) return mintCustom(entry.category, entry.value);
       const ip = entry.value;
-      const ranged = rangeCategory(compiled, ip); // #2946: a custom range names the category
+      const read = entry.separated === "alone" ? `::${ip}` : ip; // as read before the split (#2979)
+      const ranged = rangeCategory(compiled, read); // #2946: a custom range names the category
       if (ranged) return forcing(() => assign(ranged, ip));
-      // A joined address never comes back in clear, not even through a suppression of its value (#2976).
+      // Never back in clear through a suppression of its value (#2976), but "::a00:5" stays one (#2979).
+      if (read !== ip && suppressed.has(read.toLowerCase())) return ip;
       if (entry.failClosed) return forcing(() => assign("IP", ip));
       if (isInternalIpv6(ip)) return assign("IP", ip);
       return policy.maskPublicIps ? assign("EXTIP", ip) : ip;

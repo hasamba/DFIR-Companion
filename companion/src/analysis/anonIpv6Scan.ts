@@ -42,8 +42,11 @@ type Grade = (ip: string) => Ipv6Grade;
 export interface Ipv6Span {
   start: number;
   end: number;
-  // Hide as an internal address whatever its value grades: two internal addresses joined (#2976).
+  // Hide as an internal address whatever its value grades: the address after a word:: separator (#2976).
   failClosed?: true;
+  // A fail-closed span read with the "::" in front before #2979 ("::a00:5" out of "Evtx::a00:5"); a
+  // #2976 join was not, and keeps its extent everywhere.
+  separated?: "alone" | "joined";
 }
 
 // A match that starts right after a letter, digit or "_" may have borrowed its first group from
@@ -176,30 +179,144 @@ function separatorRestart(text: string, m: RegExpExecArray, grade: Grade, opts: 
   return g === null ? null : at;
 }
 
-// "Evtx::a00:5::1": the detector reads "::a00:5" (internal 10.0.0.5, IPv4-compatible) glued to "Evtx",
-// then "::1" (loopback) — two tokens, and the "Evtx::" separator gone (#2976). When the glued "keep"
-// match opens with "::", the very next match starts at its end and is "keep" too, and the address read
-// right after the "::" ends exactly where that next match does, the two are one address after a
-// separator. It is joined into one span that fails closed: by its value it may grade as nothing
-// ("a00:5::1"), and it must never be restored in clear. Same characters hidden, minus the separator
-// colons, and the scan resumes where it would have.
-function joinedAfterSeparator(
-  text: string,
-  m: RegExpExecArray,
-  grade: Grade,
-  opts: ScanOptions,
-): Ipv6Span | null {
+// What precedes a "::" separator: a word ("Evtx::a00:5"), or a redacted secret that swallowed the word
+// — \uE001 is the anonymizer's secret sentinel (anonymize.ts SECRET_SENTINEL), one way already (#2979).
+const SEPARATOR_LEAD = /[\p{L}\p{N}_\uE001]/u;
+
+/** One detector match's outcome: the spans it sets aside, and where the scan resumes. */
+interface Step {
+  spans: Ipv6Span[];
+  resume: number;
+}
+
+// "Evtx::a00:5::1" (#2976), "Evtx::a00:5" and "Evtx::7f00:1::5" (#2979): the detector reads "::a00:5"
+// (internal 10.0.0.5, IPv4-compatible) glued to the word, so "Evtx::" lost its separator. The address
+// after the "::" is set aside instead, as ONE span that fails closed: by its value it may grade as
+// nothing ("a00:5", "7f00:1::5"), and it must never be restored in clear.
+// - Joined with an internal next match (#2976, after a word): the address read right after the "::"
+//   ends exactly where the next match does.
+// - Joined otherwise ("Evtx::7f00:1::5", or after a redacted secret): also today's scan of the next
+//   match sets aside nothing outside it and resumes at its end, and the join ends at JOIN_END.
+// - Alone ("Evtx::a00:5"): the rest of the match, when it has two groups or more. A bare "1"
+//   ("Evtx::1") would be learned by screenshot auto-discovery and mask every "1" later.
+// `separated` marks the two new shapes: today they were read with the "::" in front ("::a00:5"), and the
+// passes that group what touches an address judge them that way (asDetectorRead). Only an address alone
+// was ONE address today, so only its old spelling ("::a00:5") counts for a suppression or custom range.
+// Same characters hidden, minus the separator colons, and the scan resumes where it would have. The two
+// new shapes never apply to a "::" right after a span set aside ("xfd00::a00:5::1"): that follows an
+// address, not a word.
+function afterSeparator(text: string, m: RegExpExecArray, grade: Grade, opts: ScanOptions, prevEnd: number) {
   const start = m.index;
-  if (!opts.splitUnknown || start === 0 || !WORD_CHAR.test(text[start - 1]) || !m[0].startsWith("::"))
-    return null;
+  const lead = text[start - 1] ?? "";
+  if (!opts.splitUnknown || !SEPARATOR_LEAD.test(lead) || !m[0].startsWith("::")) return null;
+  const at = start + 2;
   const end = start + m[0].length;
+  const joined = stickyAt(text, at);
   const next = stickyAt(text, end);
-  if (!next) return null;
-  const nextEnd = end + next[0].length;
-  const g = opts.wholeToken && !endsToken(text, nextEnd) ? null : grade(next[0]);
-  const joined = stickyAt(text, start + 2);
-  if (g !== "keep" || !joined || start + 2 + joined[0].length !== nextEnd) return null;
-  return { start: start + 2, end: nextEnd, failClosed: true };
+  const joinEnd = joined ? at + joined[0].length : -1;
+  const join = (span: Ipv6Span) => ({ spans: [span], resume: joinEnd });
+  if (next && joinEnd === end + next[0].length) {
+    const keepNext = gradeMatch(text, next, grade, opts) === "keep";
+    // #2976, unchanged: the extent it has always had.
+    if (keepNext && WORD_CHAR.test(lead)) return join({ start: at, end: joinEnd, failClosed: true });
+    if (start !== prevEnd && joinsCleanly(text, scanMatch(text, next, grade, opts, end), end, joinEnd))
+      return join({ start: at, end: joinEnd, failClosed: true, separated: "joined" });
+  }
+  if (start === prevEnd || !text.slice(at, end).includes(":")) return null;
+  return { spans: [{ start: at, end, failClosed: true as const, separated: "alone" as const }], resume: end };
+}
+
+// Whether the next match can join (#2979): today's scan of it resumes at its end and sets aside nothing
+// outside it, and the join ends the text or is followed by a space and a letter. A span is a blindfold
+// to every later pass: one that ended inside "::10.0.0.5", or before " 1111 1111 1111" of a card
+// number or ") 555-0100" of a phone number, would cut the value that pass masks today (or masks after
+// a suppressed piece comes back in clear) and leave the rest of it in clear.
+const JOIN_END = /^(?:$|\s(?=\p{L}))/u;
+function joinsCleanly(text: string, after: Step, end: number, joinEnd: number): boolean {
+  if (after.resume !== joinEnd || after.spans.some((s) => s.start < end || s.end > joinEnd)) return false;
+  return JOIN_END.test(text.slice(joinEnd, joinEnd + 2));
+}
+
+// The grade the main loop gives a match: a whole-token caller rejects one that runs into a word.
+function gradeMatch(text: string, m: RegExpExecArray, grade: Grade, opts: ScanOptions): Ipv6Grade {
+  return opts.wholeToken && !endsToken(text, m.index + m[0].length) ? null : grade(m[0]);
+}
+
+// One detector match, as findIpv6Literals handles it. `prevEnd`: where the last span set aside ends.
+function scanMatch(text: string, m: RegExpExecArray, grade: Grade, opts: ScanOptions, prevEnd: number): Step {
+  const start = m.index;
+  const span = { start, end: start + m[0].length };
+  const g = gradeMatch(text, m, grade, opts);
+  if (g === "keep")
+    return afterSeparator(text, m, grade, opts, prevEnd) ?? { spans: [span], resume: span.end };
+  const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
+  const rules = retryRules(text, m, g, glued, opts);
+  // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
+  // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
+  // only an internal address, so a fingerprint never mints a public token (#2959).
+  const compressed = m[0].includes("::");
+  const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
+  const inner = rules ? retryInside(text, span, ok, grade, rules) : null;
+  const restart = glued ? separatorRestart(text, m, grade, opts) : null;
+  // An internal address found BEFORE the separator ("fd00::2001:db8" out of "xfd:fd00::2001:db8::1")
+  // still wins: it fails closed (#2974 review). One found after it is the restart's to take whole.
+  const innerFirst =
+    inner &&
+    restart !== null &&
+    inner.start < restart &&
+    grade(text.slice(inner.start, inner.end)) === "keep";
+  // The address after the separator starts a token of its own.
+  if (restart !== null && !innerFirst) return { spans: [], resume: restart };
+  if (inner) return { spans: [inner], resume: inner.end }; // the real address can run past the match
+  // "2019::" out of "Win2019:: x", and "2016::F" out of "Server2016::Foo" (#2959), are words.
+  const inWord = glued && (m[0].endsWith("::") || /^\p{L}/u.test(text.slice(span.end, span.end + 1)));
+  return { spans: g === "weak" && !inWord ? [span] : [], resume: span.end };
+}
+
+/**
+ * A fail-closed span with its "::" separator in front, as the detector read it before the split
+ * (#2979). The passes that join or group what TOUCHES an address — a custom value, a redacted secret —
+ * use this, so "x:" or a secret that ran up to the separator still reaches the address it reached.
+ */
+export function asDetectorRead(span: Pick<Ipv6Span, "start" | "end" | "separated">): {
+  start: number;
+  end: number;
+} {
+  return span.separated ? { start: span.start - 2, end: span.end } : { start: span.start, end: span.end };
+}
+
+export type SeparatorFlags = Pick<Ipv6Span, "failClosed" | "separated">;
+
+/**
+ * Group the spans as the detector read them (asDetectorRead), then give back a fail-closed span that
+ * was grouped with nothing at its own extent, separator in clear, with its flags (#2979).
+ */
+export function groupAsRead<G extends { start: number; end: number; category: unknown }>(
+  found: readonly Ipv6Span[],
+  group: (read: Array<{ start: number; end: number }>) => G[],
+): Array<{ start: number; end: number; category: G["category"]; flags?: SeparatorFlags }> {
+  const key = (f: Ipv6Span) => `${asDetectorRead(f).start}:${f.end}`;
+  const closed = new Map(found.filter((f) => f.failClosed).map((f) => [key(f), f]));
+  return group(found.map(asDetectorRead)).map((g) => {
+    const f = g.category === null ? closed.get(`${g.start}:${g.end}`) : undefined;
+    if (!f) return { start: g.start, end: g.end, category: g.category };
+    const flags: SeparatorFlags = f.separated
+      ? { failClosed: true, separated: f.separated }
+      : { failClosed: true };
+    return { start: f.start, end: f.end, category: g.category, flags };
+  });
+}
+
+/**
+ * The original detector pieces behind a fail-closed span (#2979): the match that opened with the "::"
+ * separator and, for a joined span, the match after it. The preview's leak hint judges these, as it
+ * judged them before the separator was split off.
+ */
+export function separatorPieces(text: string, span: Ipv6Span): string[] {
+  const head = stickyAt(text, span.start - 2);
+  if (!head) return [];
+  const headEnd = span.start - 2 + head[0].length;
+  return headEnd < span.end ? [head[0], text.slice(headEnd, span.end)] : [head[0]];
 }
 
 /**
@@ -226,43 +343,9 @@ export function findIpv6Literals(
   const out: Ipv6Span[] = [];
   const re = new RegExp(IPV6_RE.source, "giu"); // local: no lastIndex shared with other callers
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    const start = m.index;
-    const span = { start, end: start + m[0].length };
-    const g = opts.wholeToken && !endsToken(text, span.end) ? null : grade(m[0]);
-    if (g === "keep") {
-      const joined = joinedAfterSeparator(text, m, grade, opts);
-      out.push(joined ?? span);
-      if (joined) re.lastIndex = joined.end;
-      continue;
-    }
-    const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
-    const rules = retryRules(text, m, g, glued, opts);
-    // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
-    // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
-    // only an internal address, so a fingerprint never mints a public token (#2959).
-    const compressed = m[0].includes("::");
-    const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
-    const inner = rules ? retryInside(text, span, ok, grade, rules) : null;
-    const restart = glued ? separatorRestart(text, m, grade, opts) : null;
-    // An internal address found BEFORE the separator ("fd00::2001:db8" out of "xfd:fd00::2001:db8::1")
-    // still wins: it fails closed (#2974 review). One found after it is the restart's to take whole.
-    const innerFirst =
-      inner &&
-      restart !== null &&
-      inner.start < restart &&
-      grade(text.slice(inner.start, inner.end)) === "keep";
-    if (restart !== null && !innerFirst) {
-      re.lastIndex = restart; // the address after the separator starts a token of its own
-      continue;
-    }
-    if (inner) {
-      out.push(inner);
-      re.lastIndex = inner.end; // the real address can run past the rejected match
-      continue;
-    }
-    // "2019::" out of "Win2019:: x", and "2016::F" out of "Server2016::Foo" (#2959), are words.
-    const inWord = glued && (m[0].endsWith("::") || /^\p{L}/u.test(text.slice(span.end, span.end + 1)));
-    if (g === "weak" && !inWord) out.push(span);
+    const step = scanMatch(text, m, grade, opts, out.length > 0 ? out[out.length - 1].end : -1);
+    out.push(...step.spans);
+    re.lastIndex = step.resume;
   }
   return out;
 }

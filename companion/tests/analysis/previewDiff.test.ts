@@ -281,6 +281,18 @@ describe("previewDiff — possible leaks are guesses on the masked side (#2531)"
     it.each([true, false])("flags the address after Evtx:: as one, maskPublicIps=%s", (mask) => {
       expect(ipv6Warnings("x Evtx::a00:5::1 y", mask)).toEqual([["a00:5::1", "ip"]]);
     });
+
+    // #2979: the address after the separator is flagged when today's pieces were, and only then.
+    it.each([true, false])(
+      "flags an address after Evtx:: when a piece of it looks internal, maskPublicIps=%s",
+      (mask) => {
+        expect(ipv6Warnings("x Evtx::a00:5 y", mask)).toEqual([["a00:5", "ip"]]);
+        expect(ipv6Warnings("x Evtx::0:a00:5 y", mask)).toEqual([["0:a00:5", "ip"]]);
+        expect(ipv6Warnings("x Evtx::7f00:1::5 y", mask)).toEqual([]);
+        expect(ipv6Warnings("x Evtx::1 y", mask)).toEqual([]);
+        expect(ipv6Warnings("x x::7f00:1::1 y", mask)).toEqual([]);
+      },
+    );
   });
 
   it("warnings survive the fallback", () => {

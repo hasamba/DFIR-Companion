@@ -568,11 +568,7 @@ describe.each([true, false])("internal IPv6 after a word:: separator, maskPublic
     expect(a.apply("Evtx::a00:5::1")).toBe("Evtx::ANON_IP_1");
   });
 
-  it.each([
-    ["Evtx::a00:5", "EvtxANON_IP_1"],
-    ["Evtx::7f00:1::5", "EvtxANON_IP_1::5"],
-    ["xfd00::a00:5::1", "xANON_IP_1ANON_IP_2"],
-  ])("leaves %s as it is today", (input, expected) => {
+  it.each([["xfd00::a00:5::1", "xANON_IP_1ANON_IP_2"]])("leaves %s as it is today", (input, expected) => {
     const { out, back } = run(input, mask);
     expect(out).toBe(expected);
     expect(back).toBe(input);
@@ -604,5 +600,144 @@ describe("custom IPv6 range, IP category off, before Evtx::a00:5::1 (#2976)", ()
   it("is byte-identical to today", () => {
     const ranges: CustomEntity[] = [{ value: "::a00:0/112", category: "IP", match: "pattern" }];
     expect(run("Evtx::a00:5::1", true, ranges, false).out).toBe("Evtx::a00:5::1");
+  });
+});
+
+// #2979: more "Evtx::" shapes lost the separator (all failed closed). An internal address after the
+// separator alone ("Evtx::a00:5"), one whose tail is not internal ("Evtx::7f00:1::5"), and one after a
+// redacted secret that ran up to the separator. The address after "::" is one token that fails closed
+// (ANON_IP) on both masking settings. A secret stays one way: the letters it swallowed stay redacted.
+describe.each([true, false])("more word:: separator shapes, maskPublicIps=%s (#2979)", (mask) => {
+  it.each([
+    ["Evtx::a00:5", "Evtx::ANON_IP_1", "a00:5"],
+    ["x Evtx::a00:5 y", "x Evtx::ANON_IP_1 y", "a00:5"],
+    ["Evtx::0:a00:5", "Evtx::ANON_IP_1", "0:a00:5"],
+    ["Evtx::a00:5Method", "Evtx::ANON_IP_1Method", "a00:5"],
+    ["Evtx::ffff:10.0.0.5", "Evtx::ANON_IP_1", "ffff:10.0.0.5"],
+    ["Evtx::7f00:1::5", "Evtx::ANON_IP_1", "7f00:1::5"],
+    ["x Evtx::7f00:1::5 y", "x Evtx::ANON_IP_1 y", "7f00:1::5"],
+  ])("%s keeps the separator and masks one address", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual([["ANON_IP_1", value, "IP"]]);
+    const start = input.indexOf(value);
+    const separated = value.includes("::") ? "joined" : "alone";
+    expect(findReservableIpv6Spans(input, mask)).toEqual([
+      { start, end: start + value.length, failClosed: true, separated },
+    ]);
+  });
+
+  // A bare "1" minted as a token would be learned by screenshot auto-discovery and mask every "1" later.
+  it.each([
+    ["Evtx::1", "EvtxANON_IP_1"],
+    ["xfd00::a00:5::1", "xANON_IP_1ANON_IP_2"],
+  ])("leaves %s as it is today", (input, expected) => {
+    const { out, back } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+  });
+
+  // Code review: only an address alone was one address before; a joined one was two.
+  it("a suppression of a joined address with the separator in front never uncovers it", () => {
+    for (const [input, value] of [
+      ["Evtx::7f00:1::5", "::7f00:1::5"],
+      ["Evtx::a00:5::1", "::a00:5::1"],
+    ]) {
+      const a = createAnonymizer(policy(mask), { ...known(), suppressed: [value] });
+      expect(a.apply(input)).toBe("Evtx::ANON_IP_1");
+    }
+    const key = ["sk", "_live_", "ABCDEFGHIJKLMNOP"].join("");
+    const a = createAnonymizer(
+      { ...policy(mask), redactSecrets: true },
+      { ...known(), suppressed: ["::a00:5::1"] },
+    );
+    expect(a.apply(`x ${key}Evtx::a00:5::1 y`)).toBe("x [REDACTED_SECRET]::ANON_IP_1 y");
+  });
+
+  it("a suppression of the value after the separator never uncovers the address", () => {
+    for (const input of ["Evtx::a00:5", "Evtx::7f00:1::5"]) {
+      const a = createAnonymizer(policy(mask), { ...known(), suppressed: [input.slice(6)] });
+      expect(a.apply(input)).toBe("Evtx::ANON_IP_1");
+    }
+  });
+
+  // The analyst left "::a00:5" visible before the split; it stays visible, so later passes read the same
+  // text: "10.0.0.5" right after it is still masked by the IPv4 pass, not cut in two.
+  it("a suppression of the address as it was read before still leaves it visible", () => {
+    const a = createAnonymizer(policy(mask), { ...known(), suppressed: ["::abc:10"] });
+    expect(a.apply("Evtx::abc:10.0.0.5")).toBe("Evtx::abc:ANON_IP_1");
+  });
+
+  // Code review: a #2976 join keeps its extent when custom values group with what touches it.
+  it("an email before a #2976 join keeps its own token", () => {
+    const a = createAnonymizer(
+      { ...policy(mask), categories: { ...policy(mask).categories, EMAIL: true } },
+      known([{ value: "a00:5::1 tail", category: "HOST" }]),
+    );
+    expect(a.apply("foo@example.com::a00:5::1 tail")).toBe("ANON_EMAIL_1::ANON_HOST_1");
+  });
+
+  // The analyst left "::1" visible: a custom value that touches the join must not group it away.
+  it("a custom value before a #2976 join does not group an address a suppression left in clear", () => {
+    const a = createAnonymizer(policy(mask), {
+      ...known([{ value: "x:", category: "HOST" }]),
+      suppressed: ["::1"],
+    });
+    expect(a.apply("x::a00:5::1::1")).toBe("ANON_HOST_1:ANON_IP_1::1");
+  });
+
+  it.each([
+    ["Evtx::7f00:1::10.0.0.5", "Evtx::ANON_IP_1::ANON_IP_2"],
+    ["Evtx::7f00:1::4111 1111 1111 1111", "Evtx::ANON_IP_1::4111 1111 1111 1111"],
+    ["Evtx::7f00:1::5, y", "Evtx::ANON_IP_1::5, y"],
+  ])("does not join %s where the join would cut what a later pass reads", (input, expected) => {
+    expect(run(input, mask).out).toBe(expected);
+    expect(findReservableIpv6Spans(input, mask)).toEqual([
+      { start: 6, end: 12, failClosed: true, separated: "alone" },
+    ]);
+  });
+
+  it("a custom value inside the address is masked with it", () => {
+    const { out, back } = run("Evtx::7f00:1::5", mask, [{ value: "7f00", category: "HOST" }]);
+    expect(out).not.toMatch(/7f00|::5$/);
+    expect(out.startsWith("Evtx::")).toBe(true);
+    expect(back).toBe("Evtx::7f00:1::5");
+  });
+
+  it("the first call's discoveries keep the address masked on the next call", () => {
+    const first = createAnonymizer(policy(mask), known());
+    first.apply("Evtx::a00:5 and Evtx::7f00:1::5");
+    const next = createAnonymizer(policy(mask), known(first.discoveries()));
+    const out = next.apply("Evtx::a00:5 and Evtx::7f00:1::5");
+    expect(out).toBe("Evtx::ANON_IP_1 and Evtx::ANON_IP_2");
+  });
+
+  // A vendor key whose letters stop at ":" swallows "Evtx" too; the address after it is the IPv6 pass's.
+  it.each([
+    ["Evtx::a00:5::1", "a00:5::1"],
+    ["Evtx::a00:5", "a00:5"],
+    ["Evtx::7f00:1::5", "7f00:1::5"],
+  ])("a secret that runs up to the separator in %s stays one way", (tail, value) => {
+    const key = ["sk", "_live_", "ABCDEFGHIJKLMNOP"].join("");
+    const a = createAnonymizer({ ...policy(mask), redactSecrets: true }, known());
+    const out = a.apply(`x ${key}${tail} y`);
+    expect(out).toBe("x [REDACTED_SECRET]::ANON_IP_1 y");
+    expect(a.pairs().map((p) => [p.token, p.value, p.category])).toEqual([["ANON_IP_1", value, "IP"]]);
+    expect(a.restore(out)).toBe("x [REDACTED_SECRET]::" + value + " y");
+  });
+
+  it("2019:fd00::1 still goes in clear only with public masking off", () => {
+    expect(run("x 2019:fd00::1 y", mask).out).toBe(mask ? "x ANON_EXTIP_1 y" : "x 2019:fd00::1 y");
+  });
+});
+
+describe("custom IPv6 range, IP category off, before the #2979 shapes", () => {
+  it.each([
+    ["Evtx::a00:5", "EvtxANON_IP_1"],
+    ["Evtx::7f00:1::5", "Evtx::7f00:1::5"],
+  ])("%s is masked as it is today", (input, expected) => {
+    const ranges: CustomEntity[] = [{ value: "::a00:0/112", category: "IP", match: "pattern" }];
+    expect(run(input, true, ranges, false).out).toBe(expected);
   });
 });
