@@ -59,7 +59,19 @@ describe("Velociraptor uploads-only import", () => {
     );
     expect(out.imported).toEqual(["thor.json"]); // the result passes through untouched
     expect(r.sent[0].title).toBe("Import finished, 1 failed: velociraptor: velo-flow-uploads_F.EXAMPLE");
-    expect(r.sent[0].lines).toContain("Failed: notes.bin — no importer recognised this file");
+    expect(r.sent[0].lines.join("\n")).toContain("Failed: notes.bin — not imported");
+  });
+
+  it("reads an uploads-only import where every file was skipped as failed", async () => {
+    const r = recorder();
+    await notifyUploadsImport(
+      r.dispatch,
+      "c1",
+      "u",
+      Promise.resolve({ addedEvents: 0, addedIocs: 0, imported: [], skipped: ["a.json", "b.json"] }),
+    );
+    expect(r.sent[0].title).toBe("Import failed: velociraptor: u");
+    expect(r.sent[0].lines).toContain("Reason: no uploaded file could be imported");
   });
 
   it("reports a failed import and rethrows", async () => {
@@ -105,6 +117,28 @@ describe("Velociraptor hunt collect", () => {
     notifyHuntCollect(asNotifier(r.dispatch), "c1", { ...job, error: "read failed" }, {});
     expect(r.sent[0].title).toBe("Import failed: velociraptor: Best Practice");
     expect(r.sent[0].lines).toContain("Reason: read failed");
+  });
+
+  it("reads a collect whose every artifact failed to download as failed", () => {
+    const r = recorder();
+    const skippedArtifacts = job.artifacts.map((name) => ({ name, error: "download failed" }));
+    notifyHuntCollect(asNotifier(r.dispatch), "c1", { ...job, skippedArtifacts }, {});
+    expect(r.sent[0].title).toBe("Import failed: velociraptor: Best Practice");
+    expect(r.sent[0].lines).toContain("Reason: no artifact could be read");
+  });
+
+  it("names a failed settle, and what its recovery did, as a failed item", () => {
+    const r = recorder();
+    notifyHuntCollect(
+      asNotifier(r.dispatch),
+      "c1",
+      { ...job, settleWarning: "grading failed; rows were recovered" },
+      { counts: { added: 3, highCritical: 0 }, error: "grading failed" },
+    );
+    expect(r.sent[0].title).toBe("Import finished, 1 failed: velociraptor: Best Practice");
+    expect(r.sent[0].lines).toContain(
+      "Failed: forensic timeline settle — grading failed; rows were recovered",
+    );
   });
 
   it("names a collect that failed as a whole by its hunt id", () => {
