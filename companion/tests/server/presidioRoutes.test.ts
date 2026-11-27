@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -363,5 +363,52 @@ describe("sendPipelineError", () => {
     const res = fakeRes();
     sendPipelineError(res, "boom-string");
     expect(res.statusCode).toBe(500);
+  });
+});
+
+// #2985: the pending list keeps at most MAX_CUSTOM_ENTITIES values. A hold with more used to drop
+// the rest without a trace; it now records how many it could not keep, and the GET says so.
+describe("a hold larger than the list records what it could not keep (#2985)", () => {
+  const people = (n: number, from = 0): CustomEntity[] =>
+    Array.from({ length: n }, (_, i) => ({ value: `Person ${from + i}`, category: "PERSON" as const }));
+
+  it("keeps 500, counts the other 100, and GET returns both", async () => {
+    await pendingStore.hold("c1", people(MAX_CUSTOM_ENTITIES + 100), "jev");
+    expect(await pendingStore.round("c1")).toMatchObject({ notShown: 100 });
+    expect((await pendingStore.round("c1")).pending).toHaveLength(MAX_CUSTOM_ENTITIES);
+    const res = await request(app).get("/cases/c1/presidio-pending");
+    expect(res.body.pending).toHaveLength(MAX_CUSTOM_ENTITIES);
+    expect(res.body.notShown).toBe(100);
+  });
+
+  it("does not count a repeat of a kept value, even after the 500th, as not shown", async () => {
+    const repeats = people(10).map((e) => ({ ...e, value: e.value.toUpperCase() }));
+    await pendingStore.hold("c1", [...people(MAX_CUSTOM_ENTITIES), ...repeats, ...people(3, 9000)], "jev");
+    expect((await pendingStore.round("c1")).notShown).toBe(3);
+  });
+
+  it("keeps the count through a partial decision and drops it once the list is empty", async () => {
+    await pendingStore.hold("c1", people(MAX_CUSTOM_ENTITIES + 7), "jev");
+    const { pending } = await pendingStore.round("c1");
+    await pendingStore.save("c1", pending.slice(1));
+    expect((await pendingStore.round("c1")).notShown).toBe(7);
+    await pendingStore.save("c1", []);
+    expect(await pendingStore.round("c1")).toEqual({ pending: [], notShown: 0 });
+  });
+
+  it("reports 0 for a hold that fits, and writes no count into the file", async () => {
+    await pendingStore.hold("c1", people(3), "jev");
+    expect((await pendingStore.round("c1")).notShown).toBe(0);
+    const raw = await readFile(join(cases.stateDir("c1"), "presidio-pending.json"), "utf8");
+    expect(raw).not.toContain("notShown");
+    expect((await request(app).get("/cases/c1/presidio-pending")).body.notShown).toBe(0);
+  });
+
+  it("reads a damaged or legacy count as 0", async () => {
+    const file = join(cases.stateDir("c1"), "presidio-pending.json");
+    for (const bad of [-4, 2.5, "9", null]) {
+      await writeFile(file, JSON.stringify({ pending: people(2), notShown: bad }));
+      expect((await pendingStore.round("c1")).notShown).toBe(0);
+    }
   });
 });
