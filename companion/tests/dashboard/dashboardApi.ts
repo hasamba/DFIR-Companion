@@ -684,6 +684,9 @@ export interface VeloCaseApi {
 // Only the slice these suites drive: the bundle list that carries the Run button.
 export interface VeloTriageApi {
   loadVeloBundles(): Promise<void>;
+  loadVeloClients(): void;
+  acceptVeloClientInventory(inv: { updatedAt?: string; clients?: unknown[] }): void;
+  veloClientsList(): { clientId: string; labels?: string[] }[];
   activeCaseId: string | null;
   veloEnabled: boolean;
 }

@@ -176,9 +176,9 @@ function toggleVeloRunForm(id) {
 let veloLblSeq = 0;
 function veloRefreshRunFormLabels(form) {
   const note = form.querySelector(".velo-lbl-note");
-  if (!veloEnabled) return Promise.resolve();
-  const token = String(++veloLblSeq);
   const caseId = veloCaseId();
+  if (!veloEnabled || !caseId) return Promise.resolve();
+  const token = String(++veloLblSeq);
   form.dataset.lblSeq = token;
   const live = () =>
     form.isConnected !== false &&
@@ -189,10 +189,12 @@ function veloRefreshRunFormLabels(form) {
     if (note) note.textContent = veloLabelFreshnessText(st);
   };
   say({ pending: true });
-  return fetch("/velociraptor/clients/refresh", {
+  // The CASE's refresh, not Settings' global one: under team auth that stays the administrator's,
+  // while this one needs case write — the same right that launching the hunt needs.
+  return fetch(`/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints/refresh`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(caseId ? { caseId } : {}),
+    body: "{}",
   })
     .then((r) => r.json().then((j) => ({ ok: r.ok, j: j || {} })))
     .then(({ ok, j }) => {

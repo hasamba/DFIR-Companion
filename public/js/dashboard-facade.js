@@ -610,6 +610,7 @@
     "veloImportExternal",
     "veloBundlesList",
     "veloClientsList",
+    "acceptVeloClientInventory",
     "veloMonAutoBrowsed",
     "setVeloMonAutoBrowsed",
     // #415's last four extractions. Every one of these was declared in the page before the move, so

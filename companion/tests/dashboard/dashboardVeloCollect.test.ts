@@ -194,7 +194,7 @@ describe("veloRefreshRunFormLabels (#2970)", () => {
         veloEnabled: enabled,
         acceptVeloClientInventory: (inv: unknown) => accepted.push(inv),
         fetch: async (url: string, init: { body: string }) => {
-          calls.push({ url, body: JSON.parse(init.body) });
+          calls.push({ url, body: JSON.parse(init.body) as unknown });
           await gate;
           if (reply instanceof Error) throw reply;
           return {
@@ -227,7 +227,8 @@ describe("veloRefreshRunFormLabels (#2970)", () => {
     expect(h.note.textContent).toBe("refreshing labels…");
     h.release();
     await done;
-    expect(h.calls).toEqual([{ url: "/velociraptor/clients/refresh", body: { caseId: "case-a" } }]);
+    // The case's own refresh (case write), not Settings' administrator-only global one.
+    expect(h.calls).toEqual([{ url: "/cases/case-a/ai-agent/endpoints/refresh", body: {} }]);
     expect(h.wrap.innerHTML).toContain('value="lab-b"');
     expect(h.note.textContent).toBe("labels as of 09:05");
     expect(h.accepted).toHaveLength(1); // the shared cache (Settings count, monitor picker) moves too
@@ -280,6 +281,13 @@ describe("veloRefreshRunFormLabels (#2970)", () => {
     await done;
     expect(h.wrap.innerHTML).toBe("CACHED");
     expect(h.accepted).toHaveLength(0);
+  });
+
+  it("asks nothing with no case connected", async () => {
+    const h = harness({ ok: true, body: INV });
+    h.mod.activeCaseId = null;
+    await h.mod.veloRefreshRunFormLabels(h.form);
+    expect(h.calls).toHaveLength(0);
   });
 
   it("asks nothing of a Velociraptor server that is not configured", async () => {
