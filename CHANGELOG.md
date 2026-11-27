@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **IPv6 with a dotted IPv4 tail masked whole** — an address such as `fd00::192.168.1.5` is one token instead of masking only up to the first octet and sending the rest of the IPv4 in clear (closes #2990)
+- **A custom value before an @domain restores** — a custom value (or a masked account) right before `@` and a domain no longer leaves a token inside the email token, so the answer restores to the original text (closes #2991)
 - **More Evtx:: shapes keep their separator** — an internal address alone after `word::`, one with a non-internal tail, and one after a redacted secret that ran up to the `::` are each one masked token with the `::` kept (closes #2979)
 - **IPv6 after Evtx:: stays one token** — an internal address in the old IPv4-compatible spelling after a `word::` separator is now one masked token and the separator keeps its spelling (closes #2976)
 - **Watson launch on a re-enrolled endpoint** — when Velociraptor no longer knows the saved client id, Watson refreshes the client list and retries once on the new id; otherwise it says nothing ran and to check the host's client id and org, instead of "could not confirm the launch" (closes #2986)
