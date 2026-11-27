@@ -147,6 +147,11 @@ const METADATA_SUFFIXES = [
 // A plural key (`recoveryCodes`, `tokens`) holds a list of the same secret.
 const isExactKey = (k: string) => EXACT_KEYS.has(k) || (k.endsWith("s") && EXACT_KEYS.has(k.slice(0, -1)));
 
+/** A registry value name that stores a credential: the exact-key test that applies after "\" (#3017). */
+export function isRegistryCredentialName(name: string): boolean {
+  return isExactKey(normalizeKey(name));
+}
+
 export function isSecretKey(key: string): boolean {
   const k = normalizeKey(key);
   if (isExactKey(k)) return true;

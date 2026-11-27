@@ -1,4 +1,5 @@
 import { isBasicCredential, redactCliFlagSecrets, redactKeyedSecrets } from "./anonSecretKeys.js";
+import { redactRegistryCredentialPairs } from "./anonSecretRegPairs.js";
 
 // The one-way secret pass of the anonymizer: credentials, API keys and tokens are replaced with a
 // placeholder before text reaches the AI, and NOTHING maps the placeholder back. This is the
@@ -131,6 +132,7 @@ export function redactSecretText(text: string): string {
   out = redactPrefixed(out);
   out = redactCliFlagSecrets(out, SECRET_PLACEHOLDER);
   out = redactKeyedSecrets(out, SECRET_PLACEHOLDER);
+  out = redactRegistryCredentialPairs(out, SECRET_PLACEHOLDER); // name and data apart (#3021)
   // Vendor shapes last (#3005): a keyed or flag value that holds a vendor shape plus a glued tail
   // is hidden whole first; the vendor pass then catches shapes outside any key.
   for (const re of VENDOR_SECRETS_GLUED_V6) out = out.replace(re, SECRET_PLACEHOLDER);
