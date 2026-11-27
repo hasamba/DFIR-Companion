@@ -181,3 +181,161 @@ describe("full anonymizer — paired registry credential (#3021)", () => {
     expect(anon.restore(out)).toContain(PH);
   });
 });
+
+// #3031 — the same value set by a command (`reg add … /v <Name> /d <data>`, `Set-ItemProperty` /
+// `New-ItemProperty -Name <Name> -Value <data>`), or a JSON row with the data field before the name.
+const B64 = join("SQBFAFgAIAAo", "AE4AZQB3AC0ATwBi==");
+const regAdd = (name: string, data: string) => `reg add "${WINLOGON}" /v ${name} /t REG_SZ /d ${data} /f`;
+const setProp = (name: string, data: string) =>
+  `Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon' -Name ${name} -Value ${data}`;
+
+describe("redactSecretText — stored-credential registry value set by a command (#3031)", () => {
+  it.each([
+    ["reg add", regAdd("DefaultPassword", VALUE), regAdd("DefaultPassword", PH)],
+    ["reg add, quoted data", regAdd("DefaultPassword", `"${SPACED}"`), regAdd("DefaultPassword", `"${PH}"`)],
+    [
+      "reg.exe add, /d before a quoted /v",
+      `reg.exe ADD "${WINLOGON}" /f /d ${VALUE} /t REG_SZ /v "DefaultPassword"`,
+      `reg.exe ADD "${WINLOGON}" /f /d ${PH} /t REG_SZ /v "DefaultPassword"`,
+    ],
+    [
+      "reg add inside cmd /c, then an encoded command",
+      `cmd /c "reg add HKLM\\x\\Winlogon /v DefaultPassword /d ${VALUE}" & powershell -enc ${B64}`,
+      `cmd /c "reg add HKLM\\x\\Winlogon /v DefaultPassword /d ${PH}" & powershell -enc ${B64}`,
+    ],
+    [
+      "reg add inside cmd /c with a quoted key path",
+      `cmd /c "reg add "${WINLOGON}" /v DefaultPassword /t REG_SZ /d ${VALUE} /f"`,
+      `cmd /c "reg add "${WINLOGON}" /v DefaultPassword /t REG_SZ /d ${PH} /f"`,
+    ],
+    ["Set-ItemProperty", setProp("DefaultPassword", VALUE), setProp("DefaultPassword", PH)],
+    [
+      "New-ItemProperty, quoted",
+      `New-ItemProperty -Path HKLM:\\x -Name 'DefaultPassword' -PropertyType String -Value "${SPACED}" -Force`,
+      `New-ItemProperty -Path HKLM:\\x -Name 'DefaultPassword' -PropertyType String -Value "${PH}" -Force`,
+    ],
+    [
+      "Set-ItemProperty, -Value before -Name, then another statement",
+      `Set-ItemProperty -Path HKLM:\\x -Value ${VALUE} -Name DefaultPassword; Write-Host done`,
+      `Set-ItemProperty -Path HKLM:\\x -Value ${PH} -Name DefaultPassword; Write-Host done`,
+    ],
+    ["TeamViewer AES by reg add", regAdd("SecurityPasswordAES", VALUE), regAdd("SecurityPasswordAES", PH)],
+  ])("hides only the data: %s", (_label, text, expected) => {
+    expect(redactSecretText(text)).toBe(expected);
+  });
+
+  it.each([
+    ["reg add", `reg add "${WINLOGON}" /v DefaultPassword /t REG_SZ /d "${VALUE}" /f`],
+    ["reg add, bare data before the closing quote", `cmd /c "reg add K /v DefaultPassword /d ${VALUE}"`],
+    [
+      "quoted reg.exe launcher",
+      `"C:\\Windows\\System32\\reg.exe" add "${WINLOGON}" /v DefaultPassword /t REG_SZ /d ${VALUE} /f`,
+    ],
+    [
+      "Set-ItemProperty",
+      `powershell Set-ItemProperty -Path 'HKLM:\\x' -Name "DefaultPassword" -Value "${VALUE}"`,
+    ],
+  ])("hides the data in a JSON CommandLine and keeps the row valid: %s", (_label, cmd) => {
+    const out = redactSecretText(JSON.stringify({ CommandLine: cmd }));
+    expect(JSON.parse(out)).toEqual({ CommandLine: cmd.replace(VALUE, PH) });
+  });
+
+  it("stays inside one command: a credential /v with no /d never reaches a later field or command", () => {
+    const json = JSON.stringify({ CommandLine: "reg add K /v DefaultPassword /f", Other: "x /d keepme" });
+    expect(redactSecretText(json)).toBe(json);
+    const chained = "reg add K /v DefaultPassword /f & net use Z: \\\\h\\s /d keepme";
+    expect(redactSecretText(chained)).toBe(chained);
+    const ps = "Set-ItemProperty -Path HKLM:\\x -Name DefaultPassword; Set-Thing -Value keepme";
+    expect(redactSecretText(ps)).toBe(ps);
+  });
+
+  it("does not take a flag inside a quoted path, /ve, or a variable as the name or data", () => {
+    const quotedPath = `reg add "HKLM\\x /v DefaultPassword" /v Other /d keepme`;
+    expect(redactSecretText(quotedPath)).toBe(quotedPath);
+    const ve = "reg add HKLM\\x /ve /d keepme";
+    expect(redactSecretText(ve)).toBe(ve);
+    const variable = "Set-ItemProperty -Path HKLM:\\x -Name DefaultPassword -Value $autologon";
+    expect(redactSecretText(variable)).toBe(variable);
+  });
+
+  it.each([
+    regAdd("AutoAdminLogon", "1"),
+    regAdd("DefaultUserName", "svc_backup"),
+    `reg add "${LSA}" /v LimitBlankPasswordUse /t REG_DWORD /d 0 /f`,
+    `reg add "${RUN}" /v PasswordManager /d C:\\pm.exe /f`,
+    setProp("AutoAdminLogon", "1"),
+    `Set-ItemProperty -Path HKLM:\\x -Name UseLogonCredential -Value 1`,
+  ])("keeps the data of a setting or persistence value: %s", (text) => {
+    expect(redactSecretText(text)).toBe(text);
+  });
+});
+
+describe("redactSecretText — JSON registry row with the data before the name (#3031)", () => {
+  it.each([
+    [{ ValueData: VALUE, ValueName: "DefaultPassword" }],
+    [{ Details: VALUE, TargetObject: `${WINLOGON}\\DefaultPassword` }],
+    [{ ValueData: join("p{", "w}x"), Type: "REG_SZ", ValueName: "DefaultPassword" }],
+  ])("hides the data and keeps the row valid: %j", (row) => {
+    const out = redactSecretText(JSON.stringify(row));
+    expect(JSON.parse(out)).toEqual({ ...row, [Object.keys(row)[0]]: PH });
+  });
+
+  it("pairs within one object: never the next record's data, never the previous record's", () => {
+    const rows = [
+      { ValueData: VALUE, ValueName: "DefaultPassword" },
+      { ValueData: "C:\\u.exe", ValueName: "Updater" },
+    ];
+    expect(JSON.parse(redactSecretText(JSON.stringify(rows)))).toEqual([
+      { ValueData: PH, ValueName: "DefaultPassword" },
+      rows[1],
+    ]);
+    const prev = JSON.stringify([
+      { ValueName: "Updater", ValueData: "C:\\u.exe" },
+      { ValueName: "DefaultPassword" },
+    ]);
+    expect(redactSecretText(prev)).toBe(prev);
+    const owned = JSON.stringify({
+      ValueName: "Updater",
+      ValueData: "C:\\u.exe",
+      RegValueName: "DefaultPassword",
+    });
+    expect(redactSecretText(owned)).toBe(owned);
+  });
+
+  it("keeps the data of a setting or persistence value in reverse order", () => {
+    const row = JSON.stringify({ ValueData: "C:\\pm.exe", ValueName: "PasswordManager" });
+    expect(redactSecretText(row)).toBe(row);
+  });
+});
+
+describe("full anonymizer — command and reversed-JSON registry credential (#3031)", () => {
+  it.each([
+    regAdd("DefaultPassword", VALUE),
+    setProp("DefaultPassword", VALUE),
+    JSON.stringify({ ValueData: VALUE, ValueName: "DefaultPassword" }),
+    `reg add HKLM\\x\\Winlogon /v DefaultPassword /d ${VALUE}&& powershell -enc ${B64}`,
+    `Set-ItemProperty HKLM:\\x -Name DefaultPassword -Value ${VALUE};powershell -enc ${B64}`,
+    `New-ItemProperty HKLM:\\x -Name 'DefaultPassword' -Value '${VALUE} FromBase64String('${B64}')`,
+  ])("sends no password, keeps the encoded command masked, and restore cannot bring it back: %s", (text) => {
+    const anon = createAnonymizer(policy, { hosts: [], accounts: [], internalDomains: [] });
+    const out = anon.apply(text);
+    expect(out).not.toContain(VALUE);
+    expect(out).not.toContain(B64);
+    expect(anon.restore(out)).not.toContain(VALUE);
+    expect(anon.restore(out)).toContain(PH);
+  });
+
+  it("never splits a card number given as the data: no block of it goes out", () => {
+    const card = ["4111", "1111", "1111", "1111"].join(" ");
+    for (const text of [
+      `reg add "HKLM\\x y" /v DefaultPassword /d ${card} /f`,
+      JSON.stringify({ CommandLine: `"C:\\reg.exe" add "HKLM\\x y" /v DefaultPassword /d ${card}` }),
+      `Set-ItemProperty HKLM:\\x -Name DefaultPassword -Value ${card}`,
+    ]) {
+      const anon = createAnonymizer(policy, { hosts: [], accounts: [], internalDomains: [] });
+      const out = anon.apply(text);
+      expect(out).not.toContain("1111");
+      expect(out).toContain(PH);
+    }
+  });
+});

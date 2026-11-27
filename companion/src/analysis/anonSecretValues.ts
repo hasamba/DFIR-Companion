@@ -67,7 +67,7 @@ export function readQuoted(text: string, i: number): { span: Span; after: number
 const ENC_CUE_RE = /-(?:e|ec|enc|encodedcommand)\s{1,64}[A-Za-z0-9+/_-]{16}/iy;
 const FROM_B64_CUE_RE = /FromBase64String\(\s{0,64}["']/iy;
 
-function isEncodedCue(text: string, j: number): boolean {
+export function isEncodedCue(text: string, j: number): boolean {
   const ch = text[j];
   if (ch === "-") {
     if (/[A-Za-z0-9]/.test(text[j - 1] ?? "")) return false;
