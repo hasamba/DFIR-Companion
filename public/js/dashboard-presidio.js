@@ -225,7 +225,7 @@
   // list is loaded on case connect AND whenever ai_status goes to "error" (see applyAiStatus),
   // with the 409 fast-path (see synthesize/runSecondOpinion) as an optimisation on top —
   // never the only way the panel appears.
-  let presidioPending = [];
+  let presidioPending = [], presidioNotShown = 0; // #2985: values the last hold found but the list could not keep
   // A late answer for a case left must not fill this panel (#1782); #2904: cleared at a switch, newest wins.
   const ppOnScreen = (caseId) => (document.getElementById("caseId")?.value ?? caseId).trim() === caseId;
   let ppCase = null, ppSeq = 0, ppGen = 0; // #2929: ppGen moves only when the owner changes (a cancel too)
@@ -241,6 +241,7 @@
       .then((d) => {
         if (seq !== ppSeq || !ppOnScreen(caseId)) return;
         presidioPending = d.pending || [];
+        presidioNotShown = d.notShown > 0 ? d.notShown : 0;
         renderPresidioPending();
       })
       .catch(() => {});
@@ -250,6 +251,7 @@
     if ((caseId !== undefined && !ppOnScreen(caseId)) || (gen !== undefined && gen !== ppGen)) return; // #2933: or from before a cancel
     presidioPending = findings || [];
     renderPresidioPending();
+    if (caseId !== undefined && presidioPending.length) loadPresidioPending(caseId); // #2985: the kept list + count win
   }
 
   // A 409 `presidio_approval_required` is a QUESTION, not a failure (#1782): the gate stopped the AI
@@ -273,12 +275,11 @@
   }
 
   function renderPresidioPending() {
+    if (!presidioPending.length) presidioNotShown = 0; // the round is over, whichever path emptied it
     const badge = document.getElementById("presidioPendingBadge");
     if (badge) {
-      if (presidioPending.length > 0) {
-        badge.style.display = "";
-        badge.textContent = "⚠ Presidio: " + presidioPending.length;
-      } else badge.style.display = "none";
+      badge.style.display = presidioPending.length > 0 ? "" : "none";
+      badge.textContent = "⚠ Presidio: " + presidioPending.length + (presidioNotShown ? "+" : "");
     }
     const el = document.getElementById("presidioPending");
     if (!el) return;
@@ -288,7 +289,10 @@
     }
     el.innerHTML =
       `<div data-safe-style="margin-top:10px;padding:8px;border-radius:6px;background:var(--warning-bg);color:var(--tag-orange-text);font-size:12px">` +
-      `<b>Presidio found ${presidioPending.length} new value(s) in this case.</b> ` +
+      (presidioNotShown
+        ? `<b>Presidio found ${presidioPending.length} new value(s) still to decide.</b> This stop found ${presidioNotShown} more ` +
+          `than the list can hold — resolve these, then re-run the same action to check the rest. `
+        : `<b>Presidio found ${presidioPending.length} new value(s) in this case.</b> `) +
       `Decide each one: hide it from the AI from now on, or leave it visible because it isn't PII. ` +
       `The AI call was not sent — re-run it once you have resolved these.` +
       // #1799: the NER model tags tool names, timestamps and ATT&CK ids as PERSON at the same score
@@ -301,17 +305,13 @@
           `Leave all ${presidioPending.length} visible — none are PII</button>`
         : "") +
       `</div>` +
-      // Label the ACTION, not the verdict. "Approve" was ambiguous in the one direction that
-      // matters: the gate is holding an AI call, so "Approve" reads as "approve the send" —
-      // the exact opposite of what it does (it masks the value). "Not PII" then sounds like
-      // the same kind of affirmative. Both buttons now say what will happen to the value.
+      // Label the ACTION, not the verdict: "Approve" read as "approve the send" — the opposite of
+      // what it does (it masks the value). Both buttons say what will happen to the value.
       presidioPending
         .map(
           (e) =>
-            // The row's layout is a stylesheet rule (.presidio-row in dashboard-panels.css), not
-            // an inline data-safe-style as it was: it needs flex-shrink control on four items, and
-            // the buttons are wrapped in .presidio-actions so the pair stays together and stays
-            // one size when a long value wraps beneath it.
+            // Layout is .presidio-row in dashboard-panels.css (flex-shrink on four items); .presidio-actions
+            // keeps the button pair together and one size when a long value wraps beneath it.
             `<div class="presidio-row">` +
             `<code>${esc(e.value)}</code><span class="presidio-cat">${esc(e.category)}</span>` +
             `<span class="presidio-actions">` +

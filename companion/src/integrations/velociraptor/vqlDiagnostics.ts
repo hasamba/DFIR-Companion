@@ -80,6 +80,45 @@ export function noLaunchIdMessage(what: string, permissions: string, reason = ""
   );
 }
 
+/**
+ * `collect_client()` refused because the server does not know the client id in the api_client's org
+ * (#2986): the endpoint re-enrolled (new id) or is enrolled in another org. Definite — nothing was
+ * scheduled — so the deploy reports it as "nothing ran", not "maybe". Carries the refused id.
+ */
+export class VeloClientNotKnownError extends Error {
+  constructor(
+    message: string,
+    readonly clientId: string,
+  ) {
+    super(message);
+    this.name = "VeloClientNotKnownError";
+  }
+  /** A new error with `note` appended (the refresh outcome); the original is not changed. */
+  withNote(note: string): VeloClientNotKnownError {
+    return new VeloClientNotKnownError(`${this.message} ${note}`, this.clientId);
+  }
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The error for a `collect_client()` that returned no flow id. Read from the FULL stderr (before
+ * vqlLogErrors' display cut), and only a refusal that names THIS client id counts as not-known.
+ */
+export function collectLaunchError(clientId: string, stderr: string): Error {
+  const reason = vqlLogErrors(stderr);
+  const line = new RegExp(`collect_client:\\s*Client ID ${escapeRe(clientId)} not known\\b`, "i");
+  if (!line.test(String(stderr || "")))
+    return new Error(noLaunchIdMessage("collection flow", "ARTIFACT_WRITER and COLLECT_CLIENT", reason));
+  return new VeloClientNotKnownError(
+    `Velociraptor refused the collection: it does not know client ${clientId} in the org your API client` +
+      " config connects to. Usual causes: the endpoint re-enrolled and has a new client id (agent" +
+      " reinstalled, VM snapshot reverted), or the host is enrolled in a different org. Search the host in" +
+      " the Velociraptor GUI and compare its client id and org.",
+    clientId,
+  );
+}
+
 // Translate a known Velociraptor CLI error into an actionable message. Unlike our OWN
 // maxOutputBytes/collectMaxOutputBytes caps (DFIR_VELOCIRAPTOR_*_OUTPUT — bound what we capture
 // AFTER gRPC delivers it), the gRPC connection the `velociraptor query` CLI makes to the server

@@ -144,13 +144,13 @@ describe("the internal marks never change what is masked (#2992)", () => {
     const spliced = ends.ended("ANON_IP_1", "fd00::1fd0", 0, 10, text);
     expect(spliced).toMatch(/^ANON_[A-Z]{2}_1$/);
     expect(spliced).not.toBe("ANON_IP_1");
-    // A later pass swallowed the alias into a value: the value gets the token spelling back.
+    // A later pass swallowed the alias into a value: the value gets the real text back.
     const toReal = new Map([
       ["ANON_IP_1", "fd00::1fd0"],
       ["ANON_HOST_1", `${spliced}0x`],
     ]);
     expect(ends.finish(`${spliced}0::2`, toReal)).toBe(`ANON_IP_1${D}0::2`);
-    expect(toReal.get("ANON_HOST_1")).toBe("ANON_IP_10x");
+    expect(toReal.get("ANON_HOST_1")).toBe("fd00::1fd00x"); // its real text, as #2991 does
   });
 
   it("the preview diff lines up a delimiter that was already in the input", () => {

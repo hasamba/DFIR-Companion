@@ -322,7 +322,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/presidio-pending", async (req: Request, res: Response) => {
     if (!isValidCaseId(req.params.id)) return res.status(400).json({ error: "invalid case id" });
     try {
-      return res.json({ pending: await presidioPending.load(req.params.id) });
+      // #2985: and how many values the hold could not keep, from the same read.
+      return res.json(await presidioPending.round(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

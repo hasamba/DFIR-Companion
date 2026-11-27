@@ -57,18 +57,25 @@ export function delimiterAt(text: string, at: number): number {
 }
 
 /** `tokenSource` plus the optional delimiter it consumes — the reader form of a minted token. */
-export function delimitedTokenSource(tokenSource: string): string {
+function delimitedTokenSource(tokenSource: string): string {
   return `(?:${tokenSource})(?:${TOKEN_DELIMITER}(?=${DELIMITER_THEN_DIGIT}))?`;
 }
 
-/** Every token (with the delimiter it owns) replaced by `fn(upper token)`; undefined keeps it as is. */
-export function replaceTokens(
-  text: string,
-  tokenSource: string,
-  fn: (upperToken: string) => string | undefined,
-): string {
-  const re = new RegExp(delimitedTokenSource(tokenSource), "gi");
-  return text.replace(re, (m) => fn(m.replace(TOKEN_DELIMITER, "").toUpperCase()) ?? m);
+export interface TokenReaders {
+  /** Every token (with the delimiter it owns) replaced by `fn(upper token)`; undefined keeps it. */
+  replace(text: string, fn: (upperToken: string) => string | undefined): string;
+  /** True when the whole string is one token, with its delimiter and the digits after it. */
+  isToken(s: string): boolean;
+}
+
+/** The readers of minted tokens: each consumes the delimiter a token owns. Fresh regexes per call. */
+export function tokenReaders(tokenSource: string): TokenReaders {
+  const source = delimitedTokenSource(tokenSource);
+  return {
+    replace: (text, fn) =>
+      text.replace(new RegExp(source, "gi"), (m) => fn(m.replace(TOKEN_DELIMITER, "").toUpperCase()) ?? m),
+    isToken: (s) => new RegExp(`^${source}[0-9]*$`, "i").test(s.trim()),
+  };
 }
 
 /** A character absent from `text`, so the input can never forge it. "" when none is free. */
@@ -85,7 +92,7 @@ export interface TokenEnds {
   start(text: string): void;
   /** A site's splice of text[at, end) as `result` (`value` when nothing was minted). */
   ended(result: string, value: string, at: number, end: number, text: string): string;
-  /** The final text; a token value a later pass swallowed an alias into gets the token back. */
+  /** The final text; a value a later pass swallowed an alias into gets the token's real text. */
   finish(text: string, toReal: Map<string, string>): string;
 }
 
@@ -139,8 +146,24 @@ export function tokenEnds(tokenSource: string, categories: readonly string[]): T
         },
       );
       for (const [tok, value] of toReal)
-        for (const [a, t] of aliases) if (value.includes(a)) toReal.set(tok, value.replaceAll(a, t));
+        for (const [a, t] of aliases)
+          if (value.includes(a)) toReal.set(tok, value.replaceAll(a, toReal.get(t) ?? t)); // #2991
       return mark ? out.replaceAll(mark, "") : out;
     },
   };
+}
+
+/**
+ * #2991 — put back the real text of every token `lookup` knows in `value`. A later pass (account,
+ * email, host, …) can match text that already holds a token an earlier pass minted; the new token
+ * must stand for the original text, or restore() hands back a token. Exact case only: a literal in
+ * the input never equals a minted token (escaped or reserved above). Own regex, no shared state.
+ */
+export function expandMintedTokens(
+  value: string,
+  tokenSource: string,
+  lookup: (token: string) => string | undefined,
+): string {
+  if (!value.includes("ANON_")) return value;
+  return value.replace(new RegExp(tokenSource, "g"), (m) => lookup(m) ?? m);
 }

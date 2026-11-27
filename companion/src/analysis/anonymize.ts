@@ -13,7 +13,7 @@ import {
 } from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
-import { delimitedTokenSource, replaceTokens, scanTokenLiterals, tokenEnds } from "./anonTokenLiterals.js";
+import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
 import type { SeparatorFlags } from "./anonIpv6Scan.js";
 import {
@@ -78,14 +78,11 @@ export const ALL_TOKEN_CATEGORIES = Object.keys(TOKEN_CATEGORY_KEYS) as readonly
 const TOKEN_ALTERNATION = [...ALL_TOKEN_CATEGORIES].sort((a, b) => b.length - a.length).join("|");
 const TOKEN_RE = new RegExp(`ANON_(?:${TOKEN_ALTERNATION})_\\d+`, "gi");
 
+const READERS = tokenReaders(TOKEN_RE.source); // every reader takes the delimiter a token owns (#2992)
 /** Every anonymization token in `text` replaced by `mark` — the token-neutral form of a text. */
-export function neutralizeAnonTokens(text: string, mark: string): string {
-  return replaceTokens(text, TOKEN_RE.source, () => mark); // with the delimiter a token owns (#2992)
-}
-/** True when the whole string is a single token (a Presidio finding that fired on one); fresh regex. */
-export function isAnonToken(s: string): boolean {
-  return new RegExp(`^${delimitedTokenSource(TOKEN_RE.source)}[0-9]*$`, "i").test(s.trim());
-}
+export const neutralizeAnonTokens = (text: string, mark: string): string => READERS.replace(text, () => mark);
+/** True when the whole string is a single token (a Presidio finding that fired on one). */
+export const isAnonToken = (s: string): boolean => READERS.isToken(s);
 
 export interface CustomEntity {
   value: string;
@@ -345,8 +342,9 @@ export function createAnonymizer(
   const compiled = compileCustomEntities(known.custom ?? [], policy.maskPublicIps);
   let forceCustom = false; // true while a custom match mints: the explicit "hide this" beats a veto
   const ends = tokenEnds(TOKEN_RE.source, ALL_TOKEN_CATEGORIES); // a token a digit may follow gets a delimiter (#2992)
-  function assign(category: AnonTokenCategory, real: string): string {
-    if (!forceCustom && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
+  function assign(category: AnonTokenCategory, raw: string): string {
+    const real = expandMintedTokens(raw, TOKEN_RE.source, (tok) => toReal.get(tok)); // #2991: no nesting
+    if (!forceCustom && real === raw && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;
@@ -676,7 +674,7 @@ export function createAnonymizer(
   }
 
   function restore(text: string): string {
-    return replaceTokens(text, TOKEN_RE.source, (tok) => toReal.get(tok));
+    return READERS.replace(text, (tok) => toReal.get(tok));
   }
 
   function restoreDeep<T>(value: T): T {

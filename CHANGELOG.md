@@ -43,9 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI Agent Forensics report section** — the case report lists each run launched in or filed into the case, with inventory, matched text, both hashes, Sigma coverage and the rules not run (closes #2721)
 
 ### Fixed
+- **A custom value before an @domain restores** — a custom value (or a masked account) right before `@` and a domain no longer leaves a token inside the email token, so the answer restores to the original text (closes #2991)
 - **More Evtx:: shapes keep their separator** — an internal address alone after `word::`, one with a non-internal tail, and one after a redacted secret that ran up to the `::` are each one masked token with the `::` kept (closes #2979)
 - **Masked token before a digit** — a token placed right before a digit (glued IPv6 text, a padded encoded command) gets a `·` delimiter, so restore gives back the right value instead of reading another token (closes #2992)
 - **IPv6 after Evtx:: stays one token** — an internal address in the old IPv4-compatible spelling after a `word::` separator is now one masked token and the separator keeps its spelling (closes #2976)
+- **Watson launch on a re-enrolled endpoint** — when Velociraptor no longer knows the saved client id, Watson refreshes the client list and retries once on the new id; otherwise it says nothing ran and to check the host's client id and org, instead of "could not confirm the launch" (closes #2986)
 - **IPv6 after a glued label or a `::` separator kept whole** — with public masking on `node12:2001:db8::1Method` is masked, and `Evtx::2001:db8::1Method` is one address instead of two tokens (closes #2974)
 - **Internal IPv6 after a label masked in two more spellings** — `node12:::1xyz` and, with a custom range, `dc:fd00::1` no longer reach the AI in clear (closes #2965)
 - **Link-local means a four-digit fe80–febf group** — `fe8:` byte runs keep their spelling; real link-local addresses stay masked (closes #2966)
