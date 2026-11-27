@@ -114,11 +114,12 @@ describe.each([true, false])("a fifth dotted number after an IPv6 address (#3012
       expect(r.back).toBe(input);
     });
 
-    it("leaves a plain IPv4 before a phone number as it was", () => {
+    it("keeps a phone number after a plain IPv4 masked as its own token (#3018)", () => {
       const input = `x 10.0.0.100 ${NUM} y`;
       const r = run(input, mask, { cats: { PHONE: true } });
-      expect(r.out).toBe(`x ANON_IP_1 ${NUM} y`);
+      expect(r.out).toBe("x ANON_IP_1 ANON_PHONE_1 y");
       expect(r.back).toBe(input);
+      expect(r.saved).toContain("10.0.0.100");
     });
   });
 
@@ -139,11 +140,14 @@ describe.each([true, false])("a fifth dotted number after an IPv6 address (#3012
     expect(r.saved.some((v) => FIVE.test(v))).toBe(false);
   });
 
-  it("leaves a plain five-number run as it was", () => {
+  it("masks a plain five-number run as one token (#3018)", () => {
     const input = "x 10.10.0.0.5 y";
     const r = run(input, mask);
-    expect(r.out).toBe("x ANON_IP_1.5 y");
+    expect(r.out).toBe("x ANON_IP_2 y");
+    expect(r.a.restore("ANON_IP_2")).toBe("10.10.0.0.5");
     expect(r.back).toBe(input);
+    expect(r.saved).toContain("10.10.0.0");
+    expect(r.saved.some((v) => FIVE.test(v))).toBe(false);
   });
 
   // Like the #3011 join, the longer value is minted forced: the head is masked anyway.
@@ -182,11 +186,12 @@ describe("shape 2: a fifth number after a public address left in clear (#3012)",
   });
 
   describe.each([true, false])("a plain run seeded with a saved IPv4, IP category = %s", (ip) => {
-    it.each(["x 10.10.0.0.5 y", "x 10.10.0.0.5.6 y"])("leaves %s as it was", (input) => {
+    it.each(["x 10.10.0.0.5 y", "x 10.10.0.0.5.6 y"])("masks %s as one token (#3018)", (input) => {
       const first = run("x 10.10.0.0 y", false);
       const seeded = run(input, false, { cats: { IP: ip }, custom: first.a.discoveries() });
-      expect(seeded.out).toMatch(/^x ANON_IP_1\.5/);
+      expect(seeded.out).toMatch(/^x ANON_IP_\d+ y$/);
       expect(seeded.back).toBe(input);
+      expect(seeded.saved.some((v) => FIVE.test(v))).toBe(false);
     });
   });
 
