@@ -22,6 +22,12 @@ const FIFTH_OCTET = /^\.\d/;
 // A saved value that already holds a whole dotted tail ("fd00::10.10.0.0", #3011).
 const DOTTED_V6 = /:\d{1,3}(?:\.\d{1,3}){3}$/;
 const GLUED_IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}\b/;
+const DOTTED_V4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const EXTRA = /^(?:\.\d{1,3})+\b/;
+// A dotted run of five or more numbers right after an address left in clear (#3012 shape 2).
+const RUN_RAW_RE = /(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})((?:\.\d{1,3})+)\b/g;
+// A bare "::" that opens an IPv4-compatible address ("::10.0.0.5"), not a label such as "Evtx::".
+const BARE_V6 = /(?:^|[^0-9A-Za-z_:.])::$/;
 // A placeholder, then a cut dotted tail or a glued IPv4 address.
 const RESTORE_RE = /IPV6:(\d+)(?:((?:\.\d{1,3}){3}\b)|(\d{1,3}(?:\.\d{1,3}){3}\b))?/g;
 // An IPv4 glued to the four-digit last group of an address left in clear ("2001:db8::abcd10.0.0.5").
@@ -105,6 +111,11 @@ function beforeIsAddress(text: string, at: number): boolean {
   return endsInAddress(text.slice(Math.max(0, at - 40), at), "");
 }
 
+// After an address or a bare "::" (#3012): where a run of dotted numbers belongs to an address.
+function afterAddress(text: string, at: number): boolean {
+  return beforeIsAddress(text, at) || BARE_V6.test(text.slice(Math.max(0, at - 3), at));
+}
+
 /** What the late stage needs from the anonymizer. */
 export interface TailMinter {
   assign: (cat: AnonTokenCategory, value: string) => string;
@@ -120,6 +131,7 @@ export interface TailMinter {
 }
 
 type Step = { out: string; skip: number };
+type Head = { forced: boolean; mint: (v: string) => string };
 
 // String.replace that may also consume `skip` characters after the match.
 function consume(text: string, re: RegExp, fn: (m: RegExpExecArray) => Step): string {
@@ -181,7 +193,7 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const p = phoneOut(c);
     return { out: d.assign(cat, ip) + p.out, skip: p.skip };
   }
-  function head(e: ReservedLiteral): { forced: boolean; mint: (v: string) => string } | null {
+  function head(e: ReservedLiteral): Head | null {
     const cat = e.category;
     if (cat) return { forced: true, mint: (v) => d.mintCustom(cat, v) };
     const m = ipv6Mask<AnonTokenCategory>(e, {
@@ -196,8 +208,48 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
       mint: (v) => (m.forced ? d.forcing(() => d.assign(m.cat, v)) : d.assign(m.cat, v)),
     };
   }
+  // #3012: a cut tail with more octets after it ("fd00::10" + ".0.0.5" + ".6"). The IPv4 pass reads
+  // the first four numbers after the head. With one extra octet and a maskable reading, that IPv4
+  // is masked as a glued one, so a phone number after it is split. Otherwise the whole run is one
+  // token under the head's category, forced and never saved; the head and today's IPv4 pair are
+  // still minted, so the saved discoveries do not change. null: fall back to the normal join.
+  function extraRun(
+    h: Head,
+    value: string,
+    cut: string,
+    extra: string,
+    at: number,
+    end: number,
+    t: string,
+  ): Step | null {
+    const nums = (cut + extra).slice(1).split(".");
+    const ip = nums.slice(0, 4).join(".");
+    const cat = d.ipv4Category(ip);
+    const after = t.slice(end + extra.length, end + extra.length + NEXT);
+    if (nums.length === 4 && cat) {
+      const tok = h.mint(value);
+      const g = glued(ip, after);
+      if (g.out === ip) return null;
+      const skip = extra.length + g.skip;
+      return { out: d.ended(tok + "." + g.out, value, at, end + skip, t), skip };
+    }
+    if (cat) d.assign(cat, ip); // today's saved pair
+    h.mint(value);
+    const c = crossing(cut + extra, after, d.crossers());
+    if (!phoneOk(c, d.suppressed)) return null;
+    const whole = value + cut + extra;
+    const tok = unsaved(
+      d.forcing(() => h.mint(whole)),
+      whole,
+    );
+    const p = phoneOut(c);
+    const skip = extra.length + p.skip;
+    return { out: d.ended(tok + p.out, value, at, end + skip, t), skip };
+  }
   function restore(t: string, literals: readonly ReservedLiteral[]): string {
-    return consume(t, RESTORE_RE, (m) => {
+    // Tokens of a whole dotted-tail address with more octets after it (#3012 shape 1), joined late.
+    const dotted = new Set<string>();
+    const out = consume(t, RESTORE_RE, (m) => {
       const [all, idx, cut = "", ip = ""] = m;
       const at = m.index;
       const end = at + all.length;
@@ -213,21 +265,37 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
         if (g.out === ip) return { out: d.ended(tok, e.value, at, end - ip.length, t) + ip, skip: 0 };
         return { out: d.ended(tok + g.out, e.value, at, end + g.skip, t), skip: g.skip };
       }
+      const extra = cut ? (EXTRA.exec(next)?.[0] ?? "") : "";
+      const run = extra ? extraRun(h, e.value, cut, extra, at, end, t) : null;
+      if (run) return run;
       const j = ipv4TailJoin(e.value, cut, next, h.forced, rules());
       // With a phone split the head keeps the pair it had, so it is still saved as before.
       const tok = track(h.mint(j.value), j.value, j.phone !== null);
       if (j.phone) h.mint(e.value);
+      if (!cut && DOTTED_V6.test(j.value) && EXTRA.test(next)) dotted.add(tok);
       if (j.rest) return { out: tok + j.rest, skip: 0 };
       const p = phoneOut(j.phone);
       return { out: d.ended(tok + p.out, e.value, at, end + p.skip, t), skip: p.skip };
     });
+    return [...dotted].reduce(joinOne, out);
+  }
+  // Right after an address head already masked or still set aside ("ANON_IP_2." for "fd00::10.").
+  function afterHead(t: string, at: number): boolean {
+    const before = t.slice(Math.max(0, at - 40), at);
+    if (before.endsWith(".")) return true;
+    const tok = /(ANON_[A-Z]+_\d+)\.$/.exec(before)?.[1];
+    const value = tok === undefined ? undefined : d.real(tok);
+    return value !== undefined && CUT_OCTET.test(value) && isIPv6(value);
   }
   function joinOne(t: string, token: string): string {
     const value = d.real(token);
     const cat = SINGLE_TOKEN.exec(token)?.[1] as AnonTokenCategory | undefined;
     if (value === undefined || !cat) return t;
     // A saved dotted-tail value takes every extra intact octet, or the rest would go in clear (#3011).
-    const dotted = DOTTED_V6.test(value) && isIPv6(value);
+    // A saved plain IPv4 does so only right after an address (#3012 shape 2): a plain run stays as is.
+    const v6 = DOTTED_V6.test(value) && isIPv6(value);
+    const v4 = !v6 && DOTTED_V4.test(value);
+    const dotted = v6 || v4;
     const octets = dotted ? "+" : "{3}";
     const re = new RegExp(`(?<![A-Za-z0-9_])${token}((?:\\.\\d{1,3})${octets})\\b`, "g");
     return consume(t, re, (m) => {
@@ -235,6 +303,7 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
       const end = m.index + m[0].length;
       const next = t.slice(end, end + NEXT);
       const keep = { out: m[0], skip: 0 };
+      if (v4 && !afterAddress(t, m.index) && !afterHead(t, m.index)) return keep;
       if (!dotted && (FIFTH_OCTET.test(next) || !endsInAddress(value, tail))) return keep;
       const c = crossing(tail, next, d.crossers());
       if (!phoneOk(c, d.suppressed)) return keep;
@@ -246,9 +315,38 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
       return { out: d.ended(whole + p.out, value, m.index, end + p.skip, t), skip: p.skip };
     });
   }
+  // #3012 shape 2: a run of five or more dotted numbers right after an address left in clear (or a
+  // bare "::") is masked whole, unsaved, when its first four are an address the IPv4 pass masks.
+  // That first-four pair is still minted. A plain run with no address before it is left alone.
+  function runRaw(t: string): string {
+    return consume(t, RUN_RAW_RE, (m) => {
+      const keep = { out: m[0], skip: 0 };
+      const cat = d.ipv4Category(m[1]);
+      if (!cat || !afterAddress(t, m.index) || d.suppressed.has(m[1])) return keep;
+      const end = m.index + m[0].length;
+      const c = crossing(m[0], t.slice(end, end + NEXT), d.crossers());
+      if (!phoneOk(c, d.suppressed)) return keep;
+      d.assign(cat, m[1]);
+      const tok = unsaved(
+        d.forcing(() => d.assign(cat, m[0])),
+        m[0],
+      );
+      const p = phoneOut(c);
+      return { out: d.ended(tok + p.out, m[0], m.index, end + p.skip, t), skip: p.skip };
+    });
+  }
+  function gluedRaw(raw: string): string {
+    const t = runRaw(raw);
+    return consume(t, GLUED_RAW_RE, (m) => {
+      const end = m.index + m[0].length;
+      const g = beforeIsAddress(t, m.index) ? glued(m[0], t.slice(end, end + NEXT)) : null;
+      if (!g || g.out === m[0]) return { out: m[0], skip: 0 };
+      return { out: d.ended(g.out, m[0], m.index, end + g.skip, t), skip: g.skip };
+    });
+  }
   return {
     mark: (result, value) => {
-      const head = CUT_OCTET.test(value) || DOTTED_V6.test(value);
+      const head = CUT_OCTET.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value);
       if (SINGLE_TOKEN.test(result) && head) marks.add(result);
       return result;
     },
@@ -260,12 +358,6 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     },
     restore,
     unsaved: (key) => late.has(key) && !normal.has(key),
-    gluedRaw: (t) =>
-      consume(t, GLUED_RAW_RE, (m) => {
-        const end = m.index + m[0].length;
-        const g = beforeIsAddress(t, m.index) ? glued(m[0], t.slice(end, end + NEXT)) : null;
-        if (!g || g.out === m[0]) return { out: m[0], skip: 0 };
-        return { out: d.ended(g.out, m[0], m.index, end + g.skip, t), skip: g.skip };
-      }),
+    gluedRaw,
   };
 }
