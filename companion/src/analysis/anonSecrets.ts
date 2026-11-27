@@ -29,7 +29,7 @@ const PEM_PRIVATE_KEY =
 
 // Fixed-shape secrets, replaced whole. Each is anchored on a vendor literal, so ordinary text and
 // hashes cannot match. Order matters only where one prefix contains another (sk-proj- before sk-).
-const VENDOR_SECRETS: RegExp[] = [
+export const VENDOR_SECRETS: readonly RegExp[] = [
   // AWS key id: the edges are case-aware (#3005). A key is upper-case + digits, so lower-case text,
   // "_" or "." beside it is a seam, not more key. An upper-case hex hash never matches: every
   // 20-character stretch inside one has a hex digit beside it.

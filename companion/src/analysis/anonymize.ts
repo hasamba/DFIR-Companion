@@ -13,6 +13,7 @@ import {
 } from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
+import { createOneWayCheck } from "./anonGluedSecret.js";
 import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { literalEscapes } from "./anonTokenLiterals.js";
 import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
@@ -402,6 +403,7 @@ export function createAnonymizer(
     bareRe = undefined;
   }
   for (const n of known.usernames ?? []) learn(n);
+  const oneWay = createOneWayCheck(policy.redactSecrets); // a name holding a glued secret (#3003)
   const knownHosts = new Set(known.hosts.map((h) => h.toLowerCase()));
   const qualifier = (q: string) => assign(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q);
   const savedUsers = new Set<string>(); // USER tokens, by how they were minted
@@ -438,7 +440,8 @@ export function createAnonymizer(
     return t.replace(bareRe, (m: string, offset: number, whole: string) => {
       if (insideSuppressedAccount(whole, offset, m, suppressed)) return m;
       spans ??= preservedSpans(whole);
-      return strictlyInside(spans, offset, m.length) ? m : assign("USER", m);
+      if (strictlyInside(spans, offset, m.length)) return m;
+      return oneWay(m) ? SECRET_SENTINEL : assign("USER", m);
     });
   }
   const EMAIL_RE =
@@ -447,7 +450,11 @@ export function createAnonymizer(
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
   function anonUserPaths(t: string): string {
-    return replaceUserPaths(t, userToken);
+    return replaceUserPaths(t, (name, saved) => {
+      if (!oneWay(name)) return userToken(name, saved);
+      if (saved) learn(name); // its bare repeats go one way too
+      return SECRET_SENTINEL;
+    });
   }
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
   // FromBase64String('…'). Tokenize ONLY the blob — the verb + flag stay visible as tradecraft signal,
@@ -513,10 +520,8 @@ export function createAnonymizer(
   // A custom value that extends past an address is set aside WITH it, as one span that carries
   // the custom category (#2950); anonCustom() mints it, so the custom value wins as one token.
   function reserveIpv6Literals(t: string): { text: string; literals: Reserved[] } {
-    // Case text is ATTACKER-INFLUENCED (logs, screenshots, imported evidence), so a hand-crafted
-    // "\uE000IPV6:0\uE000" can arrive in the input. Strip the sentinel before minting any of our own:
-    // a forged placeholder must never index the literals table and make restore() invent an
-    // address in text that never contained one.
+    // Case text is ATTACKER-INFLUENCED, so a forged "\uE000IPV6:0\uE000" can arrive in the input. It is
+    // stripped first: it must never index the literals table and make restore() invent an address.
     const text = t.replace(IPV6_SENTINEL_RE, "");
     const found = findReservableIpv6Spans(text, policy.maskPublicIps);
     if (found.length === 0) return { text, literals: [] };
@@ -554,11 +559,8 @@ export function createAnonymizer(
   }
 
   // Two independent filters — a plausible issuer prefix AND Luhn — keep this out of trouble in
-  // forensic text. Hashes are hexadecimal, so long bare DECIMAL runs are already uncommon.
-  // No length check here: every CARD_RE alternative already guarantees 13–19 digits once
-  // separators are stripped — the three grouped alternatives have fixed digit counts (19, 16,
-  // 15) and the contiguous alternative is itself bounded by the {13,19} quantifier — so a
-  // post-hoc length check on `digits` can never fail and would be dead code.
+  // forensic text (hashes are hexadecimal). No length check: every CARD_RE alternative already
+  // guarantees 13–19 digits once separators are stripped, so one could never fail.
   function anonCards(t: string): string {
     return t.replace(CARD_RE, (m) => {
       const digits = m.replace(/[ -]/g, "");
