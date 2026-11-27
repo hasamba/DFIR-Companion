@@ -136,10 +136,12 @@ const METADATA_SUFFIXES = [
   "id",
 ];
 
+// A plural key (`recoveryCodes`, `tokens`) holds a list of the same secret.
+const isExactKey = (k: string) => EXACT_KEYS.has(k) || (k.endsWith("s") && EXACT_KEYS.has(k.slice(0, -1)));
+
 export function isSecretKey(key: string): boolean {
   const k = normalizeKey(key);
-  // A plural key (`recoveryCodes`, `tokens`) holds a list of the same secret.
-  if (EXACT_KEYS.has(k) || (k.endsWith("s") && EXACT_KEYS.has(k.slice(0, -1)))) return true;
+  if (isExactKey(k)) return true;
   if (METADATA_SUFFIXES.some((s) => k.endsWith(s))) return false;
   return KEY_FRAGMENTS.some((f) => k.includes(f));
 }
@@ -148,7 +150,8 @@ export function isSecretKey(key: string): boolean {
 // suffix of a longer key (or of a `--flag`) from reading as a key of its own. Pretty-printed JSON
 // puts newlines around the separator, so whitespace there is unbounded; nothing after it can
 // backtrack, so each key start still scans its own blank run once.
-const KEY_RE = /(?<![\w.\\-])(\\"|"|')?([A-Za-z][\w.-]{0,127})\1(\s*)[:=](\s*)/g;
+const KEY_RE =
+  /(?<![\w.-])(?:(?<!\\)|(?=[A-Za-z][\w-]{0,127}[ \t]*=))(\\"|"|')?([A-Za-z][\w.-]{0,127})\1(\s*)[:=](\s*)/g;
 
 const CLI_FLAG_RE =
   /(?<![\w-])--(?:password|secret|token|api-key|apikey|access-token|client-secret)(?:[ \t]{1,16}|=)/gi;
@@ -227,7 +230,10 @@ export function redactKeyedSecrets(text: string, placeholder: string): string {
   const re = new RegExp(KEY_RE.source, "g");
   const spans: Span[] = [];
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    if (!isSecretKey(m[2])) continue;
+    // After a "\\" (CONTOSO\\password=, a registry value) only an exact key counts (#3005): a
+    // fragment there is a value NAME (Run\\PasswordManager=<exe>, WDigest\\UseLogonCredential=1).
+    const afterBackslash = !m[1] && text[m.index - 1] === "\\";
+    if (afterBackslash ? !isExactKey(normalizeKey(m[2])) : !isSecretKey(m[2])) continue;
     // A newline around the separator belongs to JSON only. After a bare `Enter password:` it is the
     // end of a prompt, and the next line's first word is not the password.
     if (!m[1] && /\n/.test(m[3] + m[4])) continue;

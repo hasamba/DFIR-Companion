@@ -30,17 +30,36 @@ const PEM_PRIVATE_KEY =
 // Fixed-shape secrets, replaced whole. Each is anchored on a vendor literal, so ordinary text and
 // hashes cannot match. Order matters only where one prefix contains another (sk-proj- before sk-).
 const VENDOR_SECRETS: RegExp[] = [
-  /\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b/g, // AWS access key id
+  // AWS key id: the edges are case-aware (#3005). A key is upper-case + digits, so lower-case text,
+  // "_" or "." beside it is a seam, not more key. An upper-case hex hash never matches: every
+  // 20-character stretch inside one has a hex digit beside it.
+  /(?<![0-9A-Z])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])/g,
+  // GitHub App installation token since 2026: ghs_<app id>_<JWT>, ~520 characters. Before the JWT
+  // rules, so the app id goes with it. "eyJ" (a JSON header) keeps `highs_2024_x.final.docx` apart.
+  /ghs_[0-9]{1,20}_eyJ[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,4096}\.[A-Za-z0-9_-]{4,}/g,
   /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g, // JWT
-  /\bgithub_pat_[A-Za-z0-9_]{22,}/g, // GitHub fine-grained token
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, // GitHub classic tokens
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, // Slack tokens
-  /\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g, // Google API key
+  /eyJ[A-Za-z0-9_-]{6,256}\.eyJ[A-Za-z0-9_-]{3,}\.[A-Za-z0-9_-]{4,}/g, // JWT glued to a word: JSON header AND payload
+  /github_pat_[A-Za-z0-9_]{22,}/g, // GitHub fine-grained token
+  /\bgh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g, // GitHub classic tokens ("_x" after is a seam)
+  /gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9]{4})/g, // ... glued to a word: the real 36-character body
+  /xox[abeprs]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9-])/g, // Slack tokens (xoxe-: a rotated / refresh token)
+  // Slack app-level / workflow token: xapp-1-A0123…, versioned, so `xapp-sn-watcher` is not one.
+  /(?<![A-Za-z0-9])x(?:app|wfp)-\d{1,3}-[A-Za-z0-9-]{20,}(?![A-Za-z0-9-])/g,
+  /AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-]{4})/g, // Google API key (up to 3 glued characters after)
   /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g, // Stripe secret / restricted key
+  // ... a live key glued to a word: mixed case, so a hex hash after `task_live_` is not one.
+  /(?:sk|rk)_live_(?=[0-9a-z]{0,256}[A-Z])(?=[0-9A-Z]{0,256}[a-z])[A-Za-z0-9]{16,}/g,
   /(?<![A-Za-z0-9_-])sk-(?:proj|ant)-[A-Za-z0-9_-]{16,}/g, // OpenAI project / Anthropic key
-  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/g, // OpenAI legacy key
+  // OpenAI service-account / admin key: an upper-case letter in it, so `sk-admin-fileserver-01` is a name.
+  /(?<![A-Za-z0-9_-])sk-(?:svcacct|admin)-(?=[0-9a-z_-]{0,256}[A-Z])[A-Za-z0-9_-]{16,}/g,
+  // ... an Anthropic key glued to a word (api03, admin01, ...): mixed case, so a hex hash is not one.
+  /sk-ant-[a-z]{2,10}\d{2}-(?=[0-9a-z_-]{0,256}[A-Z])[A-Za-z0-9_-]{16,}/g,
+  /sk-[A-Za-z0-9_-]{8,200}T3BlbkFJ[A-Za-z0-9_-]{8,}/g, // ... an OpenAI key glued to a word (its "OpenAI" marker)
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g, // OpenAI legacy key
   /\bSG\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // SendGrid key
+  /SG\.[A-Za-z0-9_-]{20,24}\.[A-Za-z0-9_-]{40,46}(?![A-Za-z0-9_-])/g, // ... glued to a word: ~69 characters
   /\bnpm_[A-Za-z0-9]{36,}/g, // npm token
+  /npm_[A-Za-z0-9]{36}(?![A-Za-z0-9]{4})/g, // ... glued to a word
   // Twilio SID / key: AC or SK + 32 hex, ONLY beside a Twilio label — on its own the shape is just
   // hex. The look-ahead runs first, so the bounded look-behind is tried only at real candidates.
   /\b(?=(?:AC|SK)[0-9A-F]{32}\b)(?<=(?:twilio[^\n]{0,60}|\b(?:account_?sid|auth_?token)["']?[ \t]{0,4}[=:][ \t]{0,4}["']?))(?:AC|SK)[0-9A-F]{32}\b/gi,
@@ -90,8 +109,11 @@ function redactPrefixed(text: string): string {
 /** One-way redact every credential in `text`. Pure; the result never contains a reversible token. */
 export function redactSecretText(text: string): string {
   let out = text.replace(PEM_PRIVATE_KEY, SECRET_PLACEHOLDER);
-  for (const re of VENDOR_SECRETS) out = out.replace(re, SECRET_PLACEHOLDER);
   out = redactPrefixed(out);
   out = redactCliFlagSecrets(out, SECRET_PLACEHOLDER);
-  return redactKeyedSecrets(out, SECRET_PLACEHOLDER);
+  out = redactKeyedSecrets(out, SECRET_PLACEHOLDER);
+  // Vendor shapes last (#3005): a keyed or flag value that holds a vendor shape plus a glued tail
+  // is hidden whole first; the vendor pass then catches shapes outside any key.
+  for (const re of VENDOR_SECRETS) out = out.replace(re, SECRET_PLACEHOLDER);
+  return out;
 }
