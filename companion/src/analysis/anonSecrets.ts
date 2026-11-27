@@ -28,6 +28,10 @@ export const SECRET_PLACEHOLDER = "[REDACTED_SECRET]";
 const PEM_PRIVATE_KEY =
   /-{4,5} ?BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}(?:[\s\S]{0,8192}?-{4,5} ?END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}|[A-Za-z0-9+/=\s]{0,8192})/g;
 
+// Top-level domains an e-mail address glued to a JWT is read under (#3034): common and internal ones.
+const MAIL_TLDS =
+  "com|net|org|edu|gov|mil|int|info|biz|io|ai|app|dev|cloud|online|local|localdomain|internal|intranet|lan|corp|home|private";
+
 // Fixed-shape secrets, replaced whole. Each is anchored on a vendor literal, so ordinary text and
 // hashes cannot match. Order matters only where one prefix contains another (sk-proj- before sk-).
 export const VENDOR_SECRETS: readonly RegExp[] = [
@@ -35,11 +39,23 @@ export const VENDOR_SECRETS: readonly RegExp[] = [
   // "_" or "." beside it is a seam, not more key. An upper-case hex hash never matches: every
   // 20-character stretch inside one has a hex digit beside it.
   /(?<![0-9A-Z])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])/g,
+  // ... glued after a run of digits that starts at a seam (12345 + key, #3034). A letter G-Z must be
+  // in it: AKIA/ASIA/ABIA hold one, and an ACCA key's body must, so an upper-case hex hash (A-F only)
+  // with digits before ACCA stays readable.
+  /(?=(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z]))(?<=(?<![0-9A-Z])[0-9]{1,16})(?=[0-9A-Z]{0,19}[G-Z])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])/g,
   // GitHub App installation token since 2026: ghs_<app id>_<JWT>, ~520 characters. Before the JWT
   // rules, so the app id goes with it. "eyJ" (a JSON header) keeps `highs_2024_x.final.docx` apart.
   /ghs_[0-9]{1,20}_eyJ[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,4096}\.[A-Za-z0-9_-]{4,}/g,
   /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g, // JWT
   /eyJ[A-Za-z0-9_-]{6,256}\.eyJ[A-Za-z0-9_-]{3,}\.[A-Za-z0-9_-]{4,}/g, // JWT glued to a word: JSON header AND payload
+  // ... glued straight after an e-mail domain (<user>@<internal domain> + token, #3034). The label right before
+  // it must read as a top-level domain (two letters, or a common or internal one), so a host such as
+  // x@<host>.<internal domain> (turkeyJerky01) is not one. The #3028 growth sends the whole address one way.
+  new RegExp(
+    `(?=eyJ)(?<=@[A-Za-z0-9-]{1,63}(?:\\.[A-Za-z0-9-]{1,63}){0,8}\\.(?:[A-Za-z]{2}|${MAIL_TLDS}))` +
+      "eyJ[A-Za-z0-9_-]{6,256}\\.[A-Za-z0-9_-]{6,256}\\.[A-Za-z0-9_-]{4,}",
+    "g",
+  ),
   /github_pat_[A-Za-z0-9_]{22,}/g, // GitHub fine-grained token
   /\bgh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g, // GitHub classic tokens ("_x" after is a seam)
   /gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9]{4})/g, // ... glued to a word: the real 36-character body

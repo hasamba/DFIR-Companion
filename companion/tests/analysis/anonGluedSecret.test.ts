@@ -30,9 +30,11 @@ const HEADER = join("ey", "J", "hbGciOiJIUzI1NiJ9");
 const PAYLOAD = join("ey", "JzdWIiOiIxMjM0In0");
 const SAMPLES = [
   AWS,
+  join("9", AWS), // ... glued after a digit run (#3034)
   join("gh", "s_", "123456_", HEADER, ".", PAYLOAD, ".", "Sf1KxwRJSMeK"),
   JWT,
   join(HEADER, ".", PAYLOAD, ".", "Sf1KxwRJSMeK"),
+  join(String.fromCharCode(0x40), "corp", ".local", JWT), // ... glued after an e-mail domain (#3034)
   join("github", "_pat_", rep("A1b2C3d4", 30)),
   join("gh", "p_", rep("a1B2", 24)),
   join("gh", "p_", rep("a1B2", 36)),
