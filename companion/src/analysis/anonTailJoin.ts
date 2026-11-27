@@ -36,6 +36,10 @@ const RESTORE_RE = /IPV6:(\d+)(?:((?:\.\d{1,3}){3}\b)|(\d{1,3}(?:\.\d{1,3}
 // An IPv4 glued to the four-digit last group of an address left in clear ("2001:db8::abcd10.0.0.5").
 const GLUED_RAW_RE = /(?<=:[0-9a-f]{4})\d{1,3}(?:\.\d{1,3}){3}\b/gi;
 const SINGLE_TOKEN = /^ANON_([A-Z]+)_\d+$/;
+// A saved value that starts with a number can match inside a longer dotted run (#3019).
+const LEAD_DIGIT = /^\d/;
+// A phone value whose first (dotted) number can end a dotted IPv4 in front of it ("100 555-0100").
+const PHONE_HEAD = /^(\d{1,3}(?:\.\d{1,3}){0,3})([^\d.]\D*)(\d.*)$/s;
 const NEXT = 32; // how far a phone number after the tail is read
 
 /** Whether an IPv4 glued right after this point of the text could be read as its own address. */
@@ -189,6 +193,8 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
   // Addresses the IPv4 pass would have read in the octets a saved plain IPv4 took (#3018). They
   // are minted by `restore`, which runs only with the IP category on, as the IPv4 pass does.
   const readings: string[] = [];
+  // Saved phone tokens with dotted numbers in front of them, split in `restore` (#3019).
+  const phoneLeads = new Set<string>();
   // `saved`: the number as the phone pass read it stays a discovery, as before. After a plain IPv4
   // the phone pass never read it, and saved it would cut the last number of another address (#3018).
   function phoneOut(c: Crossing | null, saved = true): Step {
@@ -263,8 +269,10 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const skip = extra.length + p.skip;
     return { out: d.ended(tok + p.out, value, at, end + skip, t), skip };
   }
-  function restore(t: string, literals: readonly ReservedLiteral[]): string {
+  function restore(raw: string, literals: readonly ReservedLiteral[]): string {
     for (const ip of readings.splice(0)) mintReadings(ip, "");
+    const t = [...phoneLeads].reduce(splitPhoneLead, raw);
+    phoneLeads.clear();
     // Tokens of a whole dotted-tail address with more octets after it (#3012 shape 1), joined late.
     const dotted = new Set<string>();
     const out = consume(t, RESTORE_RE, (m) => {
@@ -275,7 +283,11 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
       if (e === undefined) return { out: all, skip: 0 }; // never invent a value
       const h = head(e);
       // In clear: the IPv4 pass masks a cut tail, gluedRaw a glued IPv4.
-      if (!h) return { out: d.ended(e.value + cut + ip, e.value + cut + ip, at, end, t), skip: 0 };
+      if (!h) {
+        const s =
+          cut || ip ? null : (clearHeadSaved(e.value, at, end, t) ?? clearHeadPhone(e.value, at, end, t));
+        return s ?? { out: d.ended(e.value + cut + ip, e.value + cut + ip, at, end, t), skip: 0 };
+      }
       const next = t.slice(end, end + NEXT);
       if (ip) {
         const tok = h.mint(e.value);
@@ -283,6 +295,8 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
         if (g.out === ip) return { out: d.ended(tok, e.value, at, end - ip.length, t) + ip, skip: 0 };
         return { out: d.ended(tok + g.out, e.value, at, end + g.skip, t), skip: g.skip };
       }
+      const split = cut ? null : savedPhoneTail(h, e.value, at, end, t);
+      if (split) return split;
       const extra = cut ? (EXTRA.exec(next)?.[0] ?? "") : "";
       const run = extra ? extraRun(h, e.value, cut, extra, at, end, t) : null;
       if (run) return run;
@@ -297,17 +311,77 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     });
     return [...dotted].reduce(joinOne, out);
   }
+  // #3019: an address left in clear whose last group opens a dotted run that a saved IPv4 ends
+  // ("2001:db8::10" + "." + the token of "10.0.0.5"). A call without saved values masks the run
+  // whole (runRaw), so the last group joins the saved address in one token, forced and unsaved.
+  function clearHeadSaved(value: string, at: number, end: number, t: string): Step | null {
+    const last = /:(\d{1,3})$/.exec(value)?.[1];
+    const m = /^\.(ANON_[A-Z]+_\d+)(?!\d)/.exec(t.slice(end, end + 40));
+    const saved = m ? d.real(m[1]) : undefined;
+    if (!last || !m || saved === undefined || !/^\d{1,3}(?:\.\d{1,3}){3,}$/.test(saved)) return null;
+    const run = `${last}.${saved}`;
+    const ip = run.split(".").slice(0, 4).join(".");
+    const cat = d.ipv4Category(ip);
+    if (!cat || d.suppressed.has(ip)) return null;
+    mintReadings(ip, run.slice(ip.length));
+    const tok = unsaved(
+      d.forcing(() => d.assign(cat, run)),
+      run,
+    );
+    const skip = m[0].length;
+    const out = value.slice(0, -last.length) + tok;
+    return { out: d.ended(out, value, at, end + skip, t), skip };
+  }
+  // The same before a saved phone value ("2001:db8::10" + ".0.0." + the token of "100 555-0100"):
+  // the dotted IPv4 is masked as the IPv4 pass masks it, and the rest of the number is its own token.
+  function clearHeadPhone(value: string, at: number, end: number, t: string): Step | null {
+    const last = /:(\d{1,3})$/.exec(value)?.[1];
+    const m = /^((?:\.\d{1,3}){0,2}\.)(ANON_PHONE_\d+)(?!\d)/.exec(t.slice(end, end + 40));
+    const head = m ? PHONE_HEAD.exec(d.real(m[2]) ?? "") : null;
+    if (!last || !m || !head || (m[1] + head[1]).split(".").length !== 4) return null;
+    const [, num, gap, rest] = head;
+    const ip = last + m[1] + num;
+    const cat = d.ipv4Category(ip);
+    if (!cat || d.suppressed.has(ip)) return null;
+    const phone = unsaved(
+      d.forcing(() => d.assign("PHONE", rest)),
+      rest,
+    );
+    const skip = m[0].length;
+    const out = value.slice(0, -last.length) + d.assign(cat, ip) + gap + phone;
+    return { out: d.ended(out, value, at, end + skip, t), skip };
+  }
+  // #3019: a masked address head whose dotted tail ends in a saved phone value ("fd00::10" +
+  // ".0.0." + the token of "100 555-0100"). As on a call without saved values, the whole address is
+  // one token, unsaved, the head keeps its pair, and the rest of the number is its own token.
+  function savedPhoneTail(h: Head, value: string, at: number, end: number, t: string): Step | null {
+    const m = /^((?:\.\d{1,3}){0,2}\.)(ANON_PHONE_\d+)(?!\d)/.exec(t.slice(end, end + 40));
+    const head = m && CUT_OCTET.test(value) ? PHONE_HEAD.exec(d.real(m[2]) ?? "") : null;
+    if (!m || !head || (m[1] + head[1]).split(".").length !== 4) return null;
+    const [, num, gap, rest] = head;
+    const whole = value + m[1] + num;
+    if (!h.forced && d.suppressed.has(whole.toLowerCase())) return null;
+    const tok = track(h.mint(whole), whole, true);
+    h.mint(value);
+    const phone = unsaved(
+      d.forcing(() => d.assign("PHONE", rest)),
+      rest,
+    );
+    const skip = m[0].length;
+    return { out: d.ended(tok + gap + phone, value, at, end + skip, t), skip };
+  }
   function joinOne(t: string, token: string): string {
     const value = d.real(token);
     const cat = SINGLE_TOKEN.exec(token)?.[1] as AnonTokenCategory | undefined;
     if (value === undefined || !cat) return t;
     // A saved dotted-tail value takes every extra intact octet, or the rest would go in clear (#3011).
     // So does a saved plain IPv4 (#3018), and a phone number that starts in its last number is split.
-    const v6 = DOTTED_V6.test(value) && isIPv6(value);
+    // A value that ends in ":" + a dotted IPv4 ("ffff:10.0.0.5") is read the same way (#3019).
+    const v6 = DOTTED_V6.test(value);
     const v4 = !v6 && DOTTED_V4.test(value);
     const dotted = v6 || v4;
     const octets = v4 ? "*" : dotted ? "+" : "{3}";
-    const re = new RegExp(`(?<![A-Za-z0-9_])${token}((?:\\.\\d{1,3})${octets})\\b`, "g");
+    const re = new RegExp(`(?<!\\d)${token}((?:\\.\\d{1,3})${octets})\\b`, "g");
     return consume(t, re, (m) => {
       const tail = m[1];
       const end = m.index + m[0].length;
@@ -328,6 +402,82 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
       );
       const p = phoneOut(c);
       return { out: d.ended(whole + p.out, value, m.index, end + p.skip, t), skip: p.skip };
+    });
+  }
+  // #3019: a saved value that starts with a number, matched at the end of a longer dotted run
+  // ("10.0.0.5" in "10.10.0.0.5", "10.0.0.5@…" in "10.10.0.0.5@…"), takes the numbers in front of it,
+  // or they go in clear where a call without saved values masks them. Forced and never saved. A
+  // saved IPv4 takes the extra numbers after it too, and a phone number that starts in it is split.
+  // The cut tail of an address still set aside is restore's ("fd00::10" + ".10.0.0"), never a lead.
+  // Fewer than three numbers are never a cut tail, so they can be ("fd00::10" + ".10." + token).
+  const afterSetAside = (t: string, m: RegExpExecArray) =>
+    /\.?$/.test(t.slice(Math.max(0, m.index - 2), m.index)) && m[1].split(".").length > 3;
+  function leadRe(token: string, tail: string): RegExp {
+    return new RegExp(`(?<![A-Za-z0-9_])((?:\\d{1,3}\\.)+)${token}${tail}(?!\\d)`, "g");
+  }
+  function joinLead(t: string, token: string): string {
+    const value = d.real(token);
+    const cat = SINGLE_TOKEN.exec(token)?.[1] as AnonTokenCategory | undefined;
+    if (value === undefined || !cat) return t;
+    const v4 = DOTTED_V4.test(value);
+    // A value that can take a dotted tail takes it with the lead, in one token.
+    const tails = v4 || DOTTED_V6.test(value) || CUT_OCTET.test(value);
+    return consume(t, leadRe(token, tails ? "((?:\\.\\d{1,3})*)" : "()"), (m) => {
+      const [all, lead, tail = ""] = m;
+      if (afterSetAside(t, m)) return { out: all, skip: 0 };
+      const end = m.index + all.length;
+      const whole = lead + value + tail;
+      // A run the IPv4 pass would leave in clear ("8.8." + a saved private address, public masking
+      // off) keeps the saved token as it is: a call without saved values masks none of it.
+      const first = whole.match(IPV4_READ)?.[0];
+      if (v4 && (!first || !d.ipv4Category(first))) return { out: all, skip: 0 };
+      // Every address the IPv4 pass reads in the run is still minted, so it is saved as before.
+      readings.push(...(whole.match(IPV4_READ) ?? []));
+      if (!tails) {
+        const tok = unsaved(d.mintCustom(cat, whole), whole);
+        return { out: d.ended(tok, whole, m.index, end, t), skip: 0 };
+      }
+      const c = crossing(whole, t.slice(end, end + NEXT), d.crossers());
+      if (!phoneOk(c, d.suppressed)) return { out: all, skip: 0 };
+      const tok = unsaved(
+        d.forcing(() => d.assign(cat, whole)),
+        whole,
+      );
+      const p = phoneOut(c);
+      return { out: d.ended(tok + p.out, whole, m.index, end + p.skip, t), skip: p.skip };
+    });
+  }
+  // A saved phone value whose first number ends a dotted IPv4 in front of it ("192.168.1." +
+  // "100 555-0100"): the address and the rest of the number each get a token, as on a call without
+  // saved values. It runs in `restore`, so only with the IP category on, as the IPv4 pass does. The
+  // rest of the number is forced: the saved token hid it already.
+  function splitPhoneLead(t: string, token: string): string {
+    const head = PHONE_HEAD.exec(d.real(token) ?? "");
+    if (!head) return t;
+    const [, num, gap, rest] = head;
+    return consume(t, leadRe(token, ""), (m) => {
+      const keep = { out: m[0], skip: 0 };
+      if (afterSetAside(t, m)) return keep;
+      const run = m[1] + num;
+      const nums = run.split(".");
+      const ip = nums.slice(0, 4).join(".");
+      const cat = d.ipv4Category(ip);
+      if (nums.length < 4 || !cat || d.suppressed.has(ip)) return keep;
+      let ipTok: string;
+      if (nums.length === 4) ipTok = d.assign(cat, ip);
+      else {
+        mintReadings(ip, run.slice(ip.length));
+        ipTok = unsaved(
+          d.forcing(() => d.assign(cat, run)),
+          run,
+        );
+      }
+      const phTok = unsaved(
+        d.forcing(() => d.assign("PHONE", rest)),
+        rest,
+      );
+      const end = m.index + m[0].length;
+      return { out: d.ended(ipTok + gap + phTok, m[0], m.index, end, t), skip: 0 };
     });
   }
   // Every address the IPv4 pass reads in a dotted run is still minted, so it is saved as before.
@@ -401,13 +551,20 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
   return {
     mark: (result, value) => {
       const head = CUT_OCTET.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value);
-      if (SINGLE_TOKEN.test(result) && head) marks.add(result);
+      if (SINGLE_TOKEN.test(result) && (head || LEAD_DIGIT.test(value))) marks.add(result);
       return result;
     },
     joinMarked: (t) => {
       readings.length = 0;
+      phoneLeads.clear();
       let out = t;
-      for (const token of marks) out = joinOne(out, token);
+      for (const token of marks) {
+        const value = d.real(token) ?? "";
+        if (token.startsWith("ANON_PHONE_")) phoneLeads.add(token);
+        else if (LEAD_DIGIT.test(value)) out = joinLead(out, token);
+        if (CUT_OCTET.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value))
+          out = joinOne(out, token);
+      }
       marks.clear();
       return out;
     },
