@@ -6,6 +6,7 @@ import type { SuperEvictionTally } from "../analysis/superTimelineStore.js";
 import type { SettleDeps } from "../routes/importSettle.js";
 import type { ImportDemote } from "./importDemote.js";
 import { settleImportOrRecover } from "../routes/importRowRecovery.js";
+import { countsFromSettled, type ImportCounts } from "../analysis/importNotification.js";
 
 /**
  * The settle + import-meta tail the two streamed-ingest entry points share (ingestStreamed and its
@@ -32,6 +33,13 @@ export interface StreamedSettleDeps {
   /** The held tagger for rows marked "held" (#2918): absent, a held row the settle meets stays marked. */
   tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   demote: ImportDemote;
+}
+
+/** What the tail settled. `counts` only when the settle itself ran — a recovered one is unknown (#2982). */
+export interface StreamedSettled {
+  addedEvents: number;
+  addedIocs: number;
+  counts?: ImportCounts;
 }
 
 /** The deps every import seam hands settleForensicImport, from the app's wiring. */
@@ -63,13 +71,14 @@ export async function settleStreamedImport(
     /** What this import's batched runs said the cap dropped (#2816) — the same tally its base carried. */
     superEvictions?: SuperEvictionTally;
   },
-): Promise<{ addedEvents: number; addedIocs: number }> {
+): Promise<StreamedSettled> {
   const { options } = deps;
   const settleDeps = importSettleDeps(deps);
-  const counts = { addedEvents: 0, addedIocs: 0 };
+  const counts: StreamedSettled = { addedEvents: 0, addedIocs: 0 };
   const target = { caseId: args.caseId, storedNames: [args.storedName], tag: "import" };
   const settled = await settleImportOrRecover(settleDeps, target, args.baseline, args.storedName);
   if (!settled) return counts;
+  counts.counts = countsFromSettled(settled); // the post-tagger, post-demote diff (#2982)
   try {
     const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
     counts.addedEvents = tDiff.added.length;

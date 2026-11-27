@@ -28,6 +28,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { ImportBase } from "../routes/context.js";
 import { runDiskImport, streamedImportMeta } from "../routes/importCloudStream.js";
 import type { AppOptions } from "./appOptions.js";
+import type { ImportCounts } from "../analysis/importNotification.js";
 import { settleStreamedImport, type StreamedSettleDeps } from "./importIngestSettle.js";
 import { recordImportRows } from "../storage/importRowsLog.js";
 
@@ -48,6 +49,8 @@ export interface DiskIngestResult {
   addedIocs: number;
   /** The streamed import's disclosure sentences (budgets reached, gzip read), for drop-log.txt. */
   disclosure: string[];
+  /** The settled counts, for the drop sweep's message; absent when the settle was not seen (#2982). */
+  counts?: ImportCounts;
 }
 
 export type IngestDiskFile = (

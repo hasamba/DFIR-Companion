@@ -274,6 +274,24 @@ describe("settleStreamedImport recovers a failed or skipped settle (#2890)", () 
   });
 });
 
+describe("settleStreamedImport carries the settled counts for the import message (#2982)", () => {
+  it("counts the rows the settle kept, graded after the tagger, post-demote", async () => {
+    const { d } = settleDeps();
+    const r = await streamedImport(d, [
+      ev("graded-1", "High"),
+      ev("marker-1", "Info", { description: "marker" }),
+      ev("plain-1", "Info"),
+    ]);
+    expect(r.counts).toMatchObject({ added: 2, highCritical: 2 });
+  });
+
+  it("a settle it had to recover returns no counts — unknown, never zero", async () => {
+    const { d } = settleDeps();
+    const r = await streamedImport(d, [ev("plain-1", "Info")], false);
+    expect(r.counts).toBeUndefined();
+  });
+});
+
 describe("recoverImportRows (#2890)", () => {
   it("selects only the named import's unsettled rows", async () => {
     const manual = buildManualEvent({

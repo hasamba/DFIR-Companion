@@ -825,7 +825,7 @@ a Velociraptor collection or external import, a cloud collection, or a CrowdStri
 The message names what was imported, how many events it added to the forensic timeline, how many of
 those are graded High or Critical, and any files or artifacts that failed. A failed import sends
 "Import failed" with the reason. Screenshots (dropped images or extension captures) and live monitors
-send nothing. Drop-folder messages do not include event counts. Like milestones, import messages
+send nothing. Like milestones, import messages
 ignore the minimum severity. The toggle is on for new channels and for channels saved before it
 existed.
 

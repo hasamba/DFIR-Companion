@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { DropStatusStore } from "../../src/analysis/dropStatus.js";
+import type { NotificationEvent } from "../../src/analysis/notifications.js";
 import type { JobManager } from "../../src/analysis/jobManager.js";
 import { detectImportWithCustomEx } from "../../src/analysis/importDecision.js";
 import { createDropFolder, dropDirOf, type DropFolder } from "../../src/composition/dropFolder.js";
@@ -42,6 +43,8 @@ export interface Harness {
   rowKeys(): string[];
   /** A whole-read ceiling below the cap (#2813); absent → the real one. */
   dropWholeReadSafeBytes?: number;
+  /** Every notification the sweep sent (#2982: the "import finished" message). */
+  notified: NotificationEvent[];
 }
 
 export async function makeHarness(
@@ -61,6 +64,7 @@ export async function makeHarness(
     failOn: new Set(),
     hangAfter: null,
     onIngest: null,
+    notified: [],
     drops: undefined as unknown as DropFolder,
     ...(opts.jobManager ? { jobManager: opts.jobManager } : {}),
     ...(opts.dropWholeReadSafeBytes ? { dropWholeReadSafeBytes: opts.dropWholeReadSafeBytes } : {}),
@@ -98,7 +102,10 @@ function build(h: Harness): DropFolder {
       if (h.failOn.has(name)) throw new Error(`synthetic parse failure in ${name}`);
       h.calls.push({ kind, name, text, host });
       await h.onIngest?.(h.calls.length);
-      return { storedName: "s", addedEvents: 1, addedIocs: 0, analyzed: true };
+      // Each ingest settles one event; a name holding "high" grades it High (#2982).
+      const highCritical = /high/i.test(name) ? 1 : 0;
+      const counts = { added: 1, highCritical };
+      return { storedName: "s", addedEvents: 1, addedIocs: 0, analyzed: true, counts };
     },
   );
   const refuse = (): never => {
@@ -113,7 +120,7 @@ function build(h: Harness): DropFolder {
     hasAiProvider: () => false,
     getControl: refuse,
     recordImportFailure: () => {},
-    dispatchNotify: () => {},
+    dispatchNotify: (e) => void h.notified.push(e),
     resolveImportKind: (filename, text, debug) => {
       const r = detectImportWithCustomEx(filename, text, new Map(), "builtin-first");
       debug?.detected(r.kind, { confident: r.confident, decision: r.decision });

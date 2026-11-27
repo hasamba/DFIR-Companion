@@ -21,6 +21,7 @@ import { join } from "node:path";
 import type { DropFileStat } from "../analysis/dropScan.js";
 import type { ZipMember } from "../storage/zipMembers.js";
 import { withCaseWrite } from "../storage/caseIncarnation.js";
+import type { ImportCounts } from "../analysis/importNotification.js";
 
 export const HUNT_ZIP_LEDGER_DIR = "drop-zip-progress";
 
@@ -33,6 +34,8 @@ export interface MemberOutcome {
   skipped?: boolean;
   /** Over a size limit, extracted to drop/_held/ for the analyst (#2755): neither imported nor failed. */
   held?: boolean;
+  /** An imported member's settled counts (#2982), kept so a resumed zip still reports them. */
+  counts?: ImportCounts;
 }
 
 export interface HuntZipLedger {
@@ -84,6 +87,7 @@ export async function openHuntZipLedger(
         ...(outcome.warning ? { warning: outcome.warning } : {}),
         ...(outcome.skipped ? { skipped: true } : {}),
         ...(outcome.held ? { held: true } : {}),
+        ...(outcome.counts ? { counts: outcome.counts } : {}),
       });
       done.set(member, outcome);
     },
@@ -100,6 +104,7 @@ function parseLine(line: string, done: Map<string, MemberOutcome>): void {
       warning?: unknown;
       skipped?: unknown;
       held?: unknown;
+      counts?: unknown;
     };
     if (typeof v.member !== "string" || typeof v.ok !== "boolean") return;
     done.set(v.member, {
@@ -108,10 +113,26 @@ function parseLine(line: string, done: Map<string, MemberOutcome>): void {
       ...(typeof v.warning === "string" ? { warning: v.warning } : {}),
       ...(v.skipped === true ? { skipped: true } : {}),
       ...(v.held === true ? { held: true } : {}),
+      ...countsField(v.counts),
     });
   } catch {
     /* a torn last line (crash mid-append) */
   }
+}
+
+/** A recorded member's counts, read back only when well-formed — a line without them stays unknown (#2982). */
+function countsField(v: unknown): { counts?: ImportCounts } {
+  if (!v || typeof v !== "object") return {};
+  const c = v as Record<string, unknown>;
+  const count = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0;
+  if (!count(c.added) || !count(c.highCritical)) return {};
+  return {
+    counts: {
+      added: c.added,
+      highCritical: c.highCritical,
+      ...(count(c.superAdded) ? { superAdded: c.superAdded } : {}),
+    },
+  };
 }
 
 /** Remove every ledger whose zip is no longer listed in drop/ (it was moved to _processed/_failed). */

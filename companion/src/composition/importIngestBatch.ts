@@ -27,6 +27,7 @@ import type { FileHandle } from "node:fs/promises";
 import { basename } from "node:path";
 import { withIngestAdmission, statusFromStore } from "../analysis/caseIngestAdmission.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { ImportCounts } from "../analysis/importNotification.js";
 import {
   captureImportBaseline,
   releaseImportBaseline,
@@ -82,6 +83,8 @@ export interface DiskBatchResult {
   rest: BatchFile[];
   /** Why it stopped early: a file no longer fits the batch, the super-timeline is near its cap, or the batch never started. */
   stop?: "mismatch" | "capacity" | "fallback";
+  /** The batch's one settle, counted once for all its files (#2982); absent when it did not settle. */
+  counts?: ImportCounts;
 }
 
 export interface DropBatchRequest {
@@ -209,6 +212,7 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     let stop: DiskBatchResult["stop"];
     let marked = false; // a file of this batch is in the crash marker
     let settleFailed = false;
+    let counts: ImportCounts | undefined;
     let i = 0;
     options.onImport?.(caseId);
     for (; i < batch.files.length; i++) {
@@ -242,6 +246,7 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
       });
       if (tail.warnings.length) addWarnings(results, tail.warnings.join(" "));
       settleFailed = tail.settleFailed;
+      counts = tail.counts;
     }
     // Kept when the settle failed, or when a file that reached its import was never settled (none
     // imported): the next sweep's recovery settles those rows before any other batch runs.
@@ -251,7 +256,7 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
       });
     } else await marker.clear(caseId).catch(() => undefined);
     logBatch(caseId, batch, results, startedAt);
-    return { results, rest: batch.files.slice(i), ...(stop ? { stop } : {}) };
+    return { results, rest: batch.files.slice(i), ...(stop ? { stop } : {}), ...(counts ? { counts } : {}) };
   }
 
   /** Room for a whole per-import budget on top of what the batch still owes the super-timeline. */

@@ -48,6 +48,7 @@ import type { SocratesJob, SocratesJobStore } from "../integrations/socrates/soc
 import { createSocratesJobRunner } from "./socratesJobRunner.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { DropToolRun, StreamedIngestResult } from "../routes/context.js";
 
 export interface ExternalToolsDeps {
   store: CaseStore;
@@ -63,7 +64,7 @@ export interface ExternalToolsDeps {
     assetHost?: string, // the analyst-declared host for the output (#1496)
     modelCall?: undefined,
     debug?: ImportDebugRecorder, // this attempt's import-debug recorder (#1736)
-  ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ) => Promise<StreamedIngestResult>;
   /** Persist a binary original verbatim as evidence (see ImportIngest.persistRawEvidence). */
   persistRawEvidence: (
     caseId: string,
@@ -97,7 +98,7 @@ export interface ExternalTools {
     toolId: string,
     fullPath: string,
     opts: { name: string; dropRelpath?: string; cache?: ToolRunCache; debug?: ImportDebugRecorder },
-  ): Promise<boolean>;
+  ): Promise<DropToolRun>;
   runToolAndIngest(
     caseId: string,
     toolId: string,
@@ -108,7 +109,7 @@ export interface ExternalTools {
       cache?: ToolRunCache;
       debug?: ImportDebugRecorder; // the caller's attempt recorder, so its failure ring gets the detail (#1736)
     },
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ): Promise<StreamedIngestResult>;
   startSocratesAnalysis(
     caseId: string,
     input: { data: Buffer; filename: string; zipPassword?: string; dropRelpath?: string },
@@ -178,14 +179,15 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
   // tools go through runToolAndIngest (synchronous); HTTP tools hand off to startSocratesAnalysis and
   // return immediately, with the poller landing the verdicts later. Shared by the drop-folder auto-run
   // and the "Run pending" batch so both behave identically.
-  // Returns true when the work is ASYNCHRONOUS (handed off, not finished) so the caller can log
-  // SUBMITTED rather than claiming an import that has not happened yet.
+  // `submitted` is true when the work is ASYNCHRONOUS (handed off, not finished) so the caller can log
+  // SUBMITTED rather than claiming an import that has not happened yet; a finished run carries its
+  // settled counts for the drop sweep's message (#2982).
   async function runDropToolAndIngest(
     caseId: string,
     toolId: string,
     fullPath: string,
     opts: { name: string; dropRelpath?: string; cache?: ToolRunCache; debug?: ImportDebugRecorder },
-  ): Promise<boolean> {
+  ): Promise<DropToolRun> {
     const { name, dropRelpath, cache, debug } = opts;
     // FIRST, before either transport touches the file: run-pending feeds this relpath from
     // state/drop-status.json, which an imported archive restores verbatim (#919). The schema drops
@@ -242,7 +244,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         await handle.close();
       }
       await startSocratesAnalysis(caseId, { data, filename: name, dropRelpath });
-      return true;
+      return { submitted: true };
     }
     // A raw file under drop/asset=<HOST>/ carries the analyst's declared host through the tool run
     // (#1496); derived from the validated relpath, never stored beside it, so "Run pending" agrees.
@@ -254,7 +256,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     });
     if (!r.analyzed)
       throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
-    return false;
+    return { submitted: false, ...(r.counts ? { counts: r.counts } : {}) };
   }
 
   // Run a configured external tool against a raw on-disk file (contained in the case dir) and ingest its
@@ -273,7 +275,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       assetHost?: string; // the analyst-declared host for the tool's output (#1496)
       debug?: ImportDebugRecorder; // the caller's attempt recorder (#1736)
     } = {},
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
+  ): Promise<StreamedIngestResult> {
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
     // The toolRunner is the PROCESS SPAWNER. Only spawn-transport tools need it — gating http tools

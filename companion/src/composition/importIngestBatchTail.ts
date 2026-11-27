@@ -32,6 +32,7 @@ import { failedAfterGrading, settleForensicImport, type SettledImport } from "..
 import { recoverImportRows, recoveryDepsFromSettle } from "../routes/importRowRecovery.js";
 import { recordImportRun, type ImportRunContext } from "../routes/importRunRecorder.js";
 import { importSettleDeps, type StreamedSettleDeps } from "./importIngestSettle.js";
+import { countsFromSettled, type ImportCounts } from "../analysis/importNotification.js";
 
 /** How many file names a batch note or run record lists before "(+N more)". */
 export const BATCH_NAMES_LISTED = 20;
@@ -102,11 +103,12 @@ const warn = (caseId: string, what: string, err: unknown): string => {
 /**
  * Run the tail. `warnings`: what every imported file of the batch carries. `settleFailed`: the one
  * settle threw, so the batch's crash marker must stay for the next sweep's recovery to settle its rows.
+ * `counts`: the batch's one settled diff, counted once for the batch (#2982); absent when not settled.
  */
 export async function runBatchTail(
   deps: BatchTailDeps,
   a: BatchTailArgs,
-): Promise<{ warnings: string[]; settleFailed: boolean }> {
+): Promise<{ warnings: string[]; settleFailed: boolean; counts?: ImportCounts }> {
   const warnings: string[] = [];
   let settleFailed = false;
   const { options } = deps.runCtx;
@@ -138,7 +140,7 @@ export async function runBatchTail(
       dropBatchFileNames: listNames(a.collect.imported.map((f) => f.storedName)),
     },
   }).catch((e: unknown) => warn(a.caseId, "analysis-run record", e));
-  return { warnings, settleFailed };
+  return { warnings, settleFailed, ...(settled ? { counts: countsFromSettled(settled) } : {}) };
 }
 
 // Coverage and weaknesses once; on failure each file's own fold (idempotent per upload / atomic).

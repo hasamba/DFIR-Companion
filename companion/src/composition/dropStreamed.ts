@@ -23,6 +23,7 @@ import { CLOUD_STREAM_MIN_BYTES } from "../analysis/cloudStreamLimits.js";
 import { logSiemFallback } from "../routes/importDebugEmit.js";
 import { siemFallbackWarning } from "../routes/importNotes.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
+import type { ImportCounts } from "../analysis/importNotification.js";
 
 export { isGzipMagic };
 
@@ -33,6 +34,8 @@ export interface StreamedDropResult {
   ok: boolean;
   reason?: string;
   warning?: string;
+  /** The import's settled counts (#2982); absent when unknown. */
+  counts?: ImportCounts;
 }
 
 export interface DropStreamerDeps {
@@ -65,7 +68,8 @@ export function createDropStreamer(deps: DropStreamerDeps): StreamDropFile {
     const r = await ingestDiskFile(caseId, a.kind, a.handle, a.name, assetHost, a.debug);
     logSiemFallback(caseId, a.relpath, a.kind, a.debug); // a guessed SIEM import, as the text path names it (#1824)
     const warning = [...r.disclosure, siemFallbackWarning(a.kind, a.debug).warning ?? ""].filter(Boolean);
-    return { ok: true, ...(warning.length ? { warning: warning.join(" ") } : {}) };
+    const counts = r.counts ? { counts: r.counts } : {};
+    return { ok: true, ...counts, ...(warning.length ? { warning: warning.join(" ") } : {}) };
   }
   return async (caseId, fullPath, relpath, debug, windowsLogOnly = false) => {
     const name = basename(relpath);
