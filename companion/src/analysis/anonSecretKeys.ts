@@ -88,6 +88,14 @@ const EXACT_KEYS = new Set(
     "samlResponse",
     "samlAssertion",
     "pinBlock",
+    // Registry values that store a credential (#3017), so `<key path>\<Name>=` counts after "\".
+    // Winlogon autologon password: plain text (Microsoft Learn, "Configure Windows to automate logon").
+    "defaultPassword",
+    // TeamViewer: AES with one key shared by every install, so in effect clear (CVE-2019-18988).
+    "optionsPasswordAES",
+    "securityPasswordAES",
+    "serverPasswordAES",
+    "proxyPasswordAES",
   ].map(normalizeKey),
 );
 
