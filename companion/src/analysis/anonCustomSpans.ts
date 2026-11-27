@@ -17,6 +17,12 @@ import {
 // ("payroll.corp.example/secret" under "*.corp.example" and "corp.example/secret"). The merged
 // span takes the category of its longest member. IPv6 range literals are found here too, in the
 // same coordinates, so a longer custom value that encloses one is still hidden whole.
+//
+// With the IP category on, anonymize.ts sets IPv6 addresses aside before this pass runs.
+// groupWithLiterals() is the hand-off (#2950): it runs on the text before that, so a custom
+// value that extends past an address (encloses it, starts or ends inside it, or touches it) is
+// set aside WITH the address as one span and becomes one token. A custom match that lies wholly
+// inside an address leaves the address whole, as before.
 
 export interface CompiledCustom {
   exact: Array<{ re: RegExp; category: AnonTokenCategory }>;
@@ -142,4 +148,65 @@ export function spliceSpans(
     at = s.end;
   }
   return out + text.slice(at);
+}
+
+/** A span set aside before the other passes: an IPv6 address (category null) or a custom group. */
+export interface ReservedSpan {
+  start: number;
+  end: number;
+  category: AnonTokenCategory | null;
+}
+
+interface Piece {
+  start: number;
+  end: number;
+  cand: Candidate | null; // null for an IPv6 address
+}
+
+/**
+ * Merge IPv6 address spans with the custom matches on the SAME text (#2950). Overlapping pieces
+ * join one group; a custom match that touches an address joins it too, because a match next to a
+ * set-aside address is dropped later and would stay in clear. A group with no custom match, or one
+ * address whose custom matches all lie inside it, keeps each address on its own (category null).
+ * Any other group is one span with the category of its dominant custom match.
+ */
+export function groupWithLiterals(
+  text: string,
+  c: CompiledCustom,
+  literals: ReadonlyArray<{ start: number; end: number }>,
+): ReservedSpan[] {
+  const pieces: Piece[] = [
+    ...literals.map((l) => ({ start: l.start, end: l.end, cand: null })),
+    ...candidates(text, c)
+      .filter((s) => !SENTINEL.test(text[s.start - 1] ?? "") && !SENTINEL.test(text[s.end] ?? ""))
+      .map((s) => ({ start: s.start, end: s.end, cand: s })),
+  ].sort((a, b) => a.start - b.start || b.end - a.end);
+  const out: ReservedSpan[] = [];
+  let group: Piece[] = [];
+  let end = -1;
+  let endIsAddress = false;
+  for (const p of pieces) {
+    const touches = p.start === end && (endIsAddress || p.cand === null);
+    if (p.start > end || (p.start === end && !touches)) {
+      out.push(...resolveGroup(group));
+      group = [];
+    }
+    group.push(p);
+    if (p.end > end) [end, endIsAddress] = [p.end, p.cand === null];
+    else if (p.end === end && p.cand === null) endIsAddress = true;
+  }
+  out.push(...resolveGroup(group));
+  return out;
+}
+
+function resolveGroup(group: readonly Piece[]): ReservedSpan[] {
+  const addresses = group.filter((p) => p.cand === null);
+  const custom = group.flatMap((p) => (p.cand ? [p.cand] : []));
+  if (addresses.length === 0) return []; // custom only: the custom pass handles it
+  const inside = (s: Candidate) => addresses.some((a) => a.start <= s.start && s.end <= a.end);
+  if (custom.length === 0 || (addresses.length === 1 && custom.every(inside)))
+    return addresses.map((a) => ({ start: a.start, end: a.end, category: null }));
+  const lead = custom.reduce((best, s) => (dominates(s, best) ? s : best));
+  const start = Math.min(...group.map((p) => p.start));
+  return [{ start, end: Math.max(...group.map((p) => p.end)), category: lead.category }];
 }

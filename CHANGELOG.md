@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Custom entity that contains an IPv6 address hidden whole** — with IP masking on, a custom value enclosing or overlapping an IPv6 address is one token instead of leaving the text around the address in clear (closes #2950)
 - **Client delete check and archived clients in the hunt report** — the delete check looks again whenever a case folder moved while it looked, the threat hunt report says "Client A (archived)" for an archived client, and one shared instance-administrator check (closes #2945)
 - **Old action answers stay out after A, then B, then A** — every panel, the missed evidence review, second look and containment check retire their in-flight actions when another case opens, even when B never loads the panel; reopening the same case keeps them; the false-positive dialog closes and drops its "marking…" line at the switch (closes #2940)
 - **Old Watson answers stay out after A, then B, then A** — a Watson reply, proposal decision, launch, mode change, stop message or Telegram mirror list from the first visit no longer paints after a switch away and back or a cancel and reopen; the send and stop buttons are free at once; reloading the same case keeps them (closes #2943)
