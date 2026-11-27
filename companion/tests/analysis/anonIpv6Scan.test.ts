@@ -622,8 +622,9 @@ describe.each([true, false])("more word:: separator shapes, maskPublicIps=%s (#2
     expect(back).toBe(input);
     expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual([["ANON_IP_1", value, "IP"]]);
     const start = input.indexOf(value);
+    const separated = value.includes("::") ? "joined" : "alone";
     expect(findReservableIpv6Spans(input, mask)).toEqual([
-      { start, end: start + value.length, failClosed: true, separated: true },
+      { start, end: start + value.length, failClosed: true, separated },
     ]);
   });
 
@@ -635,6 +636,23 @@ describe.each([true, false])("more word:: separator shapes, maskPublicIps=%s (#2
     const { out, back } = run(input, mask);
     expect(out).toBe(expected);
     expect(back).toBe(input);
+  });
+
+  // Code review: only an address alone was one address before; a joined one was two.
+  it("a suppression of a joined address with the separator in front never uncovers it", () => {
+    for (const [input, value] of [
+      ["Evtx::7f00:1::5", "::7f00:1::5"],
+      ["Evtx::a00:5::1", "::a00:5::1"],
+    ]) {
+      const a = createAnonymizer(policy(mask), { ...known(), suppressed: [value] });
+      expect(a.apply(input)).toBe("Evtx::ANON_IP_1");
+    }
+    const key = ["sk", "_live_", "ABCDEFGHIJKLMNOP"].join("");
+    const a = createAnonymizer(
+      { ...policy(mask), redactSecrets: true },
+      { ...known(), suppressed: ["::a00:5::1"] },
+    );
+    expect(a.apply(`x ${key}Evtx::a00:5::1 y`)).toBe("x [REDACTED_SECRET]::ANON_IP_1 y");
   });
 
   it("a suppression of the value after the separator never uncovers the address", () => {
@@ -676,7 +694,7 @@ describe.each([true, false])("more word:: separator shapes, maskPublicIps=%s (#2
   ])("does not join %s where the join would cut what a later pass reads", (input, expected) => {
     expect(run(input, mask).out).toBe(expected);
     expect(findReservableIpv6Spans(input, mask)).toEqual([
-      { start: 6, end: 12, failClosed: true, separated: true },
+      { start: 6, end: 12, failClosed: true, separated: "alone" },
     ]);
   });
 

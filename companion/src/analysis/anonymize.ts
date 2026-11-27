@@ -541,11 +541,11 @@ export function createAnonymizer(
       if (entry === undefined) return m; // belt-and-braces with the strip above: never invent a value
       if (entry.category) return mintCustom(entry.category, entry.value);
       const ip = entry.value;
-      const read = entry.separated ? `::${ip}` : ip; // as read before the separator split (#2979)
+      const read = entry.separated === "alone" ? `::${ip}` : ip; // as read before the split (#2979)
       const ranged = rangeCategory(compiled, read); // #2946: a custom range names the category
       if (ranged) return forcing(() => assign(ranged, ip));
       // Never back in clear through a suppression of its value (#2976), but "::a00:5" stays one (#2979).
-      if (entry.separated && suppressed.has(read.toLowerCase())) return ip;
+      if (read !== ip && suppressed.has(read.toLowerCase())) return ip;
       if (entry.failClosed) return forcing(() => assign("IP", ip));
       if (isInternalIpv6(ip)) return assign("IP", ip);
       return policy.maskPublicIps ? assign("EXTIP", ip) : ip;

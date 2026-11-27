@@ -46,7 +46,7 @@ export interface Ipv6Span {
   failClosed?: true;
   // A fail-closed span read with the "::" in front before #2979 ("::a00:5" out of "Evtx::a00:5"); a
   // #2976 join was not, and keeps its extent everywhere.
-  separated?: true;
+  separated?: "alone" | "joined";
 }
 
 // A match that starts right after a letter, digit or "_" may have borrowed its first group from
@@ -199,8 +199,9 @@ interface Step {
 //   match sets aside nothing outside it and resumes at its end, and the join ends at JOIN_END.
 // - Alone ("Evtx::a00:5"): the rest of the match, when it has two groups or more. A bare "1"
 //   ("Evtx::1") would be learned by screenshot auto-discovery and mask every "1" later.
-// `separated` marks the two new shapes: today they were read with the "::" in front ("::a00:5"), and
-// the restore and the passes that group what touches an address judge them that way (asDetectorRead).
+// `separated` marks the two new shapes: today they were read with the "::" in front ("::a00:5"), and the
+// passes that group what touches an address judge them that way (asDetectorRead). Only an address alone
+// was ONE address today, so only its old spelling ("::a00:5") counts for a suppression or custom range.
 // Same characters hidden, minus the separator colons, and the scan resumes where it would have. The two
 // new shapes never apply to a "::" right after a span set aside ("xfd00::a00:5::1"): that follows an
 // address, not a word.
@@ -219,10 +220,10 @@ function afterSeparator(text: string, m: RegExpExecArray, grade: Grade, opts: Sc
     // #2976, unchanged: the extent it has always had.
     if (keepNext && WORD_CHAR.test(lead)) return join({ start: at, end: joinEnd, failClosed: true });
     if (start !== prevEnd && joinsCleanly(text, scanMatch(text, next, grade, opts, end), end, joinEnd))
-      return join({ start: at, end: joinEnd, failClosed: true, separated: true });
+      return join({ start: at, end: joinEnd, failClosed: true, separated: "joined" });
   }
   if (start === prevEnd || !text.slice(at, end).includes(":")) return null;
-  return { spans: [{ start: at, end, failClosed: true as const, separated: true as const }], resume: end };
+  return { spans: [{ start: at, end, failClosed: true as const, separated: "alone" as const }], resume: end };
 }
 
 // Whether the next match can join (#2979): today's scan of it resumes at its end and sets aside nothing
@@ -299,7 +300,9 @@ export function groupAsRead<G extends { start: number; end: number; category: un
   return group(found.map(asDetectorRead)).map((g) => {
     const f = g.category === null ? closed.get(`${g.start}:${g.end}`) : undefined;
     if (!f) return { start: g.start, end: g.end, category: g.category };
-    const flags: SeparatorFlags = f.separated ? { failClosed: true, separated: true } : { failClosed: true };
+    const flags: SeparatorFlags = f.separated
+      ? { failClosed: true, separated: f.separated }
+      : { failClosed: true };
     return { start: f.start, end: f.end, category: g.category, flags };
   });
 }
