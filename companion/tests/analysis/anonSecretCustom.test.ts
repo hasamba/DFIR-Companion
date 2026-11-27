@@ -111,6 +111,55 @@ describe("custom entity that contains a secret (#2952)", () => {
     expect(out).toBe(`x [${R} y 2a01:4f8::5`);
   });
 
+  // #2957: the same growth for an IPv4 address or a host name the region starts or ends inside.
+  // Not gated on the IP/HOST/DOMAIN categories: the occurrence is already redacted one way.
+  for (const IP of [false, true])
+    it(`an IPv4 address cut by the region is hidden whole (IP ${IP ? "on" : "off"})`, () => {
+      const text = `x 10.0.0.5:token=${SECRET} y 10.0.0.5`;
+      const { out, a } = mask([other(`0.0.5:token=${SECRET}`)], text, policy({}, { IP }));
+      expect(out).toBe(`x ${R} y ${IP ? "ANON_IP_1" : "10.0.0.5"}`);
+      noFragments(a, "token", SECRET);
+    });
+
+  for (const on of [false, true])
+    it(`a host name cut by the region is hidden whole (HOST/DOMAIN ${on ? "on" : "off"})`, () => {
+      const text = `x http://srv01.lab.example/x?token=${SECRET} y`;
+      const a = createAnonymizer(policy({}, { HOST: on, DOMAIN: on }), {
+        hosts: ["srv01.lab.example"],
+        accounts: [],
+        internalDomains: ["lab.example"],
+        custom: [other(`lab.example/x?token=${SECRET}`)],
+      });
+      const out = a.apply(text);
+      expect(out).toBe(`x http://${R} y`);
+      noFragments(a, "srv01", "corp", SECRET);
+    });
+
+  it("a hyphenated name and a decomposed Unicode label are hidden whole", () => {
+    expect(mask([other(`01:token=${SECRET}`)], `x srv-01:token=${SECRET} y`).out).toBe(`x ${R} y`);
+    const cafe = "café";
+    const text = `x ${cafe}.lab.example/x?token=${SECRET} y`;
+    expect(mask([other(`lab.example/x?token=${SECRET}`)], text).out).toBe(`x ${R} y`);
+  });
+
+  it("a region that ends inside a host name grows to its end", () => {
+    const text = `x token=${SECRET}&host=srv01.lab.example z`;
+    const { out } = mask([other(`token=${SECRET}&host=srv01`)], text);
+    expect(out).toBe(`x ${R} z`);
+  });
+
+  it("growth repeats until the region cuts no address or name", () => {
+    const text = `x 10.0.0.5:token=${SECRET} 10.0.0.9-tail/more.stuff y`;
+    const custom = [other(`0.0.5:token=${SECRET} 10.0.0`), other("9-tail/more")];
+    expect(mask(custom, text).out).toBe(`x ${R} y`);
+  });
+
+  it("an address or name beside the region, not cut by it, keeps today's output", () => {
+    expect(mask([other(`token=${SECRET}`)], `x 10.0.0.5 token=${SECRET} y`).out).toBe(`x ANON_IP_1 ${R} y`);
+    const key = `${["AK", "IA"].join("")}${"ABCDEFGHIJKLMNOP"}`;
+    expect(mask([other("case")], `x case-${key} y`).out).toBe(`x ANON_OTHER_1-${R} y`);
+  });
+
   it("a forged IPv6 sentinel cannot hide the custom value from the secret pass", () => {
     const cred = ["abc12", "fake"].join("");
     const { out } = mask(
