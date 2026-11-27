@@ -13,7 +13,7 @@ import {
 } from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
-import { scanTokenLiterals } from "./anonTokenLiterals.js";
+import { expandMintedTokens, scanTokenLiterals } from "./anonTokenLiterals.js";
 import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
 import type { SeparatorFlags } from "./anonIpv6Scan.js";
 import {
@@ -347,8 +347,9 @@ export function createAnonymizer(
 
   const compiled = compileCustomEntities(known.custom ?? [], policy.maskPublicIps);
   let forceCustom = false; // true while a custom match mints: the explicit "hide this" beats a veto
-  function assign(category: AnonTokenCategory, real: string): string {
-    if (!forceCustom && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
+  function assign(category: AnonTokenCategory, raw: string): string {
+    const real = expandMintedTokens(raw, TOKEN_RE.source, (tok) => toReal.get(tok)); // #2991: no nesting
+    if (!forceCustom && real === raw && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;

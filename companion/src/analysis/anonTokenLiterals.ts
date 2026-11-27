@@ -36,3 +36,18 @@ export function scanTokenLiterals(
   });
   return { text: out, literals };
 }
+
+/**
+ * #2991 — put back the real text of every token `lookup` knows in `value`. A later pass (account,
+ * email, host, …) can match text that already holds a token an earlier pass minted; the new token
+ * must stand for the original text, or restore() hands back a token. Exact case only: a literal in
+ * the input never equals a minted token (escaped or reserved above). Own regex, no shared state.
+ */
+export function expandMintedTokens(
+  value: string,
+  tokenSource: string,
+  lookup: (token: string) => string | undefined,
+): string {
+  if (!value.includes("ANON_")) return value;
+  return value.replace(new RegExp(tokenSource, "g"), (m) => lookup(m) ?? m);
+}
