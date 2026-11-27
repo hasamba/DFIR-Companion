@@ -203,6 +203,11 @@ export async function enrichIocs(
     const checks: ProviderCheck[] = []; // per provider / per backend outcomes of this run (#1024)
     let queriedThisIoc = false; // a real provider call was made for this IOC
     for (const provider of todo) {
+      // A Cancel stops before the next PROVIDER, not only before the next IOC: one indicator across
+      // a dozen providers, with their delays and rate-limit retries, took six minutes live — the
+      // case slot had already gone to the next job while this kept running. What already answered
+      // for this IOC is still kept below.
+      if (opts.signal?.aborted) break;
       // Reachability gate (cached ~60s): skip a provider probed DOWN before spending a call.
       // It's NOT counted as an error and NOT added to enrichedBy, so a later run retries it
       // once the server is back. Logged once per provider per run (not once per IOC).

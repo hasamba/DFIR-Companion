@@ -36,6 +36,7 @@ import { investigationOutput, investigationOutputOfCase } from "../analysis/anal
 import type { AnalysisRunOutput } from "../analysis/analysisRunTypes.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
+import { isTerminal } from "../analysis/jobRegistry.js";
 import { logLine } from "../logging/serverLogger.js";
 import { runInCaseScope, runInGenerationScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap, CaseKeyedSet, type PerCaseSet } from "../storage/caseKeyedState.js";
@@ -128,6 +129,11 @@ export function createEnrichmentEngine({
 
   const isEnriching = (caseId: string): boolean =>
     options.jobManager?.list(caseId).some((j) => j.kind === "enrichment" && j.status === "running") ?? false;
+
+  // Any job on the case that has not ended. Read after this run's own job is terminal (cancelled,
+  // finished or failed), so it never counts itself.
+  const hasOtherActiveJob = (caseId: string): boolean =>
+    options.jobManager?.list(caseId).some((j) => !isTerminal(j.status)) ?? false;
 
   /**
    * Replay a kick that arrived mid-run, now that the run has saved. Reached only from a run that
@@ -234,7 +240,10 @@ export function createEnrichmentEngine({
         force,
         signal: job?.signal, // #225: analyst cancel — stop between IOCs (partial enrichment is additive/safe)
         health, // probe each provider (cached ~60s) before sending — skip the dead ones
+        // Silent once cancelled: Cancel frees the case slot at once, so the pill now belongs to
+        // whichever job took it, and a late "enriching IOC n/m" would paint over that job.
         onProgress: (done, total) =>
+          !job?.signal?.aborted &&
           options.onAiStatus?.(caseId, {
             status: "analyzing",
             phase: "extracting",
@@ -298,10 +307,10 @@ export function createEnrichmentEngine({
               : `; ${summary.capped} IOC(s) left by the cap (DFIR_ENRICH_MAX=${options.enrichMaxIocs ?? 100}` +
                 `${budgetLeft ? "" : ` × DFIR_ENRICH_MAX_BATCHES=${maxBatches}`}) — enrich again to continue`;
       if (job) await options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
-      // A newer exclusive registration may have superseded this run — if an enrichment job for this
-      // case is still active, that newer run owns the status; don't stomp its live "enriching IOC
-      // 12/40" with this run's partial total.
-      if (!(aborted && options.jobManager?.hasActive(caseId, "enrichment"))) {
+      // After a cancel, any job still active on the case owns the status — a newer enrichment
+      // that superseded this run, or another job (a second opinion) admitted into the slot the
+      // cancel freed. Don't stomp its live status with this run's partial total.
+      if (!(aborted && hasOtherActiveJob(caseId))) {
         options.onAiStatus?.(caseId, {
           status: "idle",
           at: new Date().toISOString(),
@@ -332,7 +341,7 @@ export function createEnrichmentEngine({
       // A failed run still releases anything deferred behind it, or that kick waits for a run that
       // will never come. Not after an abort — see the success path.
       if (!aborted) replayDeferredKick(caseId, parentRunId);
-      if (aborted && options.jobManager?.hasActive(caseId, "enrichment")) return;
+      if (aborted && hasOtherActiveJob(caseId)) return;
       options.onAiStatus?.(
         caseId,
         aborted

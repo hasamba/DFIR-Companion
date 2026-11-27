@@ -41,7 +41,7 @@ export {
 } from "./ai/viewReports.js";
 import type { ExtractionContext } from "./ai/extraction.js";
 import * as extraction from "./ai/extraction.js";
-import { presidioGate } from "./ai/providerCall.js";
+import { presidioGateAll, type MaskedText } from "./ai/providerCall.js";
 import { gateBindings } from "./ai/gateBindings.js";
 import { presidioPreviewText } from "./ai/aiPreviewCall.js";
 import type { KnownEntities } from "./anonymize.js";
@@ -209,10 +209,10 @@ export class AnalysisPipeline {
     return Boolean(this.opts.provider);
   }
 
-  /** The Presidio gate over text a route masked itself, e.g. a Jev payload (#1952). Fails closed. */
-  presidioGateMasked(caseId: string, maskedText: string, known: KnownEntities, control: AnonControl | null) {
+  /** The Presidio gate over text a route masked itself (#1952); several texts → one hold (#2980). */
+  presidioGateMasked(caseId: string, text: MaskedText, known: KnownEntities, control: AnonControl | null) {
     // "jev": an on-demand review, not a synthesis — clearing its hold leaves the conclusions alone.
-    return presidioGate(this.aiCtx, caseId, "jev", maskedText, known, control);
+    return presidioGateAll(this.aiCtx, caseId, "jev", text, known, control);
   }
 
   /** What that gate would do, with nothing saved or held — the AI preview's Jev answer (#2515). */

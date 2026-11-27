@@ -28,6 +28,7 @@ import { collectEvictionForRecord, type BatchedRunEviction } from "../analysis/i
 import type { BulkImportOpts } from "../analysis/ingest/velociraptorBulk.js";
 import { failedAfterGrading, settleForensicImport } from "../routes/importSettle.js";
 import { logLine } from "../logging/serverLogger.js";
+import { countsFromSettled, type ImportCounts } from "../analysis/importNotification.js";
 
 export interface HuntSettleDeps {
   options: AppOptions;
@@ -87,6 +88,8 @@ export interface HuntSettleResult {
    * record or Undo failure after a complete settle leaves `error` set and this unset.
    */
   seamFailed?: boolean;
+  /** What the collect added, for the "import finished" message (#2978); absent when nothing settled. */
+  counts?: ImportCounts;
 }
 
 /** #2888: the pre-import state read failed, so the settle has nothing to diff against. */
@@ -136,7 +139,9 @@ export async function settleHuntCollect(
     );
     seamDone = true;
     const { timelineDiff: diff, iocsDiff } = settled;
-    counted = { ...result, addedEvents: diff.added.length, addedIocs: iocsDiff.added.length };
+    const superTotal = input.superTimelineAddedCount + settled.superTimelineAddedCount;
+    const counts = countsFromSettled({ timelineDiff: diff, superTimelineAddedCount: superTotal }); // #2978
+    counted = { ...result, addedEvents: diff.added.length, addedIocs: iocsDiff.added.length, counts };
     if (options.importMetaStore) {
       await options.importMetaStore.record(caseId, {
         kind: "velociraptor",

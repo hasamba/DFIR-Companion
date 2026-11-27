@@ -36,6 +36,9 @@ import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import { siemFallbackNotes } from "../routes/importNotes.js";
 import type { VeloUploadsOutcome } from "../routes/veloUploadFields.js";
+import { countsFromSettled, type ImportCounts } from "../analysis/importNotification.js";
+import { notifyUploadsImport } from "./veloImportNotify.js";
+import { createCaseNotifier } from "./caseNotifier.js";
 import {
   aiGateClosed,
   EXTERNAL_REFUSAL_WORDING,
@@ -94,7 +97,7 @@ export interface VeloExternalIngest {
       partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
       rows?: number; // the map's row count, which sizes it for the memory guard (#1874)
     } & AiAgentHostOptions, // a sweep's shared host names, seeded into this batch's parse (#2745)
-  ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
+  ): Promise<{ addedEvents: number; addedIocs: number; storedName: string; counts?: ImportCounts }>;
   ingestVeloUploads(
     caseId: string,
     uploads: HuntUpload[],
@@ -169,7 +172,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       // this function writes the success line, since it imports without dispatchImport.
       debug?: ImportDebugRecorder;
     } & AiAgentHostOptions,
-  ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }> {
+  ): Promise<{ addedEvents: number; addedIocs: number; storedName: string; counts?: ImportCounts }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     opts.debug?.detected("velociraptor", { confident: true, decision: "explicit_route" }); // a row map
@@ -225,7 +228,8 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           if (res) {
             emitImportDebug(caseId, opts.debug, "succeeded");
             resynthesizeInBackground(caseId);
-            return { addedEvents: res.superAppended, addedIocs: 0, storedName };
+            const counts = { added: 0, highCritical: 0, superAdded: res.superAppended }; // #2978
+            return { addedEvents: res.superAppended, addedIocs: 0, storedName, counts };
           }
         }
         // The super-timeline is the COMPLETE record — do NOT aggregate near-identical rows (which would
@@ -272,7 +276,12 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         // report the SUPER-TIMELINE count instead so "+N events" reflects what actually landed.
         emitImportDebug(caseId, opts.debug, "succeeded");
         resynthesizeInBackground(caseId);
-        return { addedEvents: superAdded, addedIocs: 0, storedName };
+        return {
+          addedEvents: superAdded,
+          addedIocs: 0,
+          storedName,
+          counts: { added: 0, highCritical: 0, superAdded },
+        };
       }
       const capDropped = createSuperEvictionTally(); // a batched run's own cap report (#2816)
       await pipeline.importVelociraptorArtifact(caseId, mapJson, {
@@ -294,7 +303,8 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       });
 
       let addedEvents = 0,
-        addedIocs = 0;
+        addedIocs = 0,
+        counts: ImportCounts | undefined;
       // The super-only path returns above only when a super-timeline store exists; a superOnly
       // request with NO store falls through to the forensic importer and must not demote — there
       // is nowhere for a demoted row to go — so it gets no settle and no recovery. Every other case
@@ -315,6 +325,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             : undefined;
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
+          counts = countsFromSettled(settled ?? diffs); // #2978: the "import finished" message
           // settle logs its own done line; this branch bypassed it (#1438).
           if (opts.superOnly)
             getServerLogger().info(
@@ -356,7 +367,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       }
       emitImportDebug(caseId, opts.debug, "succeeded");
       resynthesizeInBackground(caseId);
-      return { addedEvents, addedIocs, storedName };
+      return { addedEvents, addedIocs, storedName, ...(counts ? { counts } : {}) };
     } finally {
       releaseImportLock(); // a lock left held would wedge every later import for this case
     }
@@ -440,7 +451,8 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       }
 
       let addedEvents = 0,
-        addedIocs = 0;
+        addedIocs = 0,
+        counts: ImportCounts | undefined;
       if (imported.length && options.stateStore) {
         // No snapshot / a failed settle → WARN + recovery of EVERY upload's rows (#2890): each
         // carries its own stored name, and the settle is labelled with the last one only.
@@ -452,6 +464,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
             addedEvents = tDiff.added.length;
             addedIocs = iDiff.added.length;
+            counts = countsFromSettled(settled); // #2978
             // Rows a batched run's cap passes dropped are recorded also when nothing forensic changed.
             const changed = addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length;
             if ((changed || capDropped.plus(undefined)?.count) && options.importMetaStore && lastStoredName) {
@@ -480,7 +493,14 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         }
         resynthesizeInBackground(caseId);
       }
-      return { addedEvents, addedIocs, imported, skipped, ...siemFallbackNotes(importedKinds) };
+      return {
+        addedEvents,
+        addedIocs,
+        imported,
+        skipped,
+        ...(counts ? { counts } : {}),
+        ...siemFallbackNotes(importedKinds),
+      };
     } finally {
       releaseImportLock(); // a lock left held would wedge every later import for this case
     }
@@ -493,7 +513,17 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
   return {
     ingestVeloArtifactMap: (caseId, ...rest) =>
       withIngestAdmission(store.casesRoot, caseId, () => ingestVeloArtifactMap(caseId, ...rest), statusOf),
-    ingestVeloUploads: (caseId, ...rest) =>
-      withIngestAdmission(store.casesRoot, caseId, () => ingestVeloUploads(caseId, ...rest), statusOf),
+    ingestVeloUploads: (caseId, uploads, opts) =>
+      notifyUploadsImport(
+        createCaseNotifier(options), // #2978: an uploads-only import's "import finished" message
+        caseId,
+        opts.label,
+        withIngestAdmission(
+          store.casesRoot,
+          caseId,
+          () => ingestVeloUploads(caseId, uploads, opts),
+          statusOf,
+        ),
+      ),
   };
 }

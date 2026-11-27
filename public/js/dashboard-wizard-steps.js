@@ -341,7 +341,7 @@
       status: "notifications",
       kind: "notifications",
       blurb:
-        "Get a Slack / Teams / Mattermost / Discord / Telegram ping on new findings, playbook updates, and milestones.",
+        "Get a Slack / Teams / Mattermost / Discord / Telegram ping on new findings, playbook updates, milestones and finished imports.",
       note: "Adds a channel + sends a test message. Email (a full SMTP block) lives in Settings → Notifications.",
     },
   ];

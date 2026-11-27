@@ -30,6 +30,7 @@ import { activityDetail, landSearchResult, type SiemSearchSpec } from "./crowdst
 import { isFrozenCase } from "./importCaseGuard.js";
 import { csSearchKey } from "../analysis/ai/watson/crowdstrike/csLaunchCheck.js";
 import { fingerprintStoreFor } from "../analysis/ai/watson/velo/fingerprintIndex.js";
+import { notifySiemSearch } from "./importNotify.js";
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
@@ -168,6 +169,7 @@ export async function startSiemSearch(
     .catch((err: unknown) =>
       ctx.serverLogger.warn(`[crowdstrike-siem] could not record the search key: ${(err as Error).message}`),
     );
+  let notified = false;
   const work = async (): Promise<void> => {
     await job?.ready;
     const progress = (rows: number) =>
@@ -196,6 +198,8 @@ export async function startSiemSearch(
         await jm.finish(jobId);
       }
     }
+    notifySiemSearch(ctx, spec, outcome); // #2978
+    notified = true; // a later onDone failure must not send a second message for this search
     await onDone?.(outcome);
   };
   void work().catch(async (err: unknown) => {
@@ -206,6 +210,7 @@ export async function startSiemSearch(
     }
     ctx.serverLogger.warn(`[crowdstrike-siem] ${spec.caseId}: search failed — ${(err as Error).message}`);
     if (jm && jobId) await jm.fail(jobId, err, { code: "siem-search" }).catch(() => undefined);
+    if (!notified) notifySiemSearch(ctx, spec, failed(spec, (err as Error).message));
     await Promise.resolve(onDone?.(failed(spec, (err as Error).message))).catch(() => undefined);
   });
   return jobId;

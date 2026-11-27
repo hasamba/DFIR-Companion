@@ -40,7 +40,7 @@ function channel(over: Partial<NotificationChannel>): NotificationChannel {
     name: "SOC",
     enabled: true,
     minSeverity: "Info",
-    events: { critical_finding: true, playbook_update: true, milestone: true, mention: true },
+    events: { critical_finding: true, playbook_update: true, milestone: true, mention: true, import: false },
     createdAt: NOW,
     updatedAt: NOW,
     ...over,

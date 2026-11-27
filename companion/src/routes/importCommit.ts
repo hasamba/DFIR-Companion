@@ -22,6 +22,7 @@ import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { createSuperEvictionTally, type SuperEviction } from "../analysis/superTimelineStore.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 import { admitDedicatedImport, type DedicatedImportJob } from "./importCommitJob.js";
+import { trackRouteImport } from "./importNotify.js";
 
 /**
  * The commit spine every dedicated `import-*` route runs after it has answered 202 (#956).
@@ -152,6 +153,7 @@ export function commitDedicatedImport(
   // removes it. When nothing landed, the import is reported as cancelled instead.
   let partial = false;
   let runStarted = Date.now();
+  const outcome = trackRouteImport(ctx, caseId, storedName); // #2978: the "import finished" message
   // The analyst's decision, not a failure: one "cancelled" line, no failure-ring entry. fail() is a
   // no-op on the cancelled row, and settles the row of a case deleted mid-import (#1831).
   const reportCancelled = async (err: unknown): Promise<void> => {
@@ -211,6 +213,7 @@ export function commitDedicatedImport(
         const target = { caseId, storedNames: [storedName], tag: "import" };
         const settled = await settleImportOrRecoverThenThrow(settleDeps, target, baseline, storedName);
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
+        outcome.settled(settled);
         ctx.serverLogger.debug(
           `[import-debug] ${caseId}: commit kind=${safeKind(kind)} settled forensicNow=${settled.forensicCount} ` +
             `superRetained=${settled.superTimelineAddedCount} superEvicted=${settled.superTimelineEvicted?.count ?? 0}`,
@@ -296,6 +299,7 @@ export function commitDedicatedImport(
         parameters: commit.parameters,
       });
       await job.finish();
+      outcome.finished();
       resynthesizeInBackground(caseId);
       // Last, so a settle or record failure above reports this attempt as failed, not succeeded.
       emitImportDebug(caseId, debug, "succeeded");
@@ -311,6 +315,7 @@ export function commitDedicatedImport(
       // nothing was written, so the settle finds no journal to read. Still a cancel, not a failure.
       if (partial && err instanceof ImportJournalLostError && baseline?.empty) return reportCancelled(err);
       await job.fail(err);
+      outcome.failed(err);
       recordImportFailure(caseId, kind, storedName, err, debug);
       recordAiError(caseId, "import", err);
       options.onAiStatus?.(caseId, {

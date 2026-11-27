@@ -780,3 +780,33 @@ describe("SSRF guard (#2148)", () => {
     expect(countEnrichableWork([...internal, publicControl], [rec])).toBe(1);
   });
 });
+
+// A Cancel used to wait for the current indicator to finish against EVERY provider — with the
+// per-provider delays and rate-limit retries that took six minutes live, during which the dashboard
+// kept showing "enriching IOC" over the job that had taken the freed slot.
+describe("enrichIocs cancel", () => {
+  it("stops before the next provider once the run is cancelled, not only before the next IOC", async () => {
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const cancelling: EnrichmentProvider = {
+      name: "First",
+      scope: "external",
+      supports: () => true,
+      lookup: async (k, v) => {
+        calls.push(`First:${k}:${v}`);
+        controller.abort(); // the analyst presses Cancel while this call is in flight
+        return null;
+      },
+    };
+    const later = fakeProvider("Second", ["domain"], null, calls);
+
+    const { summary } = await enrichIocs([ioc({ value: "evil.test", type: "domain" })], {
+      providers: [cancelling, later],
+      delayMs: 0,
+      signal: controller.signal,
+    });
+
+    expect(calls).toEqual(["First:domain:evil.test"]);
+    expect(summary.attemptedValues).toContain("evil.test");
+  });
+});

@@ -37,6 +37,7 @@ import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import { caseCollectImporter } from "./cloudCollectImporter.js";
 import type { RouteContext } from "./context.js";
 import type { JobStep } from "../analysis/jobRegistry.js";
+import { collectionGaps, trackRouteImport } from "./importNotify.js";
 
 /**
  * The job's warning for a run that did not fail: the stop reason when the network stage stopped
@@ -125,6 +126,8 @@ export interface ExecuteInput {
   ref: CollectSessionRef;
   resume: boolean;
   signal?: AbortSignal;
+  /** What the analyst launched, for the "import finished" message (#2978). A resume has none. */
+  label?: string;
 }
 
 /** Run one collection pass inside a job. Throws on failure (the job fails, still resumable). */
@@ -143,12 +146,13 @@ export async function executeCollection(
     await Promise.resolve(input.ref.session.close?.()).catch(() => {});
     throw new Error("This collection is already being written by another run.");
   }
+  const outcome = trackRouteImport(ctx, input.caseId, input.label || "cloud collection"); // #2978
   try {
     const cp = await runCollection(
       {
         fs: nodeCollectFs,
         session: input.ref.session,
-        importer: caseCollectImporter(ctx),
+        importer: caseCollectImporter(ctx, outcome.settled),
         sources: input.ref.provider.sources,
         now,
         ...(input.ref.budget ? { budget: input.ref.budget } : {}),
@@ -174,10 +178,12 @@ export async function executeCollection(
     if (cp.status === "failed") throw new Error(cp.missing[0]?.reason ?? "nothing was collected");
     const warning = collectionJobWarning(cp);
     if (warning) await manager?.warn(input.jobId, warning);
+    outcome.finished({ files: cp.imported.length, ...collectionGaps(cp) });
     return cp;
   } catch (err) {
     const cancelled = (err as Error)?.name === "AbortError";
     const message = redactedErrorMessage(err);
+    if (!cancelled) outcome.failed(new Error(message), true); // a failed collection resumes from the Jobs list
     await markCollectionStopped(
       nodeCollectFs,
       input.dir,
@@ -250,6 +256,7 @@ export function registerCloudCollectResumeHandler(ctx: RouteContext): void {
         dir: collectionDir(ctx, job.caseId, collectionId),
         ref,
         resume: true,
+        ...(job.label ? { label: job.label } : {}),
         ...(signal ? { signal } : {}),
       });
     },
