@@ -176,6 +176,7 @@
     "anonChecksums.ts": "analysis/privacy",
     "anonCustomSpans.ts": "analysis/privacy",
     "anonIpv6Scan.ts": "analysis/privacy",
+    "anonTailJoin.ts": "analysis/privacy",
     "anonDiscovered.ts": "analysis/privacy",
     "anonMap.ts": "analysis/privacy",
     "anonEntities.ts": "analysis/privacy",

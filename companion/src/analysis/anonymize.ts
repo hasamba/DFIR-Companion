@@ -14,8 +14,9 @@ import {
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
-import { findIpv6Literals, groupAsRead, ipv4TailJoin, ipv6Mask } from "./anonIpv6Scan.js";
-import type { Ipv6Grade, Ipv6Span, SeparatorFlags } from "./anonIpv6Scan.js";
+import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
+import type { Ipv6Grade, Ipv6Span } from "./anonIpv6Scan.js";
+import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
 import {
   NETBIOS_ACCT,
   UPN_ACCT,
@@ -368,7 +369,7 @@ export function createAnonymizer(
     for (const [token, real] of toReal) {
       const cat = (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory;
       const key = anonPairKey(cat, real);
-      if (seen.has(key)) continue;
+      if (seen.has(key) || tails.unsaved(key)) continue; // a cut phone number is never saved (#2995)
       seen.add(key);
       out.push({ value: real, category: cat });
     }
@@ -508,9 +509,6 @@ export function createAnonymizer(
   const IPV6_SENTINEL = "\uE000";
   const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
-  const IPV6_RESTORE_RE = /\uE000IPV6:(\d+)\uE000((?:\.\d{1,3}){3}\b)?/g; // + a dotted IPv4 tail (#2990)
-  // null: a plain address. failClosed / separated: an address after a word:: separator (#2976, #2979).
-  type Reserved = { value: string; category: AnonTokenCategory | null } & SeparatorFlags;
 
   // A custom value that extends past an address is set aside WITH it, as one span that carries
   // the custom category (#2950); anonCustom() mints it, so the custom value wins as one token.
@@ -533,30 +531,25 @@ export function createAnonymizer(
     return { text: out + text.slice(at), literals };
   }
 
-  // A dotted IPv4 tail the detector cut ("fd00::192" + ".168.1.5") joins the token (#2990).
-  function restoreIpv6Literals(t: string, literals: Reserved[]): string {
-    const base = (ip: string) => (isInternalIpv6(ip) ? "IP" : policy.maskPublicIps ? "EXTIP" : null);
-    const range = (read: string) => rangeCategory(compiled, read); // #2946: a custom range names it
-    const tail = { suppressed, crossers: policy.categories.PHONE ? [PHONE_IL, PHONE_NANP] : [] };
-    return t.replace(IPV6_RESTORE_RE, (m, idxStr: string, cut = "", at: number) => {
-      // A token right before a digit gets a delimiter at the end (#2992); a tail left after it cannot.
-      const out = (r: string, v: string, rest: string) =>
-        rest ? r + rest : ends.ended(r, v, at, at + m.length, t);
-      const entry = literals[Number(idxStr)];
-      if (entry === undefined) return m; // belt-and-braces with the strip above: never invent a value
-      if (entry.category) return out(mintCustom(entry.category, entry.value), entry.value, cut);
-      const d = ipv6Mask<AnonTokenCategory>(entry, { range, closed: "IP", base, suppressed });
-      if (!d) return out(entry.value + cut, entry.value + cut, ""); // in clear: the IPv4 pass masks the tail
-      const j = ipv4TailJoin(entry.value, cut, t.slice(at + m.length, at + m.length + 32), d.forced, tail);
-      return out(d.forced ? forcing(() => assign(d.cat, j.value)) : assign(d.cat, j.value), j.value, j.rest);
-    });
+  // The dotted IPv4 tail after an address, cut or glued, joins late (#2990, #2995): anonTailJoin.ts.
+  const tails = createTailJoiner({
+    ...{ assign, forcing, mintCustom, ended: ends.ended, real: (tok) => toReal.get(tok), ipv4Category },
+    ...{ suppressed, base: ipv6Base },
+    crossers: () => (policy.categories.PHONE ? [PHONE_IL, PHONE_NANP] : []),
+    range: (read) => rangeCategory(compiled, read), // #2946: a custom range names it
+  });
+  function ipv6Base(ip: string): AnonTokenCategory | null {
+    return isInternalIpv6(ip) ? "IP" : policy.maskPublicIps ? "EXTIP" : null;
+  }
+  function ipv4Category(ip: string): AnonTokenCategory | null {
+    if (isInternalIp(ip)) return "IP";
+    return policy.maskPublicIps && isMaskableIpv4(ip) ? "EXTIP" : null;
   }
 
   function anonIpv4(t: string): string {
-    return t.replace(IPV4_RE, (ip) => {
-      if (isInternalIp(ip)) return assign("IP", ip);
-      if (!policy.maskPublicIps || !isMaskableIpv4(ip)) return ip;
-      return assign("EXTIP", ip);
+    return tails.gluedRaw(t).replace(IPV4_RE, (ip) => {
+      const cat = ipv4Category(ip);
+      return cat ? assign(cat, ip) : ip;
     });
   }
 
@@ -599,10 +592,12 @@ export function createAnonymizer(
   // A custom group set aside with an IPv6 address (#2950) is minted here too: the custom pass's place.
   function anonCustom(t: string, literals: readonly Reserved[]): string {
     const spans = findCustomSpans(t, compiled);
-    const out = spans.length === 0 ? t : forcing(() => spliceSpans(t, spans, mintRaw));
+    const mark = (c: AnonTokenCategory, m: string) => tails.mark(mintRaw(c, m), m); // #2995: joins late
+    const out = spans.length === 0 ? t : forcing(() => spliceSpans(t, spans, mark));
     return out.replace(IPV6_PLACEHOLDER_RE, (m, i: string, at: number, w: string) => {
-      const e = literals[Number(i)];
-      return e?.category ? ends.ended(mintCustom(e.category, e.value), e.value, at, at + m.length, w) : m;
+      const e = literals[Number(i)]; // a group before a glued IPv4 is minted with it, late (#2995)
+      if (!e?.category || gluedIpv4At(w, at + m.length)) return m;
+      return ends.ended(tails.mark(mintCustom(e.category, e.value), e.value), e.value, at, at + m.length, w);
     });
   }
   function mintRaw(cat: AnonTokenCategory, m: string): string {
@@ -663,8 +658,9 @@ export function createAnonymizer(
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
     if (policy.categories.USER) t = anonBareUsernames(t);
+    t = tails.joinMarked(t); // a custom value that ends in an address head takes its intact tail (#2995)
     if (policy.categories.IP) {
-      t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
+      t = tails.restore(t, ipv6Literals); // classify + tokenize the reserved literals
       t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
     }
     if (policy.categories.CARD) t = anonCards(t);

@@ -92,9 +92,9 @@ describe.each([true, false])("IPv6 that ends inside a dotted IPv4, maskPublicIps
     ]);
   });
 
-  it("leaves the tail as before when the phone pass reads its last octet with what follows", () => {
+  it("splits a phone number that starts in the last octet: the whole address, then the rest (#2995)", () => {
     const input = "fd00::192.168.1.100 555-0100";
-    expect(run(input, mask, { PHONE: true }).out).toBe("ANON_IP_1.168.1.ANON_PHONE_1");
+    expect(run(input, mask, { PHONE: true }).out).toBe("ANON_IP_1 ANON_PHONE_1");
     // With the phone category off nothing else reads it, and the tail joins the address.
     expect(run(input, mask).out).toBe("ANON_IP_1 555-0100");
   });
