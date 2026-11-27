@@ -403,13 +403,15 @@ export function createAnonymizer(
     bareRe = undefined;
   }
   for (const n of known.usernames ?? []) learn(n);
-  const oneWay = createOneWayCheck(policy.redactSecrets); // a name holding a glued secret (#3003)
+  const oneWay = createOneWayCheck(policy.redactSecrets); // a value holding a glued secret (#3003, #3006)
+  const guard = (cat: AnonTokenCategory, v: string) => (oneWay(v) ? SECRET_SENTINEL : assign(cat, v));
   const knownHosts = new Set(known.hosts.map((h) => h.toLowerCase()));
   const qualifier = (q: string) => assign(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q);
   const savedUsers = new Set<string>(); // USER tokens, by how they were minted
   const cutUsers = new Set<string>(); // masked in place, never learned or saved (replaceUserPaths)
   function userToken(user: string, saved = true): string {
     if (saved) learn(user);
+    if (oneWay(user)) return SECRET_SENTINEL; // the qualifier keeps its own token
     const token = assign("USER", user);
     (saved ? savedUsers : cutUsers).add(token);
     return token;
@@ -418,7 +420,7 @@ export function createAnonymizer(
     if (!forceCustom && suppressed.has(account.toLowerCase())) return account; // analyst veto
     // A registry hive, Windows principal, tactic folder or Folder\file.exe is not a person: it keeps
     // its old single whole-value token and teaches the bare pass nothing ("evil.exe", "Execution").
-    if (isNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account))) return assign("USER", account);
+    if (isNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account))) return guard("USER", account);
     const slash = account.lastIndexOf("\\");
     if (slash > 0) return `${qualifier(account.slice(0, slash))}\\${userToken(account.slice(slash + 1))}`;
     const at = account.indexOf("@");
@@ -441,20 +443,19 @@ export function createAnonymizer(
       if (insideSuppressedAccount(whole, offset, m, suppressed)) return m;
       spans ??= preservedSpans(whole);
       if (strictlyInside(spans, offset, m.length)) return m;
-      return oneWay(m) ? SECRET_SENTINEL : assign("USER", m);
+      return guard("USER", m);
     });
   }
   const EMAIL_RE =
     /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
   function anonEmails(t: string): string {
-    return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
+    // A local part holding a secret hides the whole address, or an external domain would go out in clear.
+    return t.replace(EMAIL_RE, (m) =>
+      oneWay(m.slice(0, m.lastIndexOf("@"))) ? SECRET_SENTINEL : assign("EMAIL", m),
+    );
   }
   function anonUserPaths(t: string): string {
-    return replaceUserPaths(t, (name, saved) => {
-      if (!oneWay(name)) return userToken(name, saved);
-      if (saved) learn(name); // its bare repeats go one way too
-      return SECRET_SENTINEL;
-    });
+    return replaceUserPaths(t, userToken);
   }
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
   // FromBase64String('…'). Tokenize ONLY the blob — the verb + flag stay visible as tradecraft signal,
@@ -603,7 +604,7 @@ export function createAnonymizer(
     });
   }
   function mintRaw(cat: AnonTokenCategory, m: string): string {
-    return cat === "USER" ? accountToken(m) : assign(cat, m);
+    return cat === "USER" ? accountToken(m) : guard(cat, m); // #2952: one way when it holds a secret
   }
   function mintCustom(cat: AnonTokenCategory, m: string): string {
     return forcing(() => mintRaw(cat, m));
