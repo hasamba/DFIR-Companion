@@ -1,5 +1,6 @@
 import { BlockList, isIP } from "node:net";
 import { escapeRegExp } from "./regexEscape.js";
+import { MAX_LITERAL, longValueMatcher, type LongValueMatcher } from "./anonChunkedMatch.js";
 import type { AnonTokenCategory, CustomEntity } from "./anonymize.js";
 
 // Custom-entity matching rules: the exact-value regex every known-value pass uses, plus the
@@ -21,7 +22,9 @@ import type { AnonTokenCategory, CustomEntity } from "./anonymize.js";
 // does not fire glued inside a longer word either. A suffix like that is what a wildcard
 // pattern ("*.corp.local") is for. The `u` flag is safe with escapeRegExp — see regexEscape.ts.
 export const UNICODE_WORD = "\\p{L}\\p{N}_";
-export function exactValueRegExp(value: string): RegExp {
+// A value longer than MAX_LITERAL is matched in chunks: one long literal overflowed the stack (#3009).
+export function exactValueRegExp(value: string): RegExp | LongValueMatcher {
+  if (value.length > MAX_LITERAL) return longValueMatcher(value);
   return new RegExp(`(?<![${UNICODE_WORD}])${escapeRegExp(value)}(?![${UNICODE_WORD}])`, "giu");
 }
 
@@ -37,6 +40,8 @@ export function anonPairKey(category: string, value: string): string {
 
 const IP_CATEGORIES: ReadonlySet<AnonTokenCategory> = new Set(["IP", "EXTIP"]);
 const MIN_PATTERN_LITERAL = 3;
+// A longer pattern is refused: its literal part compiled as one regex overflowed the stack (#3009).
+export const MAX_PATTERN_LENGTH = 1024;
 const MIN_PREFIX = { 4: 8, 6: 16 } as const;
 const MAX_PREFIX = { 4: 32, 6: 128 } as const;
 
@@ -80,6 +85,8 @@ export function parseCidr(value: string): { addr: string; prefix: number; family
 
 function wildcardProblem(value: string): string | null {
   if (!value.includes("*")) return "A pattern needs a * (for example prod-* or *-dev).";
+  if (value.length > MAX_PATTERN_LENGTH)
+    return `A pattern can be at most ${MAX_PATTERN_LENGTH} characters long.`;
   if (value.includes("**")) return "Two * in a row mean nothing more than one. Use a single *.";
   const literal = value.replace(/\*/g, "");
   if (literal.trim().length < MIN_PATTERN_LITERAL)

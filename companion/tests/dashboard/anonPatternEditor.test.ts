@@ -40,6 +40,7 @@ describe("anonCustomEntry", () => {
     ["10.20.*", "IP"],
     ["10.0.0.0/7", "IP"],
     ["10.20.0.0/40", "IP"],
+    ["abcdefghij".repeat(110) + "*", "HOST"], // over the 1024-character cap (#3009)
   ])("refuses %s (%s) with a reason", (value, category) => {
     expect(typeof anonCustomEntry(value, category)).toBe("string");
   });

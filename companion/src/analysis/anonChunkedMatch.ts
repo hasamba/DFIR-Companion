@@ -42,3 +42,42 @@ export function nextLong(text: string, ln: LongLiteral, from: number): [number, 
   }
   return null;
 }
+
+type Span = [number, number];
+export type ValueReplacer = (m: string, offset: number, whole: string) => string;
+/** A whole-word, case-insensitive matcher of ONE long value, usable with String.replace (#3009). */
+export interface LongValueMatcher {
+  next(text: string, from: number): Span | null;
+  [Symbol.replace](text: string, fn: ValueReplacer): string;
+}
+export function longValueMatcher(value: string): LongValueMatcher {
+  const ln = compileLong(value);
+  const next = (text: string, from: number) => nextLong(text, ln, from);
+  return {
+    next,
+    [Symbol.replace](text: string, fn: ValueReplacer): string {
+      let out = "";
+      let at = 0;
+      for (let m = next(text, 0); m; m = next(text, at)) {
+        out += text.slice(at, m[0]) + fn(text.slice(m[0], m[1]), m[0], text);
+        at = m[1];
+      }
+      return out + text.slice(at);
+    },
+  };
+}
+
+/** The first [start, end) of a global RegExp or a long-value matcher at or after `from`, or null. */
+export function nextSpan(re: RegExp | LongValueMatcher, text: string, from: number): Span | null {
+  if (!(re instanceof RegExp)) return re.next(text, from);
+  re.lastIndex = from;
+  const m = re.exec(text);
+  return m ? [m.index, m.index + m[0].length] : null;
+}
+
+/** The [start, end) spans a global replace with `re` visits, in text order. */
+export function matchSpans(re: RegExp | LongValueMatcher, text: string): Span[] {
+  const out: Span[] = [];
+  for (let m = nextSpan(re, text, 0); m; m = nextSpan(re, text, Math.max(m[1], m[0] + 1))) out.push(m);
+  return out;
+}

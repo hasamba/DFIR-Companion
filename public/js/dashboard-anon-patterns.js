@@ -5,6 +5,7 @@
 (function () {
   const IP_CATS = new Set(["IP", "EXTIP"]);
   const MIN_LITERAL = 3;
+  const MAX_PATTERN = 1024; // anonPatterns.ts MAX_PATTERN_LENGTH (#3009)
   let reports = []; // [{ value, category, count, sample, invalid? }] from GET /anon-entities
 
   function anonPatternShape(value, category) {
@@ -24,6 +25,7 @@
   }
 
   function wildcardProblem(value) {
+    if (value.length > MAX_PATTERN) return `A pattern can be at most ${MAX_PATTERN} characters long.`;
     if (value.includes("**")) return "Two * in a row mean nothing more than one. Use a single *.";
     const literal = value.replace(/\*/g, "");
     if (literal.trim().length < MIN_LITERAL)
