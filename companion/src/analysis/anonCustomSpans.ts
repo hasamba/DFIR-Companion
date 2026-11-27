@@ -8,6 +8,7 @@ import {
   wildcardMatchSpan,
   wildcardRegExp,
 } from "./anonPatterns.js";
+import { findIpv6Literals } from "./anonIpv6Scan.js";
 
 // One pass over the original text for every custom entity — exact values, wildcard patterns and
 // IPv4 ranges (#2946). Matching each kind in turn over already-tokenized text could tokenize a
@@ -86,6 +87,13 @@ function rangeCandidates(text: string, c: CompiledCustom): Candidate[] {
       const category = rangeCategory(c, ip);
       if (category) out.push({ start: m.index ?? 0, end: (m.index ?? 0) + ip.length, category, kind: 2 });
     }
+  // IPV6_CANDIDATE cannot start inside a word, so "node12:fd00::1" and "Evtx::fd00::1" need the IP
+  // category's scan (#2953). splitUnknown=false: a complete address outside the range stays whole.
+  const inRange = (ip: string) => (rangeCategory(c, ip) ? "keep" : null);
+  for (const s of findIpv6Literals(text, inRange, false)) {
+    const category = rangeCategory(c, text.slice(s.start, s.end));
+    if (category) out.push({ ...s, category, kind: 2 });
+  }
   return out;
 }
 
