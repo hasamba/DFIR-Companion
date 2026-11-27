@@ -276,6 +276,11 @@ describe("previewDiff — possible leaks are guesses on the masked side (#2531)"
       expect(ipv6Warnings("x dc:2001:db8::1Method y", false)).toEqual([]);
       expect(ipv6Warnings("os Server2016::Foo up", true)).toEqual([]);
     });
+
+    // #2976: the joined address after a word:: separator fails closed, so it is flagged on both settings.
+    it.each([true, false])("flags the address after Evtx:: as one, maskPublicIps=%s", (mask) => {
+      expect(ipv6Warnings("x Evtx::a00:5::1 y", mask)).toEqual([["a00:5::1", "ip"]]);
+    });
   });
 
   it("warnings survive the fallback", () => {
