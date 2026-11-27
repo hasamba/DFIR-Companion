@@ -681,6 +681,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // #2408: an SO-CRATES analysis still running when the server stopped is resumed.
     socratesRecovery: scheduledSocratesRecovery,
     regradeUngraded: app.locals.regradeUngraded, // #2891: rows a crash or a failed tagger left waiting
+    custodyStore, // #3022: the demo-mode reseed records the demo's custody
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.

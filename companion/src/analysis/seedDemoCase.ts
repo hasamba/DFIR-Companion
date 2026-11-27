@@ -4,6 +4,7 @@ import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { demoCaseDir, caseAlreadySeeded } from "./seedDemoPaths.js";
 import { demoBackfillEvent, demoBackfillFindings } from "./seedDemoBackfillFixtures.js";
+import { writeDemoEvidence, type DemoSeedOutput } from "./seedDemoEvidence.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export const DEMO_CASE_ID_DEFAULT = "demo";
@@ -14,11 +15,8 @@ export interface SeedDemoOptions {
   generation?: string; // the case incarnation to write into case.json (#1855, CaseStore.withSeedSlot)
 }
 
-export interface SeedDemoResult {
-  caseId: string;
-  caseDir: string;
-  stats: { findings: number; iocs: number; events: number; superTimelineEvents: number };
-}
+/** `custody` is recorded by the caller once the seed slot closes (seedDemoWithCustody). */
+export type SeedDemoResult = DemoSeedOutput;
 
 async function write(p: string, data: unknown): Promise<void> {
   await writeFile(p, JSON.stringify(data, null, 2), "utf8");
@@ -2588,7 +2586,7 @@ export async function seedDemoCase(
       triggerType: "timer",
       contentHash: "0000000000000000",
       isDuplicate: false,
-      screenshotFile: "000001_2026-05-22T09:00:00.000Z_New-Tab.webp",
+      screenshotFile: "000001_2026-05-22T09-00-00-000Z_New-Tab.webp",
     },
     {
       caseId,
@@ -2599,7 +2597,7 @@ export async function seedDemoCase(
       triggerType: "navigation",
       contentHash: "fea4b2c81e3d5f70",
       isDuplicate: false,
-      screenshotFile: "000002_2026-05-22T09:05:00.000Z_DFIR-Companion.webp",
+      screenshotFile: "000002_2026-05-22T09-05-00-000Z_DFIR-Companion.webp",
     },
     {
       caseId,
@@ -2610,7 +2608,7 @@ export async function seedDemoCase(
       triggerType: "navigation",
       contentHash: "a1b2c3d4e5f60718",
       isDuplicate: false,
-      screenshotFile: "000003_2026-05-22T09:30:00.000Z_VirusTotal.webp",
+      screenshotFile: "000003_2026-05-22T09-30-00-000Z_VirusTotal.webp",
     },
     {
       caseId,
@@ -2621,7 +2619,7 @@ export async function seedDemoCase(
       triggerType: "timer",
       contentHash: "fea4b2c81e3d5f72",
       isDuplicate: false,
-      screenshotFile: "000004_2026-05-22T10:00:00.000Z_DFIR-Companion.webp",
+      screenshotFile: "000004_2026-05-22T10-00-00-000Z_DFIR-Companion.webp",
     },
     {
       caseId,
@@ -2632,59 +2630,11 @@ export async function seedDemoCase(
       triggerType: "tab_switch",
       contentHash: "fea4b2c81e3d5f74",
       isDuplicate: false,
-      screenshotFile: "000005_2026-05-22T10:30:00.000Z_DFIR-Companion.webp",
+      screenshotFile: "000005_2026-05-22T10-30-00-000Z_DFIR-Companion.webp",
     },
   ];
-  await writeFile(
-    join(caseDir, "metadata", "captures.jsonl"),
-    capturesLines.map((c) => JSON.stringify(c)).join("\n") + "\n",
-    "utf8",
-  );
-
-  // ── metadata/imports.jsonl ─────────────────────────────────────────────────
-  const importLines = [
-    {
-      caseId,
-      sequenceNumber: 1,
-      importedAt: "2026-05-22T10:00:00.000Z",
-      filename: "thor-wkstn-jsmith.json",
-      originalName: "thor_scan_WKSTN-JSMITH.json",
-      rows: 87,
-      bytes: 134500,
-    },
-    {
-      caseId,
-      sequenceNumber: 2,
-      importedAt: "2026-05-22T10:05:00.000Z",
-      filename: "suricata-eve-may15-22.json",
-      originalName: "suricata_eve.json",
-      rows: 312,
-      bytes: 891200,
-    },
-    {
-      caseId,
-      sequenceNumber: 3,
-      importedAt: "2026-05-22T10:10:00.000Z",
-      filename: "crowdstrike-siem-export.json",
-      originalName: "cs_siem_export_may22.json",
-      rows: 204,
-      bytes: 520000,
-    },
-    {
-      caseId,
-      sequenceNumber: 4,
-      importedAt: "2026-05-22T10:30:00.000Z",
-      filename: "dc01-evtx-chainsaw.json",
-      originalName: "DC01_chainsaw_hunt.json",
-      rows: 143,
-      bytes: 287000,
-    },
-  ];
-  await writeFile(
-    join(caseDir, "metadata", "imports.jsonl"),
-    importLines.map((i) => JSON.stringify(i)).join("\n") + "\n",
-    "utf8",
-  );
+  // ── screenshots/, imports/ and their capture/import logs (seedDemoEvidence.ts, #3022) ──
+  const custody = await writeDemoEvidence(caseDir, caseId, capturesLines);
 
   return {
     caseId,
@@ -2695,5 +2645,6 @@ export async function seedDemoCase(
       events: forensicTimeline.length,
       superTimelineEvents: superTimeline.length,
     },
+    custody,
   };
 }

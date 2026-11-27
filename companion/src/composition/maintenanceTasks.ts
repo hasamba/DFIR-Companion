@@ -26,6 +26,7 @@ import type { Notifier } from "../integrations/notify/notifyDispatch.js";
 import type { AuditExporter } from "../integrations/audit/auditExporter.js";
 import { logLine, warnLine } from "../logging/serverLogger.js";
 import { DEMO_CASE_ID_DEFAULT, seedDemoCase } from "../analysis/seedDemoCase.js";
+import { seedDemoWithCustody } from "../analysis/seedDemoEvidence.js";
 import { resolveUpdateMode, UPDATE_CHECK_THROTTLE_MS } from "../analysis/updateCheck.js";
 import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
@@ -271,6 +272,8 @@ export interface PostListenDeps {
   socratesRecovery?: () => Promise<void>;
   /** #2891: re-grade the rows a crash or a failed tagger left waiting (composition/ungradedRecovery.ts). */
   regradeUngraded?: () => Promise<void>;
+  /** Records the demo case's chain of custody after each demo-mode reseed (#3022). */
+  custodyStore?: CustodyStore;
 }
 
 /**
@@ -290,6 +293,7 @@ export function startPostListenTasks({
   cloudCollectRecoverers = [],
   socratesRecovery,
   regradeUngraded,
+  custodyStore,
 }: PostListenDeps): void {
   void startCloudCollectRecovery({ demoMode, recoverers: cloudCollectRecoverers, log: logLine });
   // #2858: cases created before ids were recorded at create get recorded now, so removing one of their
@@ -317,10 +321,10 @@ export function startPostListenTasks({
       // Through the seed slot (#1855): the reset is a new incarnation, and old work is shut out.
       const reseed = (_isNew: boolean, generation: string) =>
         seedDemoCase(store.casesRoot, { force: true, generation });
-      void store
-        .withSeedSlot(DEMO_CASE_ID_DEFAULT, reseed)
+      void seedDemoWithCustody(store, custodyStore, DEMO_CASE_ID_DEFAULT, reseed) // custody: #3022
         .then((r) => {
           serverSets.linkToDefault?.(DEMO_CASE_ID_DEFAULT, { keepExisting: true });
+          if (r.custodyError) warnLine(`[demo] demo case custody was not recorded: ${r.custodyError}`);
           logLine(
             `[demo] demo case seeded — ${r.stats.events} events, ${r.stats.findings} findings, ${r.stats.iocs} IOCs`,
           );
