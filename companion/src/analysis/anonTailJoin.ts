@@ -19,6 +19,8 @@ export type ReservedLiteral = { value: string; category: AnonTokenCategory | nul
 // A value whose last group can open a dotted IPv4 ("fd00::192" of "fd00::192.168.1.5").
 const CUT_OCTET = /:\d{1,3}$/;
 const FIFTH_OCTET = /^\.\d/;
+// A saved value that already holds a whole dotted tail ("fd00::10.10.0.0", #3011).
+const DOTTED_V6 = /:\d{1,3}(?:\.\d{1,3}){3}$/;
 const GLUED_IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}\b/;
 // A placeholder, then a cut dotted tail or a glued IPv4 address.
 const RESTORE_RE = /IPV6:(\d+)(?:((?:\.\d{1,3}){3}\b)|(\d{1,3}(?:\.\d{1,3}){3}\b))?/g;
@@ -224,13 +226,16 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const value = d.real(token);
     const cat = SINGLE_TOKEN.exec(token)?.[1] as AnonTokenCategory | undefined;
     if (value === undefined || !cat) return t;
-    const re = new RegExp(`(?<![A-Za-z0-9_])${token}((?:\\.\\d{1,3}){3})\\b`, "g");
+    // A saved dotted-tail value takes every extra intact octet, or the rest would go in clear (#3011).
+    const dotted = DOTTED_V6.test(value) && isIPv6(value);
+    const octets = dotted ? "+" : "{3}";
+    const re = new RegExp(`(?<![A-Za-z0-9_])${token}((?:\\.\\d{1,3})${octets})\\b`, "g");
     return consume(t, re, (m) => {
       const tail = m[1];
       const end = m.index + m[0].length;
       const next = t.slice(end, end + NEXT);
       const keep = { out: m[0], skip: 0 };
-      if (FIFTH_OCTET.test(next) || !endsInAddress(value, tail)) return keep;
+      if (!dotted && (FIFTH_OCTET.test(next) || !endsInAddress(value, tail))) return keep;
       const c = crossing(tail, next, d.crossers());
       if (!phoneOk(c, d.suppressed)) return keep;
       const whole = unsaved(
@@ -243,7 +248,8 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
   }
   return {
     mark: (result, value) => {
-      if (SINGLE_TOKEN.test(result) && CUT_OCTET.test(value)) marks.add(result);
+      const head = CUT_OCTET.test(value) || DOTTED_V6.test(value);
+      if (SINGLE_TOKEN.test(result) && head) marks.add(result);
       return result;
     },
     joinMarked: (t) => {
