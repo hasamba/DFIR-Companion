@@ -61,6 +61,9 @@ export type ProfileNameMint = (name: string, saved: boolean) => string;
  * sentinel and never matched, and a saved part could cut other text on a later call (a "5" cut a
  * SID, a ",end" masked ",end" everywhere). The sentinel stays between the parts and shows as
  * [REDACTED_SECRET]. The built-in-name check is skipped for the parts, so "Public" stays masked.
+ *
+ * A very short or digit-only name ("5", "12", "ab") is masked in place but never learned or saved
+ * either (#3014): as a saved value it came back on a later call and cut SIDs and addresses apart.
  */
 export function replaceUserPaths(text: string, mint: ProfileNameMint): string {
   return text.replace(USER_PATH_RE, (m, prefix: string, name: string, at: number, w: string) => {
@@ -69,7 +72,7 @@ export function replaceUserPaths(text: string, mint: ProfileNameMint): string {
       return prefix + parts.join(SECRET_MARK);
     }
     const cut = w[at + m.length] === IPV6_PLACEHOLDER_START;
-    return !cut && WELL_KNOWN_PROFILE.test(name) ? m : prefix + mint(name, !cut);
+    return !cut && WELL_KNOWN_PROFILE.test(name) ? m : prefix + mint(name, !cut && !isFragmentName(name));
   });
 }
 /** Mint a part of a split profile name, keeping its edge spaces outside the token. */
@@ -155,11 +158,16 @@ export const COMMON_USERNAME_WORDS: ReadonlySet<string> = new Set([
   "ipv6",
 ]);
 
+/** True for a name too short or all digits: it would match inside SIDs, addresses and numbers. */
+export function isFragmentName(name: string): boolean {
+  const n = name.trim();
+  return n.length < MIN_BARE_USERNAME_LENGTH || /^\d+$/.test(n);
+}
+
 /** True for a name that must never be replaced as a bare word (common word, too short, numeric). */
 export function isGuardedUsername(name: string): boolean {
   const n = name.trim().toLowerCase();
-  if (n.length < MIN_BARE_USERNAME_LENGTH) return true;
-  if (/^\d+$/.test(n)) return true;
+  if (isFragmentName(n)) return true;
   if (/^[._$-]|[._-]$/.test(n)) return true; // an edge of punctuation cannot anchor a whole-word match
   return COMMON_USERNAME_WORDS.has(n);
 }
