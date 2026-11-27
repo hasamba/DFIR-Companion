@@ -43,6 +43,44 @@ export function jevPresidioCheck(
   return (state) => pipeline.presidioGateMasked(caseId, jevScanText(state), known, masker.control);
 }
 
+/** The missed-evidence review's gate: one pass over every batch first, then the send-time check. */
+export interface JevReviewPresidioGate {
+  /** Scan every state the review will send, before the first leaves; ONE hold for all (#2980). */
+  preflight(states: readonly unknown[]): Promise<void>;
+  /** The send-time check (#1952). Text the preflight cleared is not scanned twice; anything else is. */
+  check(state: unknown): Promise<void>;
+}
+
+/**
+ * The review's gate (#2980). The send-time check alone stopped the review once per batch that held
+ * a new value, each stop minutes in and after billing the batches before it. The preflight asks the
+ * same question of every planned batch up front. A cleared text is skipped at send time: the same
+ * text against the same known-entity snapshot gets the same answer, so a rescan only doubled the
+ * Presidio work. A text the preflight never saw (a split half after a size refusal) is scanned.
+ */
+export function jevReviewPresidioGate(
+  options: RouteContext["options"],
+  caseId: string,
+  masker: CaseMasker,
+): JevReviewPresidioGate {
+  const pipeline = options.pipeline;
+  const known = masker.known;
+  if (!known || !pipeline) return { preflight: async () => {}, check: async () => {} };
+  let cleared: ReadonlySet<string> = new Set();
+  return {
+    preflight: async (states) => {
+      const texts = states.map(jevScanText);
+      await pipeline.presidioGateMasked(caseId, texts, known, masker.control);
+      cleared = new Set(texts);
+    },
+    check: async (state) => {
+      const text = jevScanText(state);
+      if (cleared.has(text)) return;
+      await pipeline.presidioGateMasked(caseId, text, known, masker.control);
+    },
+  };
+}
+
 /** Answer a Presidio stop the way every other AI route does; false when `err` is not one. */
 export function sendJevPresidioStop(
   res: Response,

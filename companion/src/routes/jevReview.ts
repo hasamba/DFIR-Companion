@@ -4,7 +4,7 @@ import { logActivity } from "../analysis/activityLog.js";
 import { assertAnonRevision } from "../analysis/anonRevision.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
-import { gradeEvents, type JevReviewSpend } from "../analysis/ai/jev/jevGrader.js";
+import { gradeEvents, reviewBatchStates, type JevReviewSpend } from "../analysis/ai/jev/jevGrader.js";
 import { createDecisionModelCatalog } from "../analysis/ai/jev/decisionModels.js";
 import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
 import { getServerLogger } from "../logging/serverLogger.js";
@@ -12,7 +12,7 @@ import { markAiBudgetUnspent } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 import { jevMasking } from "./jevMasking.js";
 import { reviewCaseContext, selectReviewRows } from "./jevReviewPrepare.js";
-import { jevPresidioCheck, sendJevPresidioStop } from "./jevPresidioGate.js";
+import { jevReviewPresidioGate, sendJevPresidioStop } from "./jevPresidioGate.js";
 import { runAsRouteJob, type RecordRouteJobFailure } from "./routeJob.js";
 
 /**
@@ -149,8 +149,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     // a Hide or a settings change. Batches already sent cannot be recalled; the rest are not sent.
     const { maskedAt, masker } = await jevMasking(store, caseId, state);
     const mask = masker.mask;
-    // The Presidio gate on each masked batch, right before it leaves (#1952).
-    const presidioCheck = jevPresidioCheck(options, caseId, masker);
+    // The Presidio gate: every batch up front, then each one right before it leaves (#1952, #2980).
+    const presidio = jevReviewPresidioGate(options, caseId, masker);
 
     // The analyst's choice in Settings (DFIR_JEV_GRADING), read per request like every Jev setting.
     const shape = settings.shape;
@@ -161,11 +161,15 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       // the decomposed shape will ask about them, and inside the try: a damaged marker file must not
       // break a single-shape review that never reads it.
       const caseContext = await reviewCaseContext(store, caseId, shape, mask);
+      // #2980: before ANY batch is sent or billed, so every new value is held in one stop.
+      await presidio.preflight(
+        reviewBatchStates(candidates, mask, { batchSize: settings.batchSize, shape, caseContext }),
+      );
       const result = await gradeEvents(
         {
           mask,
           ask: (jevState, questions, halted) =>
-            presidioCheck(jevState).then(() =>
+            presidio.check(jevState).then(() =>
               askJev(
                 {
                   baseUrl: settings.baseUrl,

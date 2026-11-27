@@ -466,6 +466,48 @@ interface AskPlan {
   readonly caseContext: string;
 }
 
+/** The row keys one batch's request uses, R000 upward — the same for the review and its preflight. */
+function batchIds(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `R${String(i).padStart(3, "0")}`);
+}
+
+/**
+ * The batches a review sends, planned by what each will COST. `batchSize` survives as an upper bound
+ * on rows so a case of tiny rows cannot build a request of 500 questions; the budget is what binds.
+ */
+function planReviewBatches(
+  events: readonly ForensicEvent[],
+  mask: (text: string) => string,
+  batchSize: number,
+  plan: AskPlan,
+): ForensicEvent[][] {
+  const rendered = events.map((e) => renderRowForJev(e, mask));
+  return planBatches(
+    rendered,
+    Math.floor(batchSize),
+    BATCH_TOKEN_BUDGET,
+    plan.shape,
+    plan.shape === "decomposed" ? plan.caseContext : "",
+  ).map((idx) => idx.map((i) => events[i]));
+}
+
+/**
+ * Every `state` a review of `events` will send, one per planned batch, exactly as `gradeEvents`
+ * builds them (#2980). The route scans all of them for Presidio before the first batch leaves, so
+ * the analyst approves every new value in one round instead of once per batch that carries one. A
+ * batch split after a size refusal sends a subset of its state, which the send-time check scans.
+ */
+export function reviewBatchStates(
+  events: readonly ForensicEvent[],
+  mask: (text: string) => string,
+  opts: { batchSize: number; shape?: JevGradeShape; caseContext?: string },
+): Record<string, unknown>[] {
+  const plan: AskPlan = { shape: opts.shape ?? JEV_DEFAULT_SHAPE, caseContext: opts.caseContext ?? "" };
+  return planReviewBatches(events, mask, opts.batchSize, plan).map((batch) =>
+    batchJevState(batch, batchIds(batch.length), mask, plan.shape, plan.caseContext),
+  );
+}
+
 /**
  * The Jev `state` one batch sends: the rows rendered with `mask`, plus the analyst's context when the
  * decomposed shape asks about it. The review's request and the AI preview's clear view (#2515, built
@@ -614,17 +656,8 @@ export async function gradeEvents(
   if (!Number.isFinite(opts.batchSize) || opts.batchSize < 1) {
     throw new Error(`Decision model batch size must be a positive number, got ${String(opts.batchSize)}`);
   }
-  // Planned by what each batch will COST. `batchSize` survives as an upper bound on rows so a
-  // case of tiny rows cannot build a request of 500 questions; the budget is what actually binds.
-  const rendered = events.map((e) => renderRowForJev(e, deps.mask));
   const plan: AskPlan = { shape: opts.shape ?? JEV_DEFAULT_SHAPE, caseContext: opts.caseContext ?? "" };
-  const batches = planBatches(
-    rendered,
-    Math.floor(opts.batchSize),
-    BATCH_TOKEN_BUDGET,
-    plan.shape,
-    plan.shape === "decomposed" ? plan.caseContext : "",
-  ).map((idx) => idx.map((i) => events[i]));
+  const batches = planReviewBatches(events, deps.mask, opts.batchSize, plan);
   const spend: RunSpend = { byModel: new Map(), inputTokens: 0, outputTokens: 0, requests: 0 };
 
   // Bounded concurrency, because the analyst can now ask for the whole archive. Sequential
@@ -643,7 +676,7 @@ export async function gradeEvents(
       const next = queue.shift();
       if (!next) return;
       const [index, batch] = next;
-      const ids = batch.map((_, i) => `R${String(i).padStart(3, "0")}`);
+      const ids = batchIds(batch.length);
       // A batch failure rejects the whole review rather than returning what it has: a review that
       // silently covered half the rows and said nothing is the coverage lie this panel exists to
       // avoid making.
