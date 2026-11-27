@@ -55,6 +55,23 @@ function stickyAt(text: string, at: number): RegExpExecArray | null {
 
 const endsToken = (text: string, end: number) => ENDS_TOKEN.test(text.slice(end, end + 1));
 
+// A real unique-local (fc00::/7) or link-local (fe80::/10) address opens with a FOUR-digit group;
+// a fingerprint or MAC byte run has two-digit groups, a code namespace like "fd::" too (#2956).
+const WIDE_START = /^[0-9a-f]{4}:/i;
+
+interface RetryRules {
+  // Only a hit that opens with a four-digit group counts (the colon run went on past the match).
+  wideOnly: boolean;
+  // A "keep" hit that opens with a four-digit group may be followed by a word character, as an
+  // unglued "fd00::1xyz" already is: "node12:fd00::1xyz" fails CLOSED too. Never by ":".
+  wordAfter: boolean;
+}
+
+function hitEndsWell(text: string, end: number, hit: string, keep: boolean, rules: RetryRules): boolean {
+  if (endsToken(text, end)) return true;
+  return rules.wordAfter && keep && WIDE_START.test(hit) && WORD_CHAR.test(text.slice(end, end + 1));
+}
+
 // Re-run the detector at every group start inside the rejected match, on the FULL text (the real
 // address can run past the rejected match's end). The first acceptable one is the longest.
 function retryInside(
@@ -62,15 +79,36 @@ function retryInside(
   m: Ipv6Span,
   accept: (g: Ipv6Grade) => boolean,
   grade: (ip: string) => Ipv6Grade,
+  rules: RetryRules,
 ): Ipv6Span | null {
   for (let p = m.start + 1; p < m.end; p++) {
     if (text[p - 1] !== ":") continue; // a group start, or the "::" of "node12:::1"
     const hit = stickyAt(text, p);
-    if (!hit) continue;
+    if (!hit || (rules.wideOnly && !WIDE_START.test(hit[0]))) continue;
     const end = p + hit[0].length;
-    if (endsToken(text, end) && accept(grade(hit[0]))) return { start: p, end };
+    const g = grade(hit[0]);
+    if (accept(g) && hitEndsWell(text, end, hit[0], g === "keep", rules)) return { start: p, end };
   }
   return null;
+}
+
+// Why a rejected match is worth retrying, or null. A rejected match whose colon run goes on
+// ("dc:fd00:1:2:3:4:5:6:7": the detector took the first eight groups) may hold a full internal
+// address after a label; only a four-digit-opening "keep" hit counts there, so byte runs and a
+// public-looking tail stay whole (#2956).
+function retryRules(
+  text: string,
+  m: Ipv6Span,
+  g: Ipv6Grade,
+  glued: boolean,
+  opts: { splitUnknown: boolean; wholeToken: boolean },
+): (RetryRules & { keepOnly: boolean }) | null {
+  const unknown = opts.splitUnknown && g === null;
+  const hasGap = text.slice(m.start, m.end).includes("::");
+  const runGoesOn = unknown && text[m.end] === ":";
+  if (!glued && !(unknown && hasGap) && !runGoesOn) return null;
+  const onlyRun = !glued && !(unknown && hasGap);
+  return { wideOnly: onlyRun, wordAfter: !opts.wholeToken, keepOnly: onlyRun };
 }
 
 /**
@@ -78,8 +116,10 @@ function retryInside(
  *
  * `splitUnknown`: also retry inside a rejected match that is not glued to a word but contains
  * "::" — "dc:fd00::1" is a valid literal in unallocated space, and the internal address after the
- * label must fail closed. A custom-range caller passes false: a complete address outside the
- * range ("2001:fd00::1") must never have part of it hidden.
+ * label must fail closed; so is a rejected eight-group match whose colon run goes on
+ * ("dc:fd00:1:2:3:4:5:6:7"), for a four-digit-opening internal address only. A custom-range
+ * caller passes false: a complete address outside the range ("2001:fd00::1") must never have part
+ * of it hidden.
  * `wholeToken`: a match that does not end the token ("fd00::beef" out of "fd00::beefMethod") is
  * rejected. The IP category passes false so an internal address keeps failing CLOSED.
  */
@@ -99,9 +139,11 @@ export function findIpv6Literals(
       continue;
     }
     const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
-    if (glued || (opts.splitUnknown && g === null && m[0].includes("::"))) {
+    const rules = retryRules(text, span, g, glued, opts);
+    if (rules) {
       // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
-      const inner = retryInside(text, span, (x) => x === "keep" || (g === null && x !== null), grade);
+      const ok = (x: Ipv6Grade) => x === "keep" || (!rules.keepOnly && g === null && x !== null);
+      const inner = retryInside(text, span, ok, grade, rules);
       if (inner) {
         out.push(inner);
         re.lastIndex = inner.end; // the real address can run past the rejected match

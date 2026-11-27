@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Three more IPv6 spellings masked** — an internal address after a label and followed by a word (`node12:fd00::1xyz`), or a label followed by a full eight-group address, is tokenized with the IP category on; fingerprints, MACs and timestamps stay untouched (closes #2956)
 - **IPv6 addresses ending in :: or joined to a word masked** — with IP masking on, `fd00:abcd::` and the address in `node12:fd00::1` are tokenized instead of reaching the AI in clear; custom IPv6 ranges catch the joined form too (closes #2953)
 - **Custom entity that contains a secret hidden whole** — with secret redaction on, a custom value that contains or touches a secret goes out as one one-way `[REDACTED_SECRET]`, never partly in clear (closes #2952)
 - **Custom entity that contains an IPv6 address hidden whole** — with IP masking on, a custom value enclosing or overlapping an IPv6 address is one token instead of leaving the text around the address in clear (closes #2950)
