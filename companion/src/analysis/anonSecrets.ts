@@ -64,7 +64,11 @@ const BARE_BASIC_RE = /\b(Basic[ \t]{1,4})([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9
 const BARE_BEARER_RE = /\b(Bearer[ \t]{1,4})([A-Za-z0-9._~+/=-]{8,})/gi;
 
 // URL userinfo password (scheme://user:pass@host) — the password only; the user is tokenized later.
-const URL_USERINFO_RE = /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi;
+// A match starts only where a run of scheme characters starts (#2967). Without that, a long run with
+// no "://" (a long word, dotted words with no space) was rescanned to its end from every position in
+// it: quadratic. A leading digit or "+.-" before the scheme's first letter joins group 1 and is
+// written back unchanged, so the output is what the unanchored form gave.
+const URL_USERINFO_RE = /(?<![a-z0-9+.-])([0-9+.-]*[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi;
 
 function redactPrefixed(text: string): string {
   let out = text.replace(SLACK_WEBHOOK_RE, (_m, host: string) => `${host}${SECRET_PLACEHOLDER}`);

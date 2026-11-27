@@ -194,6 +194,27 @@ describe("redactSecretText — forensic evidence survives", () => {
     // 32x the baseline + 25 CPU-ms, so timer grain and runner load cannot fail it (#2444).
     expectLinearScan("redactSecretText", (n) => redactSecretText(bait(n).repeat(20)), 2000);
   });
+
+  // #2967: a long run of URL-scheme characters with no "://" (a word, or dotted words with no
+  // space between them) was rescanned from every start inside it by the userinfo pattern.
+  it("scans a long run of scheme characters in linear time", () => {
+    const pw = ["hunter2", "fake"].join("-");
+    const runs = (n: number) => Array.from({ length: n }, (_, i) => `q${i}.w${i}`);
+    expectLinearScan("letter run", (n) => redactSecretText(`${"a".repeat(n)} token=${pw} end`), 40000);
+    expectLinearScan("dotted run", (n) => redactSecretText(`token=${pw} ${runs(n).join("")} e`), 4000);
+  });
+
+  it("still redacts a URL password after any lead-in to the scheme", () => {
+    const pw = ["hunter2", "fake"].join("-");
+    for (const lead of ["", "x", "1", "9.", "-+", "aa1-", "a".repeat(300), "a".repeat(300) + "1"]) {
+      for (const scheme of ["https", "svn+ssh", "a1.b-c"]) {
+        const url = `${lead}${scheme}://svc:${pw}@db.example.test/x`;
+        expect(redactSecretText(`go ${url} ok`)).toBe(`go ${url.replace(pw, PH)} ok`);
+      }
+    }
+    const two = `a://u:${pw}@h.test://v:${pw}@k.test`;
+    expect(redactSecretText(two)).toBe(two.split(pw).join(PH));
+  });
 });
 
 describe("anonymizer — secrets win over tokenizing", () => {
