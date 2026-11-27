@@ -1747,7 +1747,7 @@ export async function seedDemoCase(
       "6. **Discovery (T1016 / T1018)** — May 15 11:30: nltest + net user /domain enumeration.\n" +
       "7. **Lateral Movement to DC01 (T1021.002)** — May 16 08:22: PsExec to DC01.\n" +
       "8. **Credential Dumping (T1003.001)** — May 16 08:45: Mimikatz sekurlsa::logonpasswords on DC01.\n" +
-      "9. **Lateral Movement to FS01 + WEB01 (T1021.002)** — May 16 10:00.\n" +
+      "9. **Lateral Movement to FS01 + WEB01 (T1021.002)** — May 16 10:00–10:05: PsExec with dumped domain admin credentials to FS01 and WEB01.\n" +
       "10. **Collection & Staging (T1560.001)** — May 17 14:30–15:45: 2.3 GB archived to data.7z.\n" +
       "11. **Exfiltration (T1048.002)** — May 18 02:31: HTTPS exfiltration ~847 MB.\n" +
       "12. **Impact Attempt (T1486)** — May 19 22:15–22:17: Ransomware detected and quarantined by EDR.",
