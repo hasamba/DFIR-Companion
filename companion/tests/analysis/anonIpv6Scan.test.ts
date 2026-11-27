@@ -174,6 +174,10 @@ describe.each([true, false])("IPv6 false positives, maskPublicIps=%s (#2959)", (
     ["fd:fe80::1_eth0", "fd:ANON_IP_1_eth0", "fe80::1"],
     ["fd:fd00::1:", "fd:ANON_IP_1:", "fd00::1"],
     ["xfc:fd00::1Method", "xfc:ANON_IP_1Method", "fd00::1"],
+    ["fd0:fd00::1Method", "fd0:ANON_IP_1Method", "fd00::1"],
+    ["fc0:fe80::1_eth0", "fc0:ANON_IP_1_eth0", "fe80::1"],
+    ["fd0:::1Method", "fd0:ANON_IP_1Method", "::1"],
+    ["fd0:64:ff9b::a00:1_eth0", "fd0:ANON_IP_1_eth0", "64:ff9b::a00:1"],
   ])("still tokenizes the internal address in %s", (input, expected, value) => {
     const { out, back, pairs } = run(input, mask);
     expect(out).toBe(expected);

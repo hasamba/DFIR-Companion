@@ -108,9 +108,9 @@ export function findIpv6Literals(
       // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
       // only an internal address, so a fingerprint never mints a public token (#2959).
       const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
-      // A match that opens with a short "fd"/"fc" group was hidden whole before #2959; an internal
+      // A match that opens with a 2-3 digit "fd"/"fc" group was hidden whole before #2959; an internal
       // address inside it ("fd:fd00::1Method") must stay hidden even where it runs into a word.
-      const shortUla = g === null && /^f[cd]:/i.test(m[0]);
+      const shortUla = g === null && /^f[cd][0-9a-f]?:/i.test(m[0]);
       const inner = retryInside(text, span, ok, grade, shortUla);
       if (inner) {
         out.push(inner);
