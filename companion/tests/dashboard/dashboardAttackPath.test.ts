@@ -90,6 +90,25 @@ describe("attackSteps", () => {
     expect(steps.map((x) => x.title)).toEqual(["Credential Access", "Defense Evasion"]);
   });
 
+  it("hides a description with no letter or digit in it (#3023)", () => {
+    const item = (n: number, tail: string) => `${n}. **Lateral Movement (T1021.002)** — May 16 10:00${tail}`;
+    for (const tail of [".", ": …", ": — —", ":", ": /"]) {
+      const steps = ap.attackSteps(
+        `${item(1, tail)}\n2. **Impact (T1486)** — May 16 11:00: Files encrypted.`,
+      );
+      expect(steps).toHaveLength(2);
+      expect(steps[0]).toMatchObject({ title: "Lateral Movement", time: "10:00", desc: "", summary: "" });
+      expect(steps[1].desc).toBe("Files encrypted.");
+    }
+  });
+
+  it("keeps a description written in any script, or in digits alone (#3023)", () => {
+    const steps = ap.attackSteps(
+      "1. **Execution (T1059)** — May 15 09:48: Запуск powershell.\n2. **Impact (T1486)** — May 15 10:00: 847",
+    );
+    expect(steps.map((x) => x.desc)).toEqual(["Запуск powershell.", "847"]);
+  });
+
   it("finds no steps in plain prose", () => {
     expect(ap.attackSteps("The attacker got in and moved around.")).toHaveLength(0);
   });
@@ -156,6 +175,19 @@ describe("attackPathHtml", () => {
     expect(html).toContain('</span><span class="ap-txt">The script copied tools</span>');
     expect(html).not.toMatch(/<span class="ap-txt"><\/span>/);
     expect(html).not.toMatch(/<b><\/b>/);
+  });
+
+  it("prints no description row for a step whose description is only punctuation (#3023)", () => {
+    const text =
+      "1. **Lateral Movement to DC01 (T1021.002)** — May 16 08:22: PsExec to DC01.\n" +
+      "2. **Lateral Movement (T1021.002)** — May 16 10:00.\n" +
+      "3. **Impact (T1486)** — May 16 11:00: …";
+    const steps = ap.attackPathHtml(text, EVENTS, "steps");
+    expect(steps).toContain('<div class="ap-desc">PsExec to DC01.</div>');
+    expect(steps.match(/class="ap-desc"/g)).toHaveLength(1);
+    expect(steps).not.toMatch(/<div class="ap-desc">[.…\s]*<\/div>/);
+    const hosts = ap.attackPathHtml(text, EVENTS, "hosts");
+    expect(hosts).not.toMatch(/<span class="ap-txt">[.…\s]*<\/span>/);
   });
 
   it("escapes the model's text", () => {
