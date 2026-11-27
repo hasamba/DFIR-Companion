@@ -32,24 +32,37 @@ import { dualWriteAndTagPaged } from "./importSettlePaged.js";
 import { runUnlocked } from "./importSettleRows.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 import { gradeArmOf } from "./importSettle.js";
+import type { countsFromSettled } from "../analysis/importNotification.js";
 
 /**
  * The settle of a page or summary. A failure still fails the collection, but only after the rows the
  * import merged are stamped, dual-written and tagged (#2891): the next demote is case-wide, and a
  * Resume that would settle them may never come. Called inside the engine's import section.
  */
-function settleCollected(
+async function settleCollected(
   ctx: RouteContext,
   caseId: string,
   baseline: ImportBaseline,
   label: string,
   preGraded?: readonly string[],
+  onSettled?: CollectSettled,
 ) {
   const settle = routeSettleDeps(ctx);
-  if (!settle) return Promise.resolve(null);
+  if (!settle) return null;
   const target = { caseId, storedNames: [label], tag: "cloud-collect" };
-  return settleImportOrRecoverThenThrow(settle, target, baseline, label, preGraded ? { preGraded } : {});
+  const settled = await settleImportOrRecoverThenThrow(
+    settle,
+    target,
+    baseline,
+    label,
+    preGraded ? { preGraded } : {},
+  );
+  onSettled?.(settled);
+  return settled;
 }
+
+/** Called with each page's and summary's settle, so the run can total what it added (#2978). */
+export type CollectSettled = (settled: Parameters<typeof countsFromSettled>[0]) => void;
 
 function stateStoreOf(ctx: RouteContext) {
   const store = ctx.options.stateStore;
@@ -85,6 +98,7 @@ async function importSummary(
   caseId: string,
   req: CollectionSummaryRequest,
   signal?: AbortSignal,
+  onSettled?: CollectSettled,
 ): Promise<void> {
   const store = stateStoreOf(ctx);
   const pipeline = ctx.options.pipeline;
@@ -116,13 +130,13 @@ async function importSummary(
           )
         ).gradedIds
       : [];
-    await settleCollected(ctx, caseId, baseline, req.label, preGraded);
+    await settleCollected(ctx, caseId, baseline, req.label, preGraded, onSettled);
   } finally {
     await releaseImportBaseline(store, baseline);
   }
 }
 
-export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
+export function caseCollectImporter(ctx: RouteContext, onSettled?: CollectSettled): CollectPageImporter {
   const store = stateStoreOf(ctx);
   return {
     withImportSection: (caseId, fn) => ctx.importLock.runExclusive(caseId, fn),
@@ -130,7 +144,7 @@ export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
     forgetAttempt: ledgerForget(ctx.options.cloudRecordStore),
     settleLanded: (caseId, label) => settleLanded(ctx, caseId, label),
     summarizesPerCollection,
-    importSummary: (caseId, req, signal) => importSummary(ctx, caseId, req, signal),
+    importSummary: (caseId, req, signal) => importSummary(ctx, caseId, req, signal, onSettled),
     importPage: async (caseId, page, signal) => {
       // Inside the section the engine holds: the baseline is only honest while it is held.
       const baseline = await captureImportBaseline(store, caseId, {
@@ -145,7 +159,7 @@ export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
           coverageGroup: collectionCoverageGroup(page.collectionId),
           ...(signal ? { signal } : {}),
         });
-        await settleCollected(ctx, caseId, baseline, page.label);
+        await settleCollected(ctx, caseId, baseline, page.label, undefined, onSettled);
       } finally {
         await releaseImportBaseline(store, baseline);
       }

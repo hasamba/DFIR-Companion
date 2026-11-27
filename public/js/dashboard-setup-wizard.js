@@ -139,7 +139,7 @@
         '<div class="wiz-field"><label>Chat ID<span class="wiz-hint">A @channel name, or a numeric id like -1001234567890. Check it points where you mean — notifications carry case content.</span></label>' +
         '<input id="wizNotifTgChatId" list="wizNotifTgChats" placeholder="Chat ID" autocomplete="off" /><datalist id="wizNotifTgChats"></datalist></div>' +
         "</div>" +
-        '<div class="wiz-field"><label>Minimum severity<span class="wiz-hint">Only findings at or above this severity notify (milestones always do).</span></label>' +
+        '<div class="wiz-field"><label>Minimum severity<span class="wiz-hint">Only findings at or above this severity notify (milestones and finished imports always do).</span></label>' +
         '<select id="wizNotifSev"><option value="Critical">Critical</option><option value="High" selected>High</option><option value="Medium">Medium</option><option value="Low">Low</option><option value="Info">Info</option></select></div>' +
         '<div class="wiz-actions"><button class="wiz-btn" id="wizNotifSaveBtn">Add &amp; send test</button>' +
         '<span data-safe-style="font-size:11px;color:var(--text-muted)">Adds a channel + posts a test message. Manage all channels in Settings → Notifications.</span></div>' +

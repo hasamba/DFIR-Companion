@@ -80,7 +80,8 @@ import { createSweepRecorder } from "./dropIncremental.js";
 import { createDropLinkReporter, type DropLink } from "./dropLinkReport.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
-import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
+import type { NotificationEvent } from "../analysis/notifications.js";
+import { notifyDropSweep, notifyDropSweepFailed } from "./dropImportNotify.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import { siemFallbackWarning } from "../routes/importNotes.js";
@@ -731,21 +732,12 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       await recorder.flush(tally);
 
       logLine(`[drop] ${caseId}: ${imported.length} imported, ${failed.length} failed`);
-      if (failed.length > 0) {
-        const lines = failed.slice(0, 20).map((x) => `• ${x.relpath} — ${x.reason}`);
-        dispatchNotify(
-          milestoneEvent(
-            caseId,
-            `Drop import: ${imported.length} imported, ${failed.length} failed`,
-            lines,
-            new Date().toISOString(),
-          ),
-        );
-      }
+      notifyDropSweep(dispatchNotify, caseId, tally); // #2978: under the channel's imports toggle
     } catch (err) {
       // A sweep-level failure (listing/meta/store I/O) must terminate the job — a job stuck "running"
       // forever is a worse UI bug than the original invisibility. No-op if it already finished.
       if (job) await options.jobManager?.fail(job.jobId, err);
+      notifyDropSweepFailed(dispatchNotify, caseId, err);
       throw err;
     } finally {
       scanning.delete(caseId);

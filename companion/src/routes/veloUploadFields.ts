@@ -1,3 +1,4 @@
+import type { ImportCounts } from "../analysis/importNotification.js";
 /**
  * What an uploads-only Velociraptor import (/import-external on an "Uploaded Files" URL) reports
  * back: the per-file outcome lists, plus a warning for each file whose JSON kind was only guessed
@@ -9,6 +10,8 @@ export interface VeloUploadsOutcome {
   imported: string[];
   skipped: string[];
   warnings?: Array<{ file: string; warning: string }>;
+  /** What the uploads added, for the "import finished" message (#2978); absent when nothing settled. */
+  counts?: ImportCounts;
 }
 
 /** The per-file fields of the route's answer. `warnings` is present only when a file was a guess. */

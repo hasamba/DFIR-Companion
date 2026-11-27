@@ -31,6 +31,7 @@ import { buildImportBase, evictedInImport, importJobParameters } from "./importB
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
 import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { settleImportOrRecover } from "./importRowRecovery.js";
+import { trackRouteImport } from "./importNotify.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 import { cloudStream } from "./importCloudStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
@@ -332,6 +333,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // checkpoint it pushes describe only its own work — see routes/importSection.ts.
       let baseline: ImportBaseline | null = null;
       let section: ImportSection | null = null;
+      const outcome = trackRouteImport(ctx, caseId, storedName); // #2978: the "import finished" message
       const run = async (): Promise<unknown> => {
         await tracking.start();
         section = await beginImportSection(
@@ -355,6 +357,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           // from the POST-demote state. No snapshot / a failed settle → WARN + recovery (#2890).
           const settleTarget = { caseId, storedNames: [storedName], tag: "import" };
           const settled = await settleImportOrRecover(settleDeps, settleTarget, baseline, storedName);
+          outcome.settled(settled);
           if (baseline && settled) {
             try {
               const { superTimelineAddedCount, superTimelineEvicted } = settled;
@@ -449,6 +452,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             /* non-fatal */
           }
           if (job) await options.jobManager?.finish(job.jobId);
+          outcome.finished();
           resynthesizeInBackground(caseId);
         })
         .catch(async (err) => {
@@ -462,6 +466,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             return;
           }
           if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });
+          outcome.failed(err, Boolean(job));
           recordImportFailure(caseId, kind, storedName, err, debug);
           recordAiError(caseId, "import", err);
           options.onAiStatus?.(caseId, {

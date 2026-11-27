@@ -23,6 +23,8 @@ import { truncatedRecord } from "../analysis/veloKeptSpan.js";
 import type { SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { ImportMemoryRefusedError } from "../analysis/importMemoryGuard.js";
+import { addCounts, artifactGaps, notifyImport, type ImportCounts } from "../analysis/importNotification.js";
+import type { NotificationEvent } from "../analysis/notifications.js";
 
 /**
  * The status a failed external import answers with. A memory-guard refusal (#1874) is the server
@@ -45,6 +47,8 @@ export interface ExternalImportDeps {
   jobManager?: JobManager;
   onAiStatus?: (caseId: string, event: ExternalImportStatus) => void;
   logLine: (msg: string) => void;
+  /** The case notifier: one "import finished" message per external import (#2978). */
+  dispatchNotify?: (event: NotificationEvent) => void;
   /** The diagnostics ring, which logs the FAILED line itself (#1438); without it the loop logs one. */
   recordImportFailure?: (
     caseId: string,
@@ -74,6 +78,8 @@ export interface ArtifactHooks {
 export interface ArtifactIngestResult {
   addedEvents: number;
   addedIocs: number;
+  /** What the artifact added, for the "import finished" message (#2978). */
+  counts?: ImportCounts;
 }
 
 /**
@@ -150,6 +156,7 @@ export async function importArtifactsUnderJob(
   const unread: UnreadArtifact[] = [];
   let addedEvents = 0;
   let addedIocs = 0;
+  let counts: ImportCounts | undefined;
   let inFlight: ImportDebugRecorder | undefined; // the artifact being ingested, for a failure (#1736)
   try {
     for (const [index, artifact] of artifacts.entries()) {
@@ -213,9 +220,19 @@ export async function importArtifactsUnderJob(
       await hooks.onDone?.(artifact, done);
       addedEvents += one.addedEvents;
       addedIocs += one.addedIocs;
+      counts = addCounts(counts, one.counts);
     }
     report(total, `${imported.length}/${total} artifact(s) imported`);
     if (job) await deps.jobManager?.finish(job.jobId);
+    const gaps = artifactGaps({ failed, truncated, unread });
+    const files = { files: total, ...(gaps.length ? { failed: gaps } : {}), ...(counts ? { counts } : {}) };
+    // Every artifact failed to read: nothing was imported, so this import failed (#2978).
+    const ok = imported.length > 0 || failed.length < total;
+    notifyImport(
+      deps.dispatchNotify,
+      { caseId, source: label, ok, ...files, ...(ok ? {} : { reason: "no artifact could be read" }) },
+      deps.logLine,
+    );
     deps.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
   } catch (err) {
     // A cancel is the analyst's decision, not a failure: one "cancelled" line, no ring entry.
@@ -234,6 +251,12 @@ export async function importArtifactsUnderJob(
         { caseId },
       );
     if (job) await deps.jobManager?.fail(job.jobId, err);
+    if ((err as Error).name !== "AbortError")
+      notifyImport(
+        deps.dispatchNotify,
+        { caseId, source: label, ok: false, reason: (err as Error).message },
+        deps.logLine,
+      );
     deps.onAiStatus?.(caseId, {
       status: "error",
       at: new Date().toISOString(),

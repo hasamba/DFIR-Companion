@@ -805,6 +805,7 @@ describe("ntfEventsSummary", () => {
       "findings, milestones, mentions",
     );
     expect(v.ntfEventsSummary({ playbook_update: true })).toBe("playbook");
+    expect(v.ntfEventsSummary({ import: true, milestone: true })).toBe("milestones, imports"); // #2978
   });
 
   it("says nothing rather than rendering an empty list", () => {

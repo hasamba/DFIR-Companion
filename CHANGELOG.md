@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Import finished notifications** — channels get one message when an upload, drop-folder batch, Velociraptor import, cloud collection or SIEM search ends: events added, High/Critical count, failed files; new per-channel imports toggle, on by default for new and existing channels (closes #2978)
 - **Wildcard patterns and IP ranges in custom entities** — `prod-*`, `*-dev`, `svc_*` in any category and CIDR ranges such as `10.20.0.0/16` for IPs, each match its own token, with a known-match count and refusal of too-broad entries (closes #2946)
 - **Edit, archive and delete threat-hunt clients** — the instance administrator renames a client and changes its default server set, archives or unarchives it (linked cases keep working, shown "(archived)"), and deletes one only when no case is linked; every action is audited (closes #2941)
 - **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)

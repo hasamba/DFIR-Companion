@@ -22,7 +22,7 @@ function channel(over: Partial<NotificationChannel>): NotificationChannel {
     name: "Chan",
     enabled: true,
     minSeverity: "Info",
-    events: { critical_finding: true, playbook_update: true, milestone: true, mention: true },
+    events: { critical_finding: true, playbook_update: true, milestone: true, mention: true, import: false },
     createdAt: "2026-10-13T00:00:00Z",
     updatedAt: "2026-10-13T00:00:00Z",
     ...over,

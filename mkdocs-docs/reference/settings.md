@@ -805,7 +805,7 @@ Each preset is fully customisable — reorder panels, set a severity floor, cap 
 
 ## Notifications
 
-Alert channels for new findings, playbook updates, and investigation milestones:
+Alert channels for new findings, playbook updates, investigation milestones, and finished imports:
 
 - **Slack** webhook
 - **Microsoft Teams** webhook
@@ -817,8 +817,17 @@ Alert channels for new findings, playbook updates, and investigation milestones:
 Each channel has:
 
 - A minimum severity threshold (only notify for High+, for example)
-- Per-event-type toggles (findings / playbook / milestones)
+- Per-event-type toggles (findings / playbook / milestones / mentions / imports)
 - A **Test** button that sends a test message
+
+**Imports** sends one message when an evidence import ends: a dashboard upload, a drop-folder batch,
+a Velociraptor collection or external import, a cloud collection, or a CrowdStrike NG-SIEM search.
+The message names what was imported, how many events it added to the forensic timeline, how many of
+those are graded High or Critical, and any files or artifacts that failed. A failed import sends
+"Import failed" with the reason. Screenshots (dropped images or extension captures) and live monitors
+send nothing. Drop-folder messages do not include event counts. Like milestones, import messages
+ignore the minimum severity. The toggle is on for new channels and for channels saved before it
+existed.
 
 !!! info
     Notification configs are stored in a global config file (not `.env`) and webhook URLs are redacted in all API responses.

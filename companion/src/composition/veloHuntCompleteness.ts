@@ -1,6 +1,8 @@
 import { runHuntSettle } from "../analysis/huntSettleHook.js";
 import type { VeloHuntJob, VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { warnLine } from "../logging/serverLogger.js";
+import { notifyHuntFailed } from "./veloImportNotify.js";
+import { createCaseNotifier, type CaseNotifierDeps } from "./caseNotifier.js";
 
 /**
  * A hunt collect's completeness, and hunt grading that sees it (#2670).
@@ -94,6 +96,9 @@ export interface CollectFailureIo {
   onVeloHunt?: (caseId: string) => void;
   onAiStatus?: (caseId: string, event: { status: "error"; at: string; detail: string }) => void;
   markConclusionsOutOfDate?: (caseId: string, reason: string) => Promise<void>;
+  /** The app's notifier settings: a collect that failed as a whole says so on the channels (#2978). */
+  notifier?: CaseNotifierDeps["notifier"];
+  dashboardBaseUrl?: string;
 }
 
 /**
@@ -128,7 +133,12 @@ export async function collectFailed(
     warnLine(
       `[velociraptor] ${caseId} hunt ${huntId}: the collect kept its result, but a later step failed: ${message}`,
     );
-  else await quietly("recording the failed collect", () => io.record(err));
+  else {
+    await quietly("recording the failed collect", () => io.record(err));
+    await quietly("the import notification", () =>
+      notifyHuntFailed(createCaseNotifier(io), caseId, huntId, message),
+    );
+  }
   await quietly("writing the hunt job after a failure", async () => {
     const cur = await io.huntStore.get(caseId, huntId);
     // A forgotten hunt is not written back.
