@@ -17,18 +17,21 @@ function setup(opts: {
   before: ReturnType<typeof rec>[];
   after?: ReturnType<typeof rec>[];
   refreshFails?: boolean;
+  truncatedAfter?: boolean;
   refuse?: (id: string) => Error | undefined;
 }) {
   let clients = opts.before;
+  let truncated = false;
   const calls: string[] = [];
   let refreshes = 0;
-  const store = { load: async () => ({ updatedAt: "", clients }) };
+  const store = { load: async () => ({ updatedAt: "", clients, truncated }) };
   const ctx = {
     options: { clientInventoryFor: () => store },
     refreshVeloClients: async () => {
       refreshes++;
       if (opts.refreshFails) throw new Error("server unreachable");
       clients = opts.after ?? clients;
+      truncated = opts.truncatedAfter === true;
       return clients.length;
     },
   } as unknown as RouteContext;
@@ -78,6 +81,16 @@ describe("collectHostResolved with a stale client id", () => {
     });
     // Neither refreshed record matches HOST exactly; both match its first label "web01".
     await expect(s.run()).rejects.toBeInstanceOf(VeloClientNotKnownError);
+    expect(s.calls).toEqual([STALE]);
+  });
+
+  it("does not retry on a new id when the refreshed list was cut at the row limit", async () => {
+    const s = setup({
+      before: [rec(STALE)],
+      after: [rec(FRESH, "web01.lab.example.test")],
+      truncatedAfter: true,
+    });
+    await expect(s.run()).rejects.toThrow(/cut at the row limit/);
     expect(s.calls).toEqual([STALE]);
   });
 

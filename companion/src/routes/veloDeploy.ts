@@ -96,18 +96,26 @@ export async function collectHostResolved(
 async function refreshedClientId(
   ctx: RouteContext,
   setId: string,
-  store: { load(): Promise<{ clients: VeloClientRecord[] }> },
+  store: { load(): Promise<{ clients: VeloClientRecord[]; truncated?: boolean }> },
   hostname: string,
   refused: VeloClientNotKnownError,
 ): Promise<string> {
   let ids: string[];
+  let cut = false;
   try {
     await ctx.refreshVeloClients(setId);
-    ids = hostClientIds((await store.load()).clients, hostname);
+    const inv = await store.load();
+    ids = hostClientIds(inv.clients, hostname);
+    cut = inv.truncated === true; // a cut list cannot prove the replacement is the only match
   } catch (err) {
     throw refused.withNote(`Refreshing the client list failed: ${(err as Error).message}.`);
   }
-  if (ids.length === 1 && ids[0] !== refused.clientId) return ids[0];
+  if (ids.length === 1 && ids[0] !== refused.clientId) {
+    if (!cut) return ids[0];
+    throw refused.withNote(
+      "The refreshed client list was cut at the row limit, so no replacement was picked.",
+    );
+  }
   if (ids.length === 0)
     throw refused.withNote(`After a refresh, ${hostname} is no longer in the client list.`);
   if (ids.length > 1)
