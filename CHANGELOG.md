@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI Agent Forensics report section** — the case report lists each run launched in or filed into the case, with inventory, matched text, both hashes, Sigma coverage and the rules not run (closes #2721)
 
 ### Fixed
+- **Internal IPv6 after a label masked in two more spellings** — `node12:::1xyz` and, with a custom range, `dc:fd00::1` no longer reach the AI in clear (closes #2965)
+- **Link-local means a four-digit fe80–febf group** — `fe8:` byte runs keep their spelling; real link-local addresses stay masked (closes #2966)
+- **IPv6 before a closing colon masked** — `peer fd00::1: reset` and `dc:fd00::1:` are masked on the IP and custom-range paths (closes #2968)
+- **IPv6 ending in :: before a closing colon masked** — `route fe80::: down` no longer sends the address in clear (closes #2969)
+- **Public IPv6 after a short label masked** — with public masking on, `dc:2001:db8::1Method` is masked (closes #2971)
+- **URL password redaction stays fast on long lines** — the userinfo pattern is anchored, output unchanged (closes #2967)
+- **Runtime-store test teardowns stop racing the job ledger** — no more random ENOTEMPTY in CI (closes #2964)
 
 - **Three more IPv6 spellings masked** — an internal address after a label and followed by a word (`node12:fd00::1xyz`), or a label followed by a full eight-group address, is tokenized with the IP category on; fingerprints, MACs and timestamps stay untouched (closes #2956)
 - **Fingerprints and words kept out of IP tokens** — a byte run starting `fd:`/`fc:` and `Server2016::Foo` keep their spelling; real internal addresses are still hidden (closes #2959)
