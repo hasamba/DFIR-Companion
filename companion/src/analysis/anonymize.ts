@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
-import { exactValueRegExp } from "./anonPatterns.js";
+import { anonPairKey, exactValueRegExp } from "./anonPatterns.js";
 import {
   compileCustomEntities,
   findCustomSpans,
@@ -320,7 +320,7 @@ export function createAnonymizer(
   seed: readonly AnonPair[] = [], // Watson D6: earlier sends' pairs keep their tokens; new ones number above
   identity: readonly AnonPair[] = [], // #2657: the case's saved map — which token, never whether to mask
 ): Anonymizer {
-  const keyOf = (p: AnonPair) => `${p.category}:${p.value.toLowerCase()}`;
+  const keyOf = (p: AnonPair) => anonPairKey(p.category, p.value);
   const toToken = new Map(seed.map((p) => [keyOf(p), p.token])); // CAT:real
   const toReal = new Map(seed.map((p) => [p.token, p.value])); // token (UPPER) -> real value
   const savedByKey = new Map(identity.map((p) => [keyOf(p), p.token]));
@@ -345,7 +345,7 @@ export function createAnonymizer(
   function assign(category: AnonTokenCategory, raw: string): string {
     const real = expandMintedTokens(raw, TOKEN_RE.source, (tok) => toReal.get(tok)); // #2991: no nesting
     if (!forceCustom && real === raw && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
-    const key = `${category}:${real.toLowerCase()}`;
+    const key = anonPairKey(category, real);
     const existing = toToken.get(key);
     if (existing) return existing;
     const kept = savedByKey.get(key);
@@ -367,7 +367,7 @@ export function createAnonymizer(
     const seen = new Set<string>();
     for (const [token, real] of toReal) {
       const cat = (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory;
-      const key = `${cat}:${real.toLowerCase()}`;
+      const key = anonPairKey(cat, real);
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({ value: real, category: cat });

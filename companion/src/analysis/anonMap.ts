@@ -5,6 +5,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import { ALL_TOKEN_CATEGORIES, type AnonPair, type Anonymizer } from "./anonymize.js";
+import { anonPairKey } from "./anonPatterns.js";
 
 // #2657: the case's masking map. The first time a value is masked for an AI call, its token is saved
 // here, and every later call for the case gets the same token for it: ANON_HOST_3 means one host in
@@ -48,7 +49,7 @@ export function sanitizeAnonMap(raw: unknown): AnonPair[] {
     if (!p || typeof p.token !== "string" || typeof p.value !== "string" || p.value === "") continue;
     const cat = TOKEN_RE.exec(p.token)?.[1];
     if (!cat || cat !== p.category || !CATEGORIES.has(cat)) continue;
-    const key = `${cat}:${p.value.toLowerCase()}`;
+    const key = anonPairKey(cat, p.value);
     if (tokens.has(p.token) || values.has(key)) continue;
     tokens.add(p.token);
     values.add(key);

@@ -25,6 +25,16 @@ export function exactValueRegExp(value: string): RegExp {
   return new RegExp(`(?<![${UNICODE_WORD}])${escapeRegExp(value)}(?![${UNICODE_WORD}])`, "giu");
 }
 
+/**
+ * The key a (category, real value) pair gets one token by. Case-insensitive identifiers (hosts,
+ * domains, accounts, emails…) fold to one entity, one token. Base64 is case-sensitive, so an encoded
+ * command keeps its exact case: two payloads that differ only in letter case are two values (#2996).
+ * It decides which token only — never whether a value is masked.
+ */
+export function anonPairKey(category: string, value: string): string {
+  return `${category}:${category === "CMD" ? value : value.toLowerCase()}`;
+}
+
 const IP_CATEGORIES: ReadonlySet<AnonTokenCategory> = new Set(["IP", "EXTIP"]);
 const MIN_PATTERN_LITERAL = 3;
 const MIN_PREFIX = { 4: 8, 6: 16 } as const;
