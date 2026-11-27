@@ -70,7 +70,7 @@ class CollectReply implements AIProvider {
   }
 }
 
-async function harness(opts: { failLaunch?: boolean; watson?: boolean } = {}) {
+async function harness(opts: { failLaunch?: boolean; watson?: boolean; clientNotKnown?: boolean } = {}) {
   const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-velo-deploy-")));
   await store.createCase({ caseId: CASE, name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(store);
@@ -85,6 +85,10 @@ async function harness(opts: { failLaunch?: boolean; watson?: boolean } = {}) {
     }
     if (p.includes("collect_client(")) {
       launches.push("collection");
+      if (opts.clientNotKnown) {
+        const stderr = `[INFO] t collect_client: Client ID ${CLIENT} not known in this org: NotFoundError`;
+        return { rows: [{ Flow: null }], raw: "", stderr };
+      }
       return { rows: [{ Flow: { flow_id: "F.SAMPLE1" } }], raw: "" };
     }
     return { rows: [], raw: "" };
@@ -92,7 +96,7 @@ async function harness(opts: { failLaunch?: boolean; watson?: boolean } = {}) {
   const chatStore = new WatsonChatStore(store);
   const activity = new ActivityLogStore(store);
   const outcomes = new HuntOutcomeStore(store);
-  const inventory = { load: async () => ({ updatedAt: "", clients: CLIENTS }) };
+  const inventory = { load: async () => ({ updatedAt: "", clients: CLIENTS }), save: async () => {} };
   const stateLock = new StateLock();
   const aiCostStore = new AiCostStore(store);
   const fake = new CollectReply();
@@ -287,6 +291,19 @@ describe("Watson velo_launch through the deploy path", () => {
       .send({ outcome: "retry" });
     expect(retry.status).toBe(200);
     expect(retry.body.chat.proposals[0].status).toBe("pending");
+  });
+
+  it("a client id Velociraptor does not know returns the proposal to pending: nothing ran (#2986)", async () => {
+    const h = await harness({ clientNotKnown: true });
+    await seed(h.chatStore, proposal({ mode: "collection" }));
+    const res = await apply(h.app);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/Nothing ran/);
+    expect(res.body.error).toMatch(/does not know client/);
+    expect(res.body.error).not.toMatch(/download URL/);
+    expect(h.launches).toEqual(["collection"]); // the refresh gave the same id, so no retry
+    const stored = (await h.chatStore.load(CASE)).proposals[0];
+    expect(stored.status).toBe("pending");
   });
 
   it("refuses an analyst deploy-hunt that claims source watson", async () => {
