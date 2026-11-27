@@ -138,7 +138,10 @@ export function coverCustomSecrets(
 ): string {
   const located = locateSecrets(text, redacted, sentinel);
   const secrets = located ?? [changedWindow(text, redacted)];
-  const inside = (c: Interval) => secrets.some((s) => s.sure.start <= c.start && c.end <= s.sure.end);
+  const inside = (c: Interval) => {
+    const s = secrets[lastStartingBy(secrets, c.start)];
+    return s !== undefined && s.sure.start <= c.start && c.end <= s.sure.end;
+  };
   const pieces: Piece[] = [
     ...secrets.map((s) => ({ ...s.loose, secret: s })),
     ...custom.filter((c) => !inside(c)).map((c) => ({ start: c.start, end: c.end, custom: true })),
@@ -163,6 +166,19 @@ export function coverCustomSecrets(
     }
   }
   return out + text.slice(at);
+}
+
+// Index of the last secret whose sure interval starts at or before `at` (-1 if none). Sure intervals
+// are in text order and never overlap, so only that one can contain a span starting at `at`.
+function lastStartingBy(secrets: readonly SecretSpan[], at: number): number {
+  let lo = 0;
+  let hi = secrets.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (secrets[mid].sure.start <= at) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return hi;
 }
 
 // Pieces that overlap or touch, transitively. Touching counts: the custom pass drops a match next

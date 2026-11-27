@@ -7,6 +7,7 @@ import {
   type KnownEntities,
 } from "../../src/analysis/anonymize.js";
 import { coverCustomSecrets, locateSecrets, redactToSentinel } from "../../src/analysis/anonSecretCustom.js";
+import { previewDiff } from "../../src/analysis/ai/previewDiff.js";
 
 // #2952: with secret redaction on, a custom entity whose value contains (or touches) a secret must
 // be hidden WHOLE and one way — never partly in clear, never as a restorable token. Synthetic values
@@ -105,7 +106,10 @@ describe("custom entity that contains a secret (#2952)", () => {
 
   it("a forged IPv6 sentinel cannot hide the custom value from the secret pass", () => {
     const cred = ["abc12", "fake"].join("");
-    const { out } = mask([other(`srv01?${PW}=${cred}`)], `srv01?${PW}=${cred} z`);
+    const { out } = mask(
+      [other(`srv01?${PW}=${cred}`)],
+      `srv01${String.fromCharCode(0xe000)}?${PW}=${cred} z`,
+    );
     expect(out).not.toContain("srv01");
     expect(out).not.toContain(cred);
   });
@@ -160,6 +164,14 @@ describe("custom entity that contains a secret (#2952)", () => {
     const { out, a } = mask(custom, `login jdoe:${PW}=${SECRET} ok`, policy({}, { USER: true }));
     expect(out).toBe(`login ${R} ok`);
     noFragments(a, "jdoe", SECRET);
+  });
+
+  it("the preview marks the whole hidden span as one one-way secret", () => {
+    const text = `x ${VALUE} y`;
+    const { out, a } = mask([other(VALUE)], text);
+    const diff = previewDiff(text, out, a, policy());
+    expect(diff.mode).toBe("text");
+    expect(diff.marks).toEqual([{ c: [2, 2 + VALUE.length], m: [2, 2 + R.length], pair: -1 }]);
   });
 
   it("scales linearly with many secrets and custom matches", () => {

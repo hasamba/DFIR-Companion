@@ -2,7 +2,8 @@ import { isBasicCredential, redactCliFlagSecrets, redactKeyedSecrets } from "./a
 
 // The one-way secret pass of the anonymizer: credentials, API keys and tokens are replaced with a
 // placeholder before text reaches the AI, and NOTHING maps the placeholder back. This is the
-// counterpart of the reversible tokenizing in anonymize.ts, which calls redactSecretText().
+// counterpart of the reversible tokenizing in anonymize.ts, which calls redactSecretText() through
+// anonSecretCustom.ts (a custom value that overlaps a secret is redacted with it).
 //
 // The vendor shapes are ported from socprime/logtotal-sanitizer (src/rules/definitions/secrets.ts,
 // Apache-2.0, https://github.com/socprime/logtotal-sanitizer). Its "aggressive" high-entropy hex and
