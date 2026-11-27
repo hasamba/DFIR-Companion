@@ -89,9 +89,9 @@ describe("a dashboard tool run's import message (#3036)", { timeout: POLL_TIMEOU
     expect(sent[0]).toContain("Import finished");
     expect(sent[0]).toContain("Hayabusa");
     expect(sent[0]).toContain("Security.evtx");
-    // Counts are the settled diff's, or "not available" — never a made-up zero.
-    expect(sent[0]).toMatch(/Forensic timeline: \+\d+ event|Event counts are not available/);
-    expect(sent[0]).not.toContain("Forensic timeline: +0 events");
+    // The settled diff's real counts: the fixture's one High row (#3038), never "not available".
+    expect(sent[0]).toContain("Forensic timeline: +1 event (1 High/Critical)");
+    expect(sent[0]).not.toContain("Event counts are not available");
   });
 
   it("a tool run that fails sends one Import failed message with the reason", async () => {
@@ -121,6 +121,7 @@ describe("a dashboard tool run's import message (#3036)", { timeout: POLL_TIMEOU
     await settle();
     expect(h.importMessages()).toHaveLength(1);
     expect(h.importMessages()[0]).toContain("System.evtx");
+    expect(h.importMessages()[0]).toContain("Forensic timeline: +1 event (1 High/Critical)");
   });
 
   it("a request refused before any run sends nothing", async () => {

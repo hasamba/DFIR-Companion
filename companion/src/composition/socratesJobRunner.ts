@@ -13,6 +13,10 @@ import {
 } from "../integrations/socrates/socratesJobStore.js";
 import { pollUntilImported } from "../integrations/socrates/socratesPoller.js";
 import { recoverSocratesJobs } from "../integrations/socrates/socratesRecovery.js";
+import {
+  SocratesSettledStore,
+  type SocratesSettledMarks,
+} from "../integrations/socrates/socratesSettledStore.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { logLine, warnLine } from "../logging/serverLogger.js";
@@ -44,6 +48,8 @@ export interface SocratesJobRunnerDeps {
 
 export interface SocratesJobRunner {
   readonly jobs: SocratesJobStore;
+  /** Jobs settled as failed while their row could not be written, so no restart reports them twice (#3038). */
+  readonly settled: SocratesSettledStore;
   /**
    * Claim a job id BEFORE its row is written, so startup recovery running meanwhile never sees it
    * as orphaned and starts a second poller for it.
@@ -68,6 +74,7 @@ const RECOVERY_FAILED_MESSAGE =
 export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJobRunner {
   const { store } = deps;
   const jobs = new SocratesJobStore(store);
+  const settled = new SocratesSettledStore(store);
   // Job ids this process owns, so recovery never starts a second poller for one (#2408): `reserved`
   // covers a fresh submission between writing its row and launching, `running` a live poller.
   const reserved = new Set<string>();
@@ -196,13 +203,17 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
           store.casesRoot,
           caseId,
           async () => {
-            // Adopt the submissions a restart left unfinished, so each still sends one message.
-            const listed = await jobs.list(caseId);
-            submissions.adopt(caseId, listed);
+            // Adopt the submissions a restart left unfinished, so each still sends one message. A job
+            // an earlier start already settled as failed counts as finished (#3038). When its marks
+            // cannot be read, nothing is adopted: no message can be sent twice, and the next start
+            // tries again.
+            const marks = await settled.list(caseId);
+            const { view, blocked } = await applyMarks(caseId, await jobs.list(caseId), marks);
+            submissions.adopt(caseId, view);
             try {
-              return await recoverCase(caseId);
+              return await recoverCase(caseId, blocked);
             } finally {
-              settleUnrecovered(caseId, listed);
+              await settleUnrecovered(caseId, view);
             }
           },
           generationOf(meta),
@@ -217,10 +228,11 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
       logLine(`[socrates] after restart: ${resumed} analysis/es resumed, ${interrupted} marked interrupted`);
   }
 
-  function recoverCase(caseId: string): ReturnType<typeof recoverSocratesJobs> {
+  function recoverCase(caseId: string, blocked: ReadonlySet<string>): ReturnType<typeof recoverSocratesJobs> {
     return recoverSocratesJobs(caseId, {
       store: jobs,
-      isActive: owned,
+      // A job already settled as failed whose row still cannot be written is never resumed (#3038).
+      isActive: (jobId) => owned(jobId) || blocked.has(jobId),
       configured: () => Boolean(deps.socratesConfig()?.baseUrl),
       resume: (cid, job) => {
         const cfg = deps.socratesConfig();
@@ -234,18 +246,88 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
     });
   }
 
+  // A job an earlier start settled as failed while its row could not be written (#3038): write its
+  // final state to the row now. The job counts as finished either way, so its submission never
+  // reports it again; one whose row is still unwritable is `blocked` from being resumed.
+  async function applyMarks(
+    caseId: string,
+    listed: readonly SocratesJob[],
+    marks: SocratesSettledMarks,
+  ): Promise<{ view: SocratesJob[]; blocked: Set<string> }> {
+    const blocked = new Set<string>();
+    const done = Object.keys(marks).filter((id) => !listed.some((j) => j.jobId === id));
+    const view: SocratesJob[] = [];
+    for (const job of listed) {
+      const mark = marks[job.jobId];
+      if (!mark || isTerminalSocratesStatus(job.status)) {
+        if (mark) done.push(job.jobId);
+        view.push(job);
+        continue;
+      }
+      const failed: SocratesJob = { ...job, status: "error", error: mark.error, finishedAt: mark.settledAt };
+      try {
+        const stored = await jobs.upsert(caseId, failed);
+        done.push(job.jobId);
+        view.push(stored);
+        await closeDropLog(caseId, stored);
+      } catch (err) {
+        warnLine(`[socrates] job ${job.jobId}: still cannot record its failure: ${(err as Error).message}`);
+        blocked.add(job.jobId);
+        view.push(failed);
+      }
+    }
+    await settled
+      .prune(caseId, done)
+      .catch((err) =>
+        warnLine(`[socrates] ${caseId}: could not prune settled marks: ${(err as Error).message}`),
+      );
+    return { view, blocked };
+  }
+
   // A job recovery could not finish (its own recovery threw, or the whole case's did) and that no
   // poller now drives is settled as failed, so its submission still sends its one message (#3035).
-  // The tracker ignores a job it already settled, so this never reports one twice.
-  function settleUnrecovered(caseId: string, listed: readonly SocratesJob[]): void {
+  // The tracker ignores a job it already settled, so this never reports one twice in this process.
+  // Its failure is persisted first, so a later start does not report it again (#3038).
+  async function settleUnrecovered(caseId: string, listed: readonly SocratesJob[]): Promise<void> {
     for (const job of listed) {
       if (isTerminalSocratesStatus(job.status) || owned(job.jobId)) continue;
-      submissions.settle(caseId, { ...job, status: "error", error: RECOVERY_FAILED_MESSAGE });
+      const failed: SocratesJob = {
+        ...job,
+        status: "error",
+        error: RECOVERY_FAILED_MESSAGE,
+        finishedAt: new Date().toISOString(),
+      };
+      const persisted = await persistSettled(caseId, failed);
+      if (persisted) submissions.settle(caseId, persisted);
+    }
+  }
+
+  // The job's final row, or failing that a settled mark in the side file. When neither can be
+  // written, nothing is sent: the job stays unfinished on disk and the next start reports it, so the
+  // message is late rather than sent twice.
+  async function persistSettled(caseId: string, failed: SocratesJob): Promise<SocratesJob | null> {
+    try {
+      const stored = await jobs.upsert(caseId, failed);
+      await closeDropLog(caseId, stored);
+      return stored;
+    } catch {
+      // The row is unwritable: fall back to the side file below.
+    }
+    try {
+      await settled.mark(caseId, failed.jobId, failed.error ?? RECOVERY_FAILED_MESSAGE);
+      return failed;
+    } catch (err) {
+      warnLine(
+        `[socrates] job ${failed.jobId}: could not record its failure, so its message waits for the next ` +
+          `start: ${(err as Error).message}`,
+      );
+      return null;
     }
   }
 
   return {
     jobs,
+    settled,
     reserve: (jobId) => reserved.add(jobId),
     openSubmission: (caseId, submissionId, sourceName) => submissions.open(caseId, submissionId, sourceName),
     sealSubmission: (caseId, submissionId, note) => submissions.seal(caseId, submissionId, note),
