@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
+import type { Express } from "express";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -15,6 +16,7 @@ import type { PresidioClient } from "../../src/analysis/presidio.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
 import { AiCostStore } from "../../src/analysis/aiCost.js";
+import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #1952: the two Jev routes masked their payload but never ran the Presidio gate, so a name the
@@ -188,27 +190,51 @@ describe("the Jev routes run the Presidio gate (#1952)", () => {
     });
   }
 
-  it("still records the spend of a batch already sent when a later one is held (#2235)", async () => {
-    const savedBatch = process.env.DFIR_JEV_BATCH_SIZE;
-    process.env.DFIR_JEV_BATCH_SIZE = "1";
-    try {
-      const root = await mkdtemp(join(tmpdir(), "dfir-jev-presidio-spend-"));
+  // #2980: the gate used to run per batch, so a review stopped once for EVERY batch carrying a new
+  // value, each stop minutes in, after billing the batches before it. It now scans every batch the
+  // review will send first, and holds every new value in one approval round before anything leaves.
+  describe("one approval round per review (#2980)", () => {
+    const NAMES = ["Ann Doe", "Bob Poe", "Cy Loe"];
+    let savedBatch: string | undefined;
+    beforeEach(() => {
+      savedBatch = process.env.DFIR_JEV_BATCH_SIZE;
+      process.env.DFIR_JEV_BATCH_SIZE = "1";
+    });
+    afterEach(() => {
+      if (savedBatch === undefined) delete process.env.DFIR_JEV_BATCH_SIZE;
+      else process.env.DFIR_JEV_BATCH_SIZE = savedBatch;
+    });
+
+    // The analyst's "Hide from AI" on each held value — the real approval route.
+    async function approveAll(app: Express, values: ReadonlyArray<{ category: string; value: string }>) {
+      for (const v of values) {
+        const r = await request(app).post("/cases/c1/presidio-pending/approve").send(v);
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+      }
+      resetLimiters();
+    }
+
+    async function multiBatch() {
+      const root = await mkdtemp(join(tmpdir(), "dfir-jev-presidio-once-"));
       const cases = new CaseStore(root);
       await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
       await enableCaseAi(cases, "c1");
       const stateStore = new StateStore(cases);
       await stateStore.save(emptyState("c1"));
       const superTimelineStore = new SuperTimelineStore(cases);
+      // One clean row first, then a different new name in each later batch.
       await superTimelineStore.append("c1", [
         row("r0", "Info", "routine update check"),
-        row("r1", "Info", `logon by ${PERSON}`),
+        ...NAMES.map((n, i) => row(`r${i + 1}`, "Info", `logon by ${n}`)),
       ]);
       const client: PresidioClient = {
         analyze: async (text) => {
-          if (!text.includes(PERSON)) return [];
-          // The held batch is scanned slowly, so the clean one has already been sent and billed.
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          return [{ entityType: "PERSON", value: PERSON, score: 0.95 }];
+          scanned.push(text);
+          return NAMES.filter((n) => text.includes(n)).map((value) => ({
+            entityType: "PERSON",
+            value,
+            score: 0.95,
+          }));
         },
       };
       const pipeline = buildRuntimePipeline({
@@ -220,18 +246,45 @@ describe("the Jev routes run the Presidio gate (#1952)", () => {
       });
       const aiCostStore = new AiCostStore(cases);
       const app = createApp(cases, { pipeline, stateStore, superTimelineStore, aiCostStore });
+      return { app, aiCostStore, pending: new PresidioPendingStore(cases) };
+    }
 
-      const res = await request(app).post("/cases/c1/jev/review").send({});
+    it("holds every new value of every batch in ONE stop, before any batch is sent or billed", async () => {
+      const h = await multiBatch();
+      const res = await request(h.app).post("/cases/c1/jev/review").send({});
 
       expect(res.status, JSON.stringify(res.body)).toBe(409);
       expect(res.body.error).toBe("presidio_approval_required");
-      expect(bodies).toHaveLength(1);
-      const m = (await aiCostStore.load("c1")).other.byModel["jev/jev-stub"];
-      expect(m?.inputTokens).toBe(1);
-      expect(m?.outputTokens).toBe(1);
-    } finally {
-      if (savedBatch === undefined) delete process.env.DFIR_JEV_BATCH_SIZE;
-      else process.env.DFIR_JEV_BATCH_SIZE = savedBatch;
-    }
+      expect(bodies, "nothing may reach Jev").toHaveLength(0);
+      const held = (await h.pending.load("c1")).map((e) => e.value).sort();
+      expect(held).toEqual([...NAMES].sort());
+      expect((await h.aiCostStore.load("c1")).other.byModel["jev/jev-stub"]).toBeUndefined();
+    });
+
+    it("runs to the end with no second stop once the held values are approved", async () => {
+      const h = await multiBatch();
+      expect((await request(h.app).post("/cases/c1/jev/review").send({})).status).toBe(409);
+      await approveAll(h.app, await h.pending.load("c1"));
+      bodies = [];
+
+      const res = await request(h.app).post("/cases/c1/jev/review").send({});
+
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(bodies).toHaveLength(NAMES.length + 1);
+    });
+
+    it("scans each batch once — the send-time check does not rescan what the first pass cleared", async () => {
+      const h = await multiBatch();
+      await approveAll(
+        h.app,
+        NAMES.map((value) => ({ category: "PERSON", value })),
+      );
+
+      const res = await request(h.app).post("/cases/c1/jev/review").send({});
+
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(bodies).toHaveLength(NAMES.length + 1);
+      expect(scanned).toHaveLength(NAMES.length + 1);
+    });
   });
 });

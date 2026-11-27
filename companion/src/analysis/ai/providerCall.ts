@@ -156,6 +156,56 @@ export async function presidioGate(
   throw new PresidioApprovalRequired(fresh);
 }
 
+/** One masked text, or several that will each be sent. */
+export type MaskedText = string | readonly string[];
+
+/** How many texts `presidioGateAll` scans at once — the Jev review's own batch concurrency. */
+const PRESIDIO_GATE_ALL_CONCURRENCY = 4;
+
+/**
+ * The gate over several masked texts that will each be sent (#2980): scan every one, then hold ALL
+ * their new values in ONE approval round. A review that sends many batches asks this before the
+ * first one leaves; the per-batch gate alone stopped once per batch that carried a new value, each
+ * stop minutes in. Fails closed on the first scan error, like `presidioGate`. No cap: every text is
+ * scanned whole, because each one goes to the model.
+ */
+export async function presidioGateAll(
+  ctx: ProviderCallContext,
+  caseId: string,
+  feature: string,
+  text: MaskedText,
+  known: KnownEntities,
+  control: AnonControl | null,
+): Promise<void> {
+  const texts = typeof text === "string" ? [text] : text;
+  const perText: CustomEntity[][] = new Array(texts.length);
+  const queue = [...texts.keys()];
+  let failure: { err: unknown } | undefined;
+  const workers = Array.from({ length: Math.min(PRESIDIO_GATE_ALL_CONCURRENCY, texts.length) }, async () => {
+    for (let i = queue.shift(); i !== undefined && !failure; i = queue.shift()) {
+      try {
+        perText[i] = await presidioHeldValues(ctx, caseId, texts[i], known, control);
+      } catch (err) {
+        failure ??= { err };
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (failure) throw failure.err;
+  // In text order, first spelling wins — the same value in many batches is held once.
+  const byValue = new Map<string, CustomEntity>();
+  for (const e of perText.flat())
+    if (!byValue.has(e.value.toLowerCase())) byValue.set(e.value.toLowerCase(), e);
+  const fresh = [...byValue.values()];
+  if (fresh.length === 0) return;
+  ctx.log.warn(
+    `[presidio] ${fresh.length} new PII value(s) across ${texts.length} request(s) need approval before this case can call the AI`,
+    { caseId },
+  );
+  await ctx.opts.presidioPendingStore?.hold(caseId, fresh, feature);
+  throw new PresidioApprovalRequired(fresh);
+}
+
 /** The feature an import pre-scan hold records — a member of SYNTHESIS_HOLD_FEATURES. */
 export const IMPORT_PRESCAN_FEATURE = "import-prescan";
 
