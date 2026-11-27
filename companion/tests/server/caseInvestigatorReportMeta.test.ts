@@ -11,6 +11,7 @@ import { createApp } from "../../src/server.js";
 // GET /report-meta) and on the Markdown report's title page, without the analyst re-typing it.
 
 const roots: string[] = [];
+const jobManagers: Array<{ ready(): Promise<void> }> = [];
 
 async function harness() {
   const base = await mkdtemp(join(tmpdir(), "dfir-case-investigator-"));
@@ -18,12 +19,16 @@ async function harness() {
   const root = join(base, "cases");
   await mkdir(root);
   const rt = createRuntimeStores({ casesRoot: root, host: "127.0.0.1", port: 0, logDir: join(base, "logs") });
+  jobManagers.push(rt.jobManager);
   const app = createApp(rt.store, buildAppOptions(rt, {} as Parameters<typeof buildAppOptions>[1]));
   return { app, store: rt.store };
 }
 
 afterAll(async () => {
-  for (const root of roots) await rm(root, { recursive: true, force: true });
+  // #2964: the job manager restores its ledger in the background and creates
+  // cases/.dfir-companion-jobs.sqlite on its own schedule — wait for it, then remove with retries.
+  await Promise.allSettled(jobManagers.map((jobs) => jobs.ready()));
+  for (const root of roots) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe("creation-time investigator reaches Case Details and the report (#1913)", () => {
