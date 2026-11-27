@@ -30,7 +30,12 @@ import { parseReachedClients, reachedClientsVql, type HuntReachedClient } from "
 export type { HuntReachedClient } from "./huntReachedClients.js";
 import * as fpv from "./veloArtifactFingerprint.js"; // #2700 re-import change detection
 export { HuntSpecError } from "./huntSpec.js"; // the route answers it 400: the bundle, not the server
-import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
+import {
+  collectLaunchError,
+  noLaunchIdMessage,
+  translateVelociraptorError,
+  vqlLogErrors,
+} from "./vqlDiagnostics.js";
 import { cappedReadProgram, sortNewest, sortedReadTimeout } from "./veloNewestRead.js";
 import type { NewestOrder, NewestRun } from "./veloNewestRead.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
@@ -548,9 +553,9 @@ export class VelociraptorClient {
     program: string,
     maxOutputBytes: number = this.config.maxOutputBytes,
     timeoutMs: number = this.config.timeoutMs,
-  ): Promise<{ rows: unknown[]; reason: string }> {
+  ): Promise<{ rows: unknown[]; reason: string; stderr: string }> {
     const res = await this.runner([program], { timeoutMs, maxOutputBytes });
-    return { rows: res.rows, reason: vqlLogErrors(res.stderr ?? "") };
+    return { rows: res.rows, reason: vqlLogErrors(res.stderr ?? ""), stderr: res.stderr ?? "" };
   }
 
   // A verbatim orchestration program with its log reason — AI Agent Forensics launch + manifest (#2690).
@@ -651,11 +656,10 @@ export class VelociraptorClient {
       `LET def = '''${yaml}'''\n` +
       `LET _set <= artifact_set(definition=def)\n` +
       `SELECT collect_client(client_id='${clientId}', artifacts=['${name}']) AS Flow FROM scope()`;
-    const { rows, reason } = await this.runRawLogged(program);
+    const { rows, stderr } = await this.runRawLogged(program);
     const flow = (rows[0] as { Flow?: Record<string, unknown> })?.Flow ?? {};
     const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
-    if (!FLOW_RE.test(flowId))
-      throw new Error(noLaunchIdMessage("collection flow", "ARTIFACT_WRITER and COLLECT_CLIENT", reason));
+    if (!FLOW_RE.test(flowId)) throw collectLaunchError(clientId, stderr); // #2986: not-known is definite
     return {
       clientId,
       flowId,

@@ -18,9 +18,21 @@ import type { CustomEntity } from "./anonymize.js";
 // the first hold after the list emptied starts a new round. A file written before this field existed
 // reports `null` ("unknown") — the caller then assumes a synthesis was held, the old behaviour.
 
+// #2985: the list keeps at most MAX_CUSTOM_ENTITIES values (the sanitizer's cap, shared with the
+// custom-entity list "Hide from AI" writes to — kept on purpose). A hold with more records how many
+// it could not keep, so the panel can say so instead of looking complete. The count lasts while the
+// list is non-empty; the re-run's own hold sets it again.
+
 interface PendingFile {
   pending: CustomEntity[];
   heldFeatures: string[] | null;
+  notShown: number;
+}
+
+/** The pending list and its overflow count, from ONE read — never combine two reads. */
+export interface PendingRound {
+  pending: CustomEntity[];
+  notShown: number;
 }
 
 const MAX_FEATURES = 32;
@@ -32,6 +44,18 @@ function sanitizeFeatures(raw: unknown): string[] | null {
     .filter((f): f is string => typeof f === "string" && f.trim() !== "")
     .map((f) => f.trim().slice(0, MAX_FEATURE_CHARS));
   return [...new Set(clean)].slice(0, MAX_FEATURES);
+}
+
+function sanitizeNotShown(raw: unknown): number {
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 0 ? raw : 0;
+}
+
+/** How many of `entities` the sanitizer would drop for the cap; repeats of a kept value are not counted. */
+function countNotKept(entities: readonly CustomEntity[]): number {
+  const distinct = new Set(
+    entities.map((e) => (typeof e?.value === "string" ? e.value.trim().toLowerCase() : "")).filter(Boolean),
+  );
+  return Math.max(0, distinct.size - sanitizeCustomEntities(entities).length);
 }
 
 export class PresidioPendingStore {
@@ -46,29 +70,41 @@ export class PresidioPendingStore {
       const raw = JSON.parse(await readFile(this.path(caseId), "utf8")) as {
         pending?: unknown;
         heldFeatures?: unknown;
+        notShown?: unknown;
       };
       return {
         pending: sanitizeCustomEntities(raw?.pending ?? []),
         heldFeatures: sanitizeFeatures(raw?.heldFeatures),
+        notShown: sanitizeNotShown(raw?.notShown),
       };
     } catch (err) {
       // No file: nothing recorded. Only hold() names a feature, so a list saved any other way stays
       // "unknown" and keeps the safe default.
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { pending: [], heldFeatures: null };
+      if ((err as NodeJS.ErrnoException).code === "ENOENT")
+        return { pending: [], heldFeatures: null, notShown: 0 };
       throw err;
     }
   }
 
   private async write(caseId: string, file: PendingFile): Promise<void> {
+    const pending = sanitizeCustomEntities(file.pending);
+    const notShown = pending.length > 0 ? sanitizeNotShown(file.notShown) : 0;
     const body = {
-      pending: sanitizeCustomEntities(file.pending),
+      pending,
       ...(file.heldFeatures ? { heldFeatures: file.heldFeatures } : {}),
+      ...(notShown > 0 ? { notShown } : {}),
     };
     await atomicWrite(this.path(caseId), JSON.stringify(body, null, 2));
   }
 
   async load(caseId: string): Promise<CustomEntity[]> {
     return (await this.read(caseId)).pending;
+  }
+
+  /** The list and how many values the hold could not keep (#2985), from one read. */
+  async round(caseId: string): Promise<PendingRound> {
+    const { pending, notShown } = await this.read(caseId);
+    return { pending, notShown };
   }
 
   /** The features the gate held this round; `null` for a file written before they were recorded. */
@@ -82,7 +118,11 @@ export class PresidioPendingStore {
    */
   async save(caseId: string, entities: CustomEntity[]): Promise<void> {
     const current = await this.read(caseId);
-    await this.write(caseId, { pending: entities, heldFeatures: current.heldFeatures });
+    await this.write(caseId, {
+      pending: entities,
+      heldFeatures: current.heldFeatures,
+      notShown: current.notShown,
+    });
   }
 
   /**
@@ -96,7 +136,7 @@ export class PresidioPendingStore {
       sameRound && current.heldFeatures === null
         ? null
         : sanitizeFeatures([...(sameRound ? (current.heldFeatures ?? []) : []), feature]);
-    await this.write(caseId, { pending: entities, heldFeatures });
+    await this.write(caseId, { pending: entities, heldFeatures, notShown: countNotKept(entities) });
   }
 
   async clear(caseId: string): Promise<void> {
