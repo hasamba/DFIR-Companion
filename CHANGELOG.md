@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI Agent Forensics report section** — the case report lists each run launched in or filed into the case, with inventory, matched text, both hashes, Sigma coverage and the rules not run (closes #2721)
 
 ### Fixed
+- **IPv6 with a dotted IPv4 tail masked whole** — an address such as `fd00::192.168.1.5` is one token instead of masking only up to the first octet and sending the rest of the IPv4 in clear (closes #2990)
 - **More Evtx:: shapes keep their separator** — an internal address alone after `word::`, one with a non-internal tail, and one after a redacted secret that ran up to the `::` are each one masked token with the `::` kept (closes #2979)
 - **IPv6 after Evtx:: stays one token** — an internal address in the old IPv4-compatible spelling after a `word::` separator is now one masked token and the separator keeps its spelling (closes #2976)
 - **IPv6 after a glued label or a `::` separator kept whole** — with public masking on `node12:2001:db8::1Method` is masked, and `Evtx::2001:db8::1Method` is one address instead of two tokens (closes #2974)
