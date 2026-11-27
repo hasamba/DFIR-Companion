@@ -23,9 +23,12 @@
 // would cut "fd00:abcd::1" down to "fd00:abcd::". They need two groups, or one group of three or
 // four hex digits, so a code namespace such as "fd::" or "fc::" never reads as an address, and
 // they must not be followed by a letter or digit in any script, "_" or ":" ("fd00::Method" is
-// not an address; a closing quote, a no-break space or a direction mark after one is fine).
+// not an address; a closing quote, a no-break space or a direction mark after one is fine). One
+// closing colon is fine too (#2969): ":::" before a space, punctuation or the end reads as "::" plus
+// a colon that closes the phrase ("route fe80::: down"); before a word character or another ":" it
+// is still not an address.
 export const IPV6_RE =
-  /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){2,7}:(?![\p{L}\p{N}_:])|[0-9a-f]{3,4}::(?![\p{L}\p{N}_:])/giu;
+  /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){2,7}:(?![\p{L}\p{N}_]|:[\p{L}\p{N}_:])|[0-9a-f]{3,4}::(?![\p{L}\p{N}_]|:[\p{L}\p{N}_:])/giu;
 
 /**
  * How the caller judges one detector match.

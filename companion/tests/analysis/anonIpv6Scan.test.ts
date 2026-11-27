@@ -330,3 +330,67 @@ describe.each([true, false])("IPv6 before a closing colon, maskPublicIps=%s (#29
     expect(run(input, mask).out).toBe(input);
   });
 });
+
+// #2969: an address that ends in "::" followed by a closing colon ("x fd00:abcd::: y") stayed in clear
+// on both paths — the terminal-"::" detector branches refused any following ":". ":::" before a space,
+// punctuation or the end reads as "::" plus a closing colon; before a word character it is not one.
+describe.each([true, false])("IPv6 ending in :: before a closing colon, maskPublicIps=%s (#2969)", (mask) => {
+  it.each([
+    ["x fd00:abcd::: y", "x ANON_IP_1: y", "fd00:abcd::"],
+    ["route fe80::: down", "route ANON_IP_1: down", "fe80::"],
+    ["x fd00::: y", "x ANON_IP_1: y", "fd00::"],
+    ["x dc:fd00:abcd::: y", "x dc:ANON_IP_1: y", "fd00:abcd::"],
+    ["peer node12:fd00:abcd::: down", "peer node12:ANON_IP_1: down", "fd00:abcd::"],
+    ["x fd00:abcd:::", "x ANON_IP_1:", "fd00:abcd::"],
+    ["(fd00:abcd:::)", "(ANON_IP_1:)", "fd00:abcd::"],
+  ])("%s -> %s", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+
+  it("a public address ending in :: before a closing colon is masked like one before a space", () => {
+    expect(run("x 2001:db8::: y", mask).out).toBe(mask ? "x ANON_EXTIP_1: y" : "x 2001:db8::: y");
+  });
+
+  it.each([
+    "x fd00:abcd:::y",
+    "x fd00:abcd:::: y",
+    "use std::: x",
+    "use std::os::fd::: x",
+    "fd::: x",
+    "C::: x",
+    "Win2019::: x",
+    "Server2016::: x",
+    "mac 00:1a:2b:3c:4d:5e::: seen",
+    "at 12:34:56::: local",
+    "fp fd:3a:11:22:33:44:55:66::: x",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
+  });
+});
+
+describe("custom IPv6 range ending in :: before a closing colon, IP category off (#2969)", () => {
+  const ranges: CustomEntity[] = [
+    { value: "fd00::/16", category: "IP", match: "pattern" },
+    { value: "fe80::/16", category: "IP", match: "pattern" },
+  ];
+  it.each([
+    ["x fd00:abcd::: y", "x ANON_IP_1: y"],
+    ["route fe80::: down", "route ANON_IP_1: down"],
+    ["x dc:fd00:abcd::: y", "x dc:ANON_IP_1: y"],
+    ["x fd00:abcd:::", "x ANON_IP_1:"],
+  ])("%s -> %s", (input, expected) => {
+    const { out, back } = run(input, true, ranges, false);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+  });
+
+  it.each(["x fd00:abcd:::y", "x fd00:abcd:::: y", "use std::os::fd::: x", "x 2001:fd00::: y"])(
+    "leaves %s byte-identical",
+    (input) => {
+      expect(run(input, true, ranges, false).out).toBe(input);
+    },
+  );
+});
