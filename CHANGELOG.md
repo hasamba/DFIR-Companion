@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Fingerprints and words kept out of IP tokens** — a byte run starting `fd:`/`fc:` and `Server2016::Foo` keep their spelling; real internal addresses are still hidden (closes #2959)
+- **Secret region never cuts an IPv4 address or host name** — with secret redaction on, a custom value that starts or ends inside an address or name and runs into a secret hides that whole address or name, not just the part after it (closes #2957)
 - **Preview flags an IPv6 address joined to a word** — with IP masking off, the AI preview marks `fd00::1` in `node12:fd00::1` as a possible leak, using the same address scan as the anonymizer (closes #2958)
 - **IPv6 addresses ending in :: or joined to a word masked** — with IP masking on, `fd00:abcd::` and the address in `node12:fd00::1` are tokenized instead of reaching the AI in clear; custom IPv6 ranges catch the joined form too (closes #2953)
 - **Custom entity that contains a secret hidden whole** — with secret redaction on, a custom value that contains or touches a secret goes out as one one-way `[REDACTED_SECRET]`, never partly in clear (closes #2952)

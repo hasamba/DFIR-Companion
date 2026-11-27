@@ -19,6 +19,13 @@ import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
 // a secret the line-up is ambiguous; the LOOSE bounds then cover every placement, so the result can
 // over-redact, never under-redact. If no line-up exists at all (not reachable by construction) the
 // whole changed window is treated as one secret: fail closed.
+//
+// A hidden region never cuts an address or a name in half: it joins any IPv6 address it touches,
+// and it grows over an IPv4 address or host / domain name it starts or ends inside (#2957), or the
+// front of that name would go out in clear and the rest would no longer read as one value to
+// tokenize. Only a region that is hidden already grows; a name never joins a custom value and a
+// secret that do not touch each other. The growth does not depend on the IP / HOST / DOMAIN
+// categories: the occurrence is redacted one way in any case.
 
 export interface Interval {
   start: number;
@@ -40,7 +47,8 @@ export function redactToSentinel(text: string, sentinel: string): string {
 
 /**
  * Redact secrets one way; a custom match that overlaps or touches a secret is redacted with it,
- * as is any IPv6 address the merged region would cut. `addresses` is only called when needed.
+ * as is any IPv6 address the merged region would cut, and any IPv4 address or host name it starts
+ * or ends inside. `addresses` is only called when needed.
  */
 export function redactSecretsWithCustom(
   text: string,
@@ -123,7 +131,30 @@ function changedWindow(text: string, redacted: string): SecretSpan {
   return { exact: window, loose: window, sure: window, form: "" };
 }
 
-type Piece = Interval & { secret?: SecretSpan; custom?: boolean };
+type Piece = Interval & { secret?: SecretSpan; custom?: boolean; hidden?: boolean };
+
+// A dotted run of name labels: an IPv4 address, a host or domain name, a hyphenated NetBIOS name.
+// Marks (\p{M}) are part of a label, so a decomposed accented label is one run. The literal dot
+// between labels keeps the scan linear.
+const NAME_RUN = /[\p{L}\p{M}\p{N}_-]+(?:\.[\p{L}\p{M}\p{N}_-]+)*/gu;
+
+// Every name run of `text`, in order and never overlapping.
+function nameRuns(text: string): Interval[] {
+  return Array.from(text.matchAll(NAME_RUN), (m) => ({ start: m.index, end: m.index + m[0].length }));
+}
+
+// The run that strictly contains `at` (starts before it and ends after it), if any.
+function runCutAt(runs: readonly Interval[], at: number): Interval | undefined {
+  let lo = 0;
+  let hi = runs.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (runs[mid].start < at) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  const run = runs[hi];
+  return run !== undefined && at < run.end ? run : undefined;
+}
 
 /**
  * Rebuild the redacted text with every custom match that overlaps or touches a secret hidden
@@ -146,17 +177,16 @@ export function coverCustomSecrets(
     ...secrets.map((s) => ({ ...s.loose, secret: s })),
     ...custom.filter((c) => !inside(c)).map((c) => ({ start: c.start, end: c.end, custom: true })),
     ...addresses.map((a) => ({ start: a.start, end: a.end })),
-  ].sort((a, b) => a.start - b.start || b.end - a.end);
-  const groups = groupTouching(pieces);
-  const tainted = (g: readonly Piece[]) => g.some((p) => p.custom) && g.some((p) => p.secret);
-  if (!groups.some(tainted)) return redacted;
+  ];
+  const groups = growHidden(text, pieces);
+  if (groups === null) return redacted;
   let out = "";
   let at = 0;
   for (const g of groups) {
     if (tainted(g)) {
-      const start = Math.min(...g.map((p) => p.start));
-      out += text.slice(at, start) + sentinel;
-      at = Math.max(...g.map((p) => p.end));
+      const span = extent(g);
+      out += text.slice(at, span.start) + sentinel;
+      at = span.end;
       continue;
     }
     for (const p of g) {
@@ -167,6 +197,61 @@ export function coverCustomSecrets(
   }
   return out + text.slice(at);
 }
+
+const tainted = (g: readonly Piece[]) =>
+  g.some((p) => p.hidden) || (g.some((p) => p.custom) && g.some((p) => p.secret));
+
+function extent(g: readonly Piece[]): Interval {
+  let start = Infinity;
+  let end = -Infinity;
+  for (const p of g) {
+    start = Math.min(start, p.start);
+    end = Math.max(end, p.end);
+  }
+  return { start, end };
+}
+
+// Group the pieces, then grow every hidden group over a name run it starts or ends inside (#2957).
+// A grown region swallows any group it now overlaps or touches, and grows again from its new
+// edges, so the result never cuts a run. One sweep: each group is merged at most once, and each
+// group's extent is computed once. Null when no group is hidden.
+function growHidden(text: string, initial: readonly Piece[]): Piece[][] | null {
+  const groups = groupTouching([...initial].sort(byPosition));
+  if (!groups.some(tainted)) return null;
+  const spans = groups.map(extent);
+  const runs = nameRuns(text);
+  const out: Array<{ group: Piece[]; span: Interval }> = [];
+  let next = 0;
+  while (next < groups.length) {
+    const group = groups[next];
+    let { start, end } = spans[next++];
+    if (!tainted(group)) {
+      out.push({ group, span: { start, end } });
+      continue;
+    }
+    for (;;) {
+      start = runCutAt(runs, start)?.start ?? start;
+      end = runCutAt(runs, end)?.end ?? end;
+      const before = out.length > 0 ? out[out.length - 1].span : undefined;
+      if (before && before.end >= start) {
+        start = Math.min(start, before.start);
+        out.pop();
+        continue;
+      }
+      const after = next < groups.length ? spans[next] : undefined;
+      if (after && after.start <= end) {
+        end = Math.max(end, after.end);
+        next++;
+        continue;
+      }
+      break;
+    }
+    out.push({ group: [{ start, end, hidden: true }], span: { start, end } });
+  }
+  return out.map((o) => o.group);
+}
+
+const byPosition = (a: Interval, b: Interval) => a.start - b.start || b.end - a.end;
 
 // Index of the last secret whose sure interval starts at or before `at` (-1 if none). Sure intervals
 // are in text order and never overlap, so only that one can contain a span starting at `at`.
