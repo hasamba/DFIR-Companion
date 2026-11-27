@@ -585,6 +585,14 @@ describe.each([true, false])("internal IPv6 after a word:: separator, maskPublic
     expect(back).toBe("Evtx::a00:5::1");
   });
 
+  it("a secret that runs up to the separator leaves none of the address in clear", () => {
+    const a = createAnonymizer({ ...policy(mask), redactSecrets: true }, known());
+    const out = a.apply(`password=${["hun", "ter2"].join("")}Evtx::a00:5::1 y`);
+    expect(out).toContain("[REDACTED_SECRET]");
+    expect(out).not.toMatch(/a00|hunter2/);
+    expect(out.endsWith(" y")).toBe(true);
+  });
+
   it("a custom value that crosses the separator hides the whole group", () => {
     const { out, back } = run("Evtx::a00:5::1", mask, [{ value: "Evtx::a00", category: "OTHER" }]);
     expect(out).toBe("ANON_OTHER_1");
