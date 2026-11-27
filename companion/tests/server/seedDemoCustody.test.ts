@@ -69,6 +69,8 @@ describe("seeded demo case chain of custody (#3022)", () => {
     expect(received).toHaveLength(4);
 
     for (const c of captures) {
+      // Stored on every OS: no Windows-reserved characters, the same rule real captures follow.
+      expect(String(c.screenshotFile)).not.toMatch(/[<>:"/\\|?*]/);
       const path = join(caseDir, "screenshots", String(c.screenshotFile));
       const rec = collected.find((r) => r.artifactPath === path);
       expect(rec, path).toBeDefined();

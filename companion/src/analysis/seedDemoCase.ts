@@ -2586,7 +2586,7 @@ export async function seedDemoCase(
       triggerType: "timer",
       contentHash: "0000000000000000",
       isDuplicate: false,
-      screenshotFile: "000001_2026-05-22T09:00:00.000Z_New-Tab.webp",
+      screenshotFile: "000001_2026-05-22T09-00-00-000Z_New-Tab.webp",
     },
     {
       caseId,
@@ -2597,7 +2597,7 @@ export async function seedDemoCase(
       triggerType: "navigation",
       contentHash: "fea4b2c81e3d5f70",
       isDuplicate: false,
-      screenshotFile: "000002_2026-05-22T09:05:00.000Z_DFIR-Companion.webp",
+      screenshotFile: "000002_2026-05-22T09-05-00-000Z_DFIR-Companion.webp",
     },
     {
       caseId,
@@ -2608,7 +2608,7 @@ export async function seedDemoCase(
       triggerType: "navigation",
       contentHash: "a1b2c3d4e5f60718",
       isDuplicate: false,
-      screenshotFile: "000003_2026-05-22T09:30:00.000Z_VirusTotal.webp",
+      screenshotFile: "000003_2026-05-22T09-30-00-000Z_VirusTotal.webp",
     },
     {
       caseId,
@@ -2619,7 +2619,7 @@ export async function seedDemoCase(
       triggerType: "timer",
       contentHash: "fea4b2c81e3d5f72",
       isDuplicate: false,
-      screenshotFile: "000004_2026-05-22T10:00:00.000Z_DFIR-Companion.webp",
+      screenshotFile: "000004_2026-05-22T10-00-00-000Z_DFIR-Companion.webp",
     },
     {
       caseId,
@@ -2630,7 +2630,7 @@ export async function seedDemoCase(
       triggerType: "tab_switch",
       contentHash: "fea4b2c81e3d5f74",
       isDuplicate: false,
-      screenshotFile: "000005_2026-05-22T10:30:00.000Z_DFIR-Companion.webp",
+      screenshotFile: "000005_2026-05-22T10-30-00-000Z_DFIR-Companion.webp",
     },
   ];
   // ── screenshots/, imports/ and their capture/import logs (seedDemoEvidence.ts, #3022) ──
