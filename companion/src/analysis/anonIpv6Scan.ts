@@ -42,6 +42,8 @@ type Grade = (ip: string) => Ipv6Grade;
 export interface Ipv6Span {
   start: number;
   end: number;
+  // Hide as an internal address whatever its value grades: two internal addresses joined (#2976).
+  failClosed?: true;
 }
 
 // A match that starts right after a letter, digit or "_" may have borrowed its first group from
@@ -174,6 +176,32 @@ function separatorRestart(text: string, m: RegExpExecArray, grade: Grade, opts: 
   return g === null ? null : at;
 }
 
+// "Evtx::a00:5::1": the detector reads "::a00:5" (internal 10.0.0.5, IPv4-compatible) glued to "Evtx",
+// then "::1" (loopback) — two tokens, and the "Evtx::" separator gone (#2976). When the glued "keep"
+// match opens with "::", the very next match starts at its end and is "keep" too, and the address read
+// right after the "::" ends exactly where that next match does, the two are one address after a
+// separator. It is joined into one span that fails closed: by its value it may grade as nothing
+// ("a00:5::1"), and it must never be restored in clear. Same characters hidden, minus the separator
+// colons, and the scan resumes where it would have.
+function joinedAfterSeparator(
+  text: string,
+  m: RegExpExecArray,
+  grade: Grade,
+  opts: ScanOptions,
+): Ipv6Span | null {
+  const start = m.index;
+  if (!opts.splitUnknown || start === 0 || !WORD_CHAR.test(text[start - 1]) || !m[0].startsWith("::"))
+    return null;
+  const end = start + m[0].length;
+  const next = stickyAt(text, end);
+  if (!next) return null;
+  const nextEnd = end + next[0].length;
+  const g = opts.wholeToken && !endsToken(text, nextEnd) ? null : grade(next[0]);
+  const joined = stickyAt(text, start + 2);
+  if (g !== "keep" || !joined || start + 2 + joined[0].length !== nextEnd) return null;
+  return { start: start + 2, end: nextEnd, failClosed: true };
+}
+
 /**
  * The IPv6 spans to set aside, in text order, never overlapping.
  *
@@ -202,7 +230,9 @@ export function findIpv6Literals(
     const span = { start, end: start + m[0].length };
     const g = opts.wholeToken && !endsToken(text, span.end) ? null : grade(m[0]);
     if (g === "keep") {
-      out.push(span);
+      const joined = joinedAfterSeparator(text, m, grade, opts);
+      out.push(joined ?? span);
+      if (joined) re.lastIndex = joined.end;
       continue;
     }
     const glued = start > 0 && WORD_CHAR.test(text[start - 1]);

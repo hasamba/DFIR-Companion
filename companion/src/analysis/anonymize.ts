@@ -510,7 +510,8 @@ export function createAnonymizer(
   const IPV6_SENTINEL = "\uE000";
   const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
-  type Reserved = { value: string; category: AnonTokenCategory | null }; // null: a plain address
+  // null: a plain address. failClosed: hidden as internal whatever its value grades (#2976).
+  type Reserved = { value: string; category: AnonTokenCategory | null; failClosed?: true };
 
   // A custom value that extends past an address is set aside WITH it, as one span that carries
   // the custom category (#2950); anonCustom() mints it, so the custom value wins as one token.
@@ -525,9 +526,12 @@ export function createAnonymizer(
     const literals: Reserved[] = [];
     let out = "";
     let at = 0;
+    const failClosed = new Set(found.filter((f) => f.failClosed).map((f) => `${f.start}:${f.end}`));
     for (const s of groupWithLiterals(text, compiled, found)) {
       out += `${text.slice(at, s.start)}${IPV6_SENTINEL}IPV6:${literals.length}${IPV6_SENTINEL}`;
-      literals.push({ value: text.slice(s.start, s.end), category: s.category });
+      const value = text.slice(s.start, s.end);
+      const closed = s.category === null && failClosed.has(`${s.start}:${s.end}`);
+      literals.push(closed ? { value, category: null, failClosed: true } : { value, category: s.category });
       at = s.end;
     }
     return { text: out + text.slice(at), literals };
@@ -541,6 +545,8 @@ export function createAnonymizer(
       const ip = entry.value;
       const ranged = rangeCategory(compiled, ip); // #2946: a custom range names the category
       if (ranged) return forcing(() => assign(ranged, ip));
+      // A joined address never comes back in clear, not even through a suppression of its value (#2976).
+      if (entry.failClosed) return forcing(() => assign("IP", ip));
       if (isInternalIpv6(ip)) return assign("IP", ip);
       return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
     });

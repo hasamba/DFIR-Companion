@@ -541,3 +541,68 @@ describe("custom IPv6 range after a word:: separator, IP category off (#2974)", 
     expect(run(input, true, ranges, false).out).toBe(input);
   });
 });
+
+// #2976: "Evtx::a00:5::1" (an internal address in the IPv4-compatible spelling "::a00:5", then "::1")
+// became two internal tokens and lost the "Evtx::" separator. The address after the separator,
+// "a00:5::1", grades as nothing by its value, so it is one token that FAILS CLOSED (ANON_IP) on both
+// masking settings: never restored in clear, never uncovered by a suppression of the joined value.
+describe.each([true, false])("internal IPv6 after a word:: separator, maskPublicIps=%s (#2976)", (mask) => {
+  it.each([
+    ["Evtx::a00:5::1", "Evtx::ANON_IP_1", "a00:5::1"],
+    ["x Evtx::a00:5::1 y", "x Evtx::ANON_IP_1 y", "a00:5::1"],
+    ["Evtx::a00:5::1Method", "Evtx::ANON_IP_1Method", "a00:5::1"],
+    ["Windows.EventLogs.Evtx::c0a8:101::1", "Windows.EventLogs.Evtx::ANON_IP_1", "c0a8:101::1"],
+  ])("%s keeps the separator and masks one address", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual([["ANON_IP_1", value, "IP"]]);
+    const start = input.indexOf(value);
+    expect(findReservableIpv6Spans(input, mask)).toEqual([
+      { start, end: start + value.length, failClosed: true },
+    ]);
+  });
+
+  it("a suppression of the joined value never uncovers it", () => {
+    const a = createAnonymizer(policy(mask), { ...known(), suppressed: ["a00:5::1"] });
+    expect(a.apply("Evtx::a00:5::1")).toBe("Evtx::ANON_IP_1");
+  });
+
+  it.each([
+    ["Evtx::a00:5", "EvtxANON_IP_1"],
+    ["Evtx::7f00:1::5", "EvtxANON_IP_1::5"],
+    ["xfd00::a00:5::1", "xANON_IP_1ANON_IP_2"],
+  ])("leaves %s as it is today", (input, expected) => {
+    const { out, back } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+  });
+
+  it("a custom value inside the joined address is masked with it", () => {
+    const { out, back } = run("Evtx::a00:5::1", mask, [{ value: "a00:5", category: "HOST" }]);
+    expect(out).not.toMatch(/a00|::1$/);
+    expect(out.startsWith("Evtx::")).toBe(true);
+    expect(back).toBe("Evtx::a00:5::1");
+  });
+
+  it("a secret that runs up to the separator leaves none of the address in clear", () => {
+    const a = createAnonymizer({ ...policy(mask), redactSecrets: true }, known());
+    const out = a.apply(`password=${["hun", "ter2"].join("")}Evtx::a00:5::1 y`);
+    expect(out).toContain("[REDACTED_SECRET]");
+    expect(out).not.toMatch(/a00|hunter2/);
+    expect(out.endsWith(" y")).toBe(true);
+  });
+
+  it("a custom value that crosses the separator hides the whole group", () => {
+    const { out, back } = run("Evtx::a00:5::1", mask, [{ value: "Evtx::a00", category: "OTHER" }]);
+    expect(out).toBe("ANON_OTHER_1");
+    expect(back).toBe("Evtx::a00:5::1");
+  });
+});
+
+describe("custom IPv6 range, IP category off, before Evtx::a00:5::1 (#2976)", () => {
+  it("is byte-identical to today", () => {
+    const ranges: CustomEntity[] = [{ value: "::a00:0/112", category: "IP", match: "pattern" }];
+    expect(run("Evtx::a00:5::1", true, ranges, false).out).toBe("Evtx::a00:5::1");
+  });
+});
