@@ -57,18 +57,21 @@ const endsToken = (text: string, end: number) => ENDS_TOKEN.test(text.slice(end,
 
 // Re-run the detector at every group start inside the rejected match, on the FULL text (the real
 // address can run past the rejected match's end). The first acceptable one is the longest.
+// `keepRunsOn`: an internal address found inside need not end the token (it fails closed).
 function retryInside(
   text: string,
   m: Ipv6Span,
   accept: (g: Ipv6Grade) => boolean,
   grade: (ip: string) => Ipv6Grade,
+  keepRunsOn = false,
 ): Ipv6Span | null {
   for (let p = m.start + 1; p < m.end; p++) {
     if (text[p - 1] !== ":") continue; // a group start, or the "::" of "node12:::1"
     const hit = stickyAt(text, p);
     if (!hit) continue;
     const end = p + hit[0].length;
-    if (endsToken(text, end) && accept(grade(hit[0]))) return { start: p, end };
+    const g = grade(hit[0]);
+    if ((endsToken(text, end) || (keepRunsOn && g === "keep")) && accept(g)) return { start: p, end };
   }
   return null;
 }
@@ -99,18 +102,25 @@ export function findIpv6Literals(
       continue;
     }
     const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
-    if (glued || (opts.splitUnknown && g === null && m[0].includes("::"))) {
+    const compressed = m[0].includes("::");
+    if (glued || (opts.splitUnknown && g === null)) {
       // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
-      const inner = retryInside(text, span, (x) => x === "keep" || (g === null && x !== null), grade);
+      // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
+      // only an internal address, so a fingerprint never mints a public token (#2959).
+      const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
+      // A match that opens with a short "fd"/"fc" group was hidden whole before #2959; an internal
+      // address inside it ("fd:fd00::1Method") must stay hidden even where it runs into a word.
+      const shortUla = g === null && /^f[cd]:/i.test(m[0]);
+      const inner = retryInside(text, span, ok, grade, shortUla);
       if (inner) {
         out.push(inner);
         re.lastIndex = inner.end; // the real address can run past the rejected match
         continue;
       }
     }
-    // "2019::" out of "Win2019:: x" is a word, not a routable prefix.
-    const gluedPrefix = glued && m[0].endsWith("::");
-    if (g === "weak" && !gluedPrefix) out.push(span);
+    // "2019::" out of "Win2019:: x", and "2016::F" out of "Server2016::Foo" (#2959), are words.
+    const inWord = glued && (m[0].endsWith("::") || /^\p{L}/u.test(text.slice(span.end, span.end + 1)));
+    if (g === "weak" && !inWord) out.push(span);
   }
   return out;
 }
