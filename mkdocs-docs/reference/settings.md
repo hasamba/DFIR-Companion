@@ -821,8 +821,11 @@ Each channel has:
 - A **Test** button that sends a test message
 
 **Imports** sends one message when an evidence import ends: a dashboard upload, a drop-folder batch,
-a Velociraptor collection or external import, a cloud collection, a CrowdStrike NG-SIEM search, or a
-SO-CRATES analysis.
+a Velociraptor collection or external import, a cloud collection, a CrowdStrike NG-SIEM search, a
+SO-CRATES analysis, or a local tool (Hayabusa, Chainsaw or a custom tool) that you run from the
+dashboard. A local tool run sends one message per run, named after the tool and the file. A tool
+that the drop folder runs is reported in the drop-folder batch message instead, so that file never
+gets two messages.
 The message names what was imported, how many events it added to the forensic timeline, how many of
 those are graded High or Critical, and any files or artifacts that failed. A failed import sends
 "Import failed" with the reason. Screenshots (dropped images or extension captures) and live monitors
