@@ -155,11 +155,14 @@ function earliestAsset(scopedEvents: readonly ForensicEvent[]): string | undefin
   return dated.find((e) => !!e.asset)?.asset;
 }
 
-// Host↔host endpoints of lateral_move edges (the pairs a pivot ran between). Host node ids are
-// "host:<name>"; we read the node label to preserve the display case.
+// Host endpoints of lateral_move edges (the hosts a pivot ran between). Host node ids are
+// "host:<name>"; we read the node label to preserve the display case. A shared-account edge runs
+// account → host, so only HOST nodes count — an account name is not a collection target (#3024).
 function lateralHosts(state: InvestigationState): string[] {
   const graph = buildEvidenceGraph(state);
-  const labelById = new Map(graph.nodes.map((n) => [n.id, n.label] as const));
+  const labelById = new Map(
+    graph.nodes.filter((n) => n.kind === "host").map((n) => [n.id, n.label] as const),
+  );
   const out: string[] = [];
   for (const e of graph.edges) {
     if (e.type !== "lateral_move") continue;
