@@ -46,6 +46,7 @@ import { extractZipEntries } from "../analysis/zipExtract.js";
 import { md5Buffer, probeAnalysis, uploadBuffer } from "../integrations/socrates/socratesApi.js";
 import type { SocratesJob, SocratesJobStore } from "../integrations/socrates/socratesJobStore.js";
 import { createSocratesJobRunner } from "./socratesJobRunner.js";
+import { createCaseNotifier } from "./caseNotifier.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import type { DropToolRun, StreamedIngestResult } from "../routes/context.js";
@@ -127,6 +128,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     store,
     ingestStreamed,
     socratesConfig: () => liveToolConfigs().get("socrates") ?? null,
+    dispatchNotify: createCaseNotifier(options), // #3008: one message per submission
   });
   const socratesJobs = socrates.jobs;
 
@@ -368,6 +370,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     if (!cfg?.baseUrl)
       throw new Error("SO-CRATES is not configured — set DFIR_TOOL_SOCRATES_URL in Settings → Tools");
     const baseUrl = cfg.baseUrl;
+    const target: ToolConfig & { baseUrl: string } = { ...cfg, baseUrl };
 
     // Decide what to submit: the file itself, or each entry of an archive.
     let submissions: { data: Buffer; name: string; zipEntry?: string }[];
@@ -388,7 +391,21 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     }
 
     const jobIds: string[] = [];
-    for (const sub of submissions) {
+    // #3008: every entry of this submission shares one id, so the channel gets one message for it.
+    const submissionId = randomUUID();
+    socrates.openSubmission(caseId, submissionId, input.filename);
+    let stopped: { name: string; reason: string } | undefined;
+    try {
+      for (const sub of submissions) await submitEntry(sub);
+    } catch (err) {
+      stopped = { name: "entries not submitted", reason: (err as Error).message };
+      throw err;
+    } finally {
+      socrates.sealSubmission(caseId, submissionId, jobIds.length ? stopped : undefined);
+    }
+    return { jobIds, skippedNested, truncated };
+
+    async function submitEntry(sub: { data: Buffer; name: string; zipEntry?: string }): Promise<void> {
       // Already analyzed? Skip the upload — SO-CRATES keys everything by MD5, so an unchanged file
       // costs one request instead of a re-analysis.
       const localMd5 = md5Buffer(sub.data);
@@ -409,6 +426,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         status: "processing",
         startedAt: new Date().toISOString(),
         dropRelpath: input.dropRelpath,
+        submissionId,
       };
       socrates.reserve(job.jobId); // #2408: before the row exists, so recovery cannot claim it
       await socratesJobs.upsert(caseId, job);
@@ -426,10 +444,8 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         });
 
       // Fire and forget: the poller updates the job record, which the dashboard polls.
-      socrates.launch(caseId, job, { ...cfg, baseUrl });
+      socrates.launch(caseId, job, target);
     }
-
-    return { jobIds, skippedNested, truncated };
   }
 
   return {

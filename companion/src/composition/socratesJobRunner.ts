@@ -13,6 +13,9 @@ import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysi
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { logLine, warnLine } from "../logging/serverLogger.js";
 import { dropDirOf } from "./dropFolder.js";
+import type { ImportCounts, ImportFailedItem } from "../analysis/importNotification.js";
+import type { NotificationEvent } from "../analysis/notifications.js";
+import { createSocratesSubmissionTracker } from "./socratesImportNotify.js";
 
 type SocratesIngest = (
   caseId: string,
@@ -24,13 +27,15 @@ type SocratesIngest = (
   assetHost: undefined,
   modelCall: undefined,
   debug: ImportDebugRecorder,
-) => Promise<{ addedEvents: number; addedIocs: number }>;
+) => Promise<{ addedEvents: number; addedIocs: number; counts?: ImportCounts }>;
 
 export interface SocratesJobRunnerDeps {
   store: CaseStore;
   ingestStreamed: SocratesIngest;
   /** The live SO-CRATES config, or null when it is not configured (read at call time). */
   socratesConfig(): ToolConfig | null;
+  /** The case notifier: one "Import finished/failed" message per submission (#3008). */
+  dispatchNotify?: (event: NotificationEvent) => void;
 }
 
 export interface SocratesJobRunner {
@@ -40,6 +45,10 @@ export interface SocratesJobRunner {
    * as orphaned and starts a second poller for it.
    */
   reserve(jobId: string): void;
+  /** Open a submission before its first entry is uploaded, so no entry can report it early (#3008). */
+  openSubmission(caseId: string, submissionId: string, sourceName: string): void;
+  /** Every entry is launched (or the upload loop stopped with `note`): report once all have settled. */
+  sealSubmission(caseId: string, submissionId: string, note?: ImportFailedItem): void;
   /** Poll one job in the background until it is imported or failed. At most one poller per job. */
   launch(caseId: string, job: SocratesJob, cfg: ToolConfig & { baseUrl: string }): void;
   /** Startup recovery for every non-archived case: resume or mark interrupted (#2408). */
@@ -56,6 +65,7 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
   const reserved = new Set<string>();
   const running = new Set<string>();
   const owned = (jobId: string): boolean => reserved.has(jobId) || running.has(jobId);
+  const submissions = createSocratesSubmissionTracker(deps.dispatchNotify);
 
   // SO-CRATES pollers finish independently, but every ingest mutates the SAME case state behind the
   // per-case state lock. Firing them concurrently — a 25-entry archive, or several files dropped at
@@ -108,6 +118,7 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
     reserved.delete(job.jobId);
     if (running.has(job.jobId)) return;
     running.add(job.jobId);
+    let counts: ImportCounts | undefined; // this job's settled counts; unknown is never zero (#3008)
     void pollUntilImported(
       caseId,
       job,
@@ -115,9 +126,9 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
         store: jobs,
         checkStatus: (m) => checkStatus(baseUrl, m),
         fetchVerdicts: (m) => fetchVerdicts(baseUrl, m),
-        ingest: (cid, text, name) =>
+        ingest: async (cid, text, name) => {
           // Each verdict set is its own import attempt with its own recorder (#1736).
-          queueIngest(cid, () =>
+          const r = await queueIngest(cid, () =>
             deps.ingestStreamed(
               cid,
               "socrates",
@@ -129,7 +140,10 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
               undefined,
               createImportDebugRecorder(),
             ),
-          ),
+          );
+          counts = r.counts;
+          return r;
+        },
         warn: warnLine,
       },
       // The operator's DFIR_TOOL_SOCRATES_TIMEOUT_MS is a duration: it is the wall-clock deadline,
@@ -140,8 +154,17 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
         tolerateStatusErrors: resumed,
       },
     )
-      .then((final) => closeDropLog(caseId, final))
-      .catch((err) => warnLine(`[socrates] job ${job.jobId}: poller stopped: ${(err as Error).message}`))
+      .then(
+        (final) => {
+          submissions.settle(caseId, final, counts);
+          return closeDropLog(caseId, final);
+        },
+        (err) => {
+          const message = `poller stopped: ${(err as Error).message}`;
+          warnLine(`[socrates] job ${job.jobId}: ${message}`);
+          submissions.settle(caseId, { ...job, status: "error", error: message });
+        },
+      )
       .finally(() => running.delete(job.jobId));
   }
 
@@ -164,8 +187,10 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
         const counts = await runInCaseScope(
           store.casesRoot,
           caseId,
-          () =>
-            recoverSocratesJobs(caseId, {
+          async () => {
+            // Adopt the submissions a restart left unfinished, so each still sends one message.
+            submissions.adopt(caseId, await jobs.list(caseId));
+            return recoverSocratesJobs(caseId, {
               store: jobs,
               isActive: owned,
               configured: () => Boolean(deps.socratesConfig()?.baseUrl),
@@ -173,9 +198,13 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
                 const cfg = deps.socratesConfig();
                 if (cfg?.baseUrl) start(cid, job, { ...cfg, baseUrl: cfg.baseUrl }, true);
               },
-              closed: closeDropLog,
+              closed: (cid, job) => {
+                submissions.settle(cid, job);
+                return closeDropLog(cid, job);
+              },
               warn: warnLine,
-            }),
+            });
+          },
           generationOf(meta),
         );
         resumed += counts.resumed;
@@ -191,7 +220,12 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
   return {
     jobs,
     reserve: (jobId) => reserved.add(jobId),
-    launch: (caseId, job, cfg) => start(caseId, job, cfg, false),
+    openSubmission: (caseId, submissionId, sourceName) => submissions.open(caseId, submissionId, sourceName),
+    sealSubmission: (caseId, submissionId, note) => submissions.seal(caseId, submissionId, note),
+    launch: (caseId, job, cfg) => {
+      submissions.add(caseId, job);
+      start(caseId, job, cfg, false);
+    },
     resumeAll,
   };
 }

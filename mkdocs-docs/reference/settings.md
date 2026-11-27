@@ -821,12 +821,16 @@ Each channel has:
 - A **Test** button that sends a test message
 
 **Imports** sends one message when an evidence import ends: a dashboard upload, a drop-folder batch,
-a Velociraptor collection or external import, a cloud collection, or a CrowdStrike NG-SIEM search.
+a Velociraptor collection or external import, a cloud collection, a CrowdStrike NG-SIEM search, or a
+SO-CRATES analysis.
 The message names what was imported, how many events it added to the forensic timeline, how many of
 those are graded High or Critical, and any files or artifacts that failed. A failed import sends
 "Import failed" with the reason. Screenshots (dropped images or extension captures) and live monitors
-send nothing. A dropped file that the drop folder only sent to SO-CRATES is not counted, because
-its import is not finished; no message is sent when its verdicts arrive. Like milestones, import messages
+send nothing. A file sent to SO-CRATES (from the drop folder or the dashboard) is
+not counted in the drop-folder batch message, because its import is not finished. Instead, it sends
+its own message when its verdicts are imported: one message for the file, or one message for all
+the entries of an archive, with the entries that failed listed. An entry that a server restart
+interrupts counts as failed. Like milestones, import messages
 ignore the minimum severity. The toggle is on for new channels and for channels saved before it
 existed.
 
