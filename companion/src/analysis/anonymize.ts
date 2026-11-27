@@ -212,7 +212,9 @@ function nat64EmbeddedIpv4(groups: number[]): string | null {
 export function isInternalIpv6(ip: string): boolean {
   const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
   if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
+  // Unique-local fc00::/7 is a first 16-bit group of fc00-fdff: always four hex digits. A shorter
+  // "fd"/"fc" first group (0x00fd) is not one — that is a fingerprint or EUI-64 byte run (#2959).
+  if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;
   if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true; // link-local fe80::/10
   const mapped = embeddedIpv4(lower);
   if (mapped && isInternalIp(mapped)) return true;

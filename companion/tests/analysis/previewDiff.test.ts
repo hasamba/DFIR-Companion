@@ -260,6 +260,15 @@ describe("previewDiff — possible leaks are guesses on the masked side (#2531)"
     it("leaves loopback in any spelling alone", () => {
       expect(ipv6Warnings("a ::1 b ::ffff:127.0.0.1 c ::ffff:7f00:1 d", true)).toEqual([]);
     });
+
+    // #2959: the hint agrees with masking on byte runs and words that only look like addresses.
+    it.each([true, false])("leaves fingerprints and words alone, maskPublicIps=%s (#2959)", (mask) => {
+      expect(ipv6Warnings("fp fd:3a:11:22:33:44:55:66 seen", mask)).toEqual([]);
+      expect(ipv6Warnings("fp fc:3a:11:22:33:44:55:66 seen", mask)).toEqual([]);
+      expect(ipv6Warnings("os Server2016::Foo up", mask)).toEqual([]);
+      expect(ipv6Warnings("x fd00::1 y", mask)).toEqual([["fd00::1", "ip"]]);
+      expect(ipv6Warnings("x fd:fd00::1Method y", mask)).toEqual([["fd00::1", "ip"]]);
+    });
   });
 
   it("warnings survive the fallback", () => {
