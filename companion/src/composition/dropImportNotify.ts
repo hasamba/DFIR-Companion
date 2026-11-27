@@ -21,9 +21,11 @@ const SOURCE = "drop folder";
 export function notifyDropSweep(
   dispatch: ((event: NotificationEvent) => void) | undefined,
   caseId: string,
-  tally: Pick<SweepTally, "imported" | "failed" | "counts">,
+  tally: Pick<SweepTally, "imported" | "failed" | "counts"> & Partial<Pick<SweepTally, "submitted">>,
 ): void {
-  const evidence = tally.imported.filter((relpath) => !isDropImage(relpath));
+  // The sweep lists a submitted file as imported for the dashboard's drop banner; here it is not (#3004).
+  const submitted = new Set((tally.submitted ?? []).map((s) => s.relpath));
+  const evidence = tally.imported.filter((relpath) => !isDropImage(relpath) && !submitted.has(relpath));
   const counts = sweepCounts(tally.counts);
   const failed = tally.failed.map((f) => ({ name: f.relpath, reason: f.reason }));
   if (!evidence.length && !failed.length) return;

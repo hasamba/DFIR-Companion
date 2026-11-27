@@ -132,9 +132,20 @@ describe("the drop-folder message (#2982)", () => {
     expect(e.lines.some((l) => l.startsWith("Forensic timeline:"))).toBe(false);
   });
 
-  it("keeps 'not available' when nothing finished returned counts (a submitted file only)", () => {
-    const e = sent({ imported: ["cap.pcap"], submitted: [{ relpath: "cap.pcap", reason: "handed" }] });
-    expect(e.lines).toContain(UNAVAILABLE);
+  it("sends nothing for a sweep that only submitted a file to an HTTP tool (#3004)", () => {
+    expect(
+      sent({ imported: ["cap.pcap"], submitted: [{ relpath: "cap.pcap", reason: "handed" }] }),
+    ).toBeUndefined();
+  });
+
+  it("leaves a submitted file out of a mixed sweep's file count and counts (#3004)", () => {
+    const e = sent({
+      imported: ["a.json", "cap.pcap"],
+      submitted: [{ relpath: "cap.pcap", reason: "handed" }],
+      counts: [{ added: 4, highCritical: 1 }],
+    });
+    expect(e.title).toContain("(1 file)");
+    expect(e.lines).toContain("Forensic timeline: +4 events (1 High/Critical)");
   });
 });
 
