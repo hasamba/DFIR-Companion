@@ -213,31 +213,32 @@ function extent(g: readonly Piece[]): Interval {
 
 // Group the pieces, then grow every hidden group over a name run it starts or ends inside (#2957).
 // A grown region swallows any group it now overlaps or touches, and grows again from its new
-// edges, so the result never cuts a run. One sweep: each group is merged at most once. Null when
-// no group is hidden.
+// edges, so the result never cuts a run. One sweep: each group is merged at most once, and each
+// group's extent is computed once. Null when no group is hidden.
 function growHidden(text: string, initial: readonly Piece[]): Piece[][] | null {
   const groups = groupTouching([...initial].sort(byPosition));
   if (!groups.some(tainted)) return null;
+  const spans = groups.map(extent);
   const runs = nameRuns(text);
-  const out: Piece[][] = [];
+  const out: Array<{ group: Piece[]; span: Interval }> = [];
   let next = 0;
   while (next < groups.length) {
-    const g = groups[next++];
-    if (!tainted(g)) {
-      out.push(g);
+    const group = groups[next];
+    let { start, end } = spans[next++];
+    if (!tainted(group)) {
+      out.push({ group, span: { start, end } });
       continue;
     }
-    let { start, end } = extent(g);
     for (;;) {
       start = runCutAt(runs, start)?.start ?? start;
       end = runCutAt(runs, end)?.end ?? end;
-      const before = out.length > 0 ? extent(out[out.length - 1]) : undefined;
+      const before = out.length > 0 ? out[out.length - 1].span : undefined;
       if (before && before.end >= start) {
         start = Math.min(start, before.start);
         out.pop();
         continue;
       }
-      const after = next < groups.length ? extent(groups[next]) : undefined;
+      const after = next < groups.length ? spans[next] : undefined;
       if (after && after.start <= end) {
         end = Math.max(end, after.end);
         next++;
@@ -245,9 +246,9 @@ function growHidden(text: string, initial: readonly Piece[]): Piece[][] | null {
       }
       break;
     }
-    out.push([{ start, end, hidden: true }]);
+    out.push({ group: [{ start, end, hidden: true }], span: { start, end } });
   }
-  return out;
+  return out.map((o) => o.group);
 }
 
 const byPosition = (a: Interval, b: Interval) => a.start - b.start || b.end - a.end;

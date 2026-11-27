@@ -235,6 +235,34 @@ describe("custom entity that contains a secret (#2952)", () => {
     const line = `a ${VALUE} b srv01 c ${PW}=x1fake d\n`;
     expectLinearScan("secret+custom", (n) => anon.apply(line.repeat(n)), 200);
   });
+
+  // #2957 review: a big untouched group before a region that grows across many groups.
+  it("growth stays linear with a long chain of merges", () => {
+    const build = (n: number) => {
+      const head = `${"a".repeat(n)} `;
+      const runs = Array.from({ length: n }, (_, i) => `q${i}.w${i}`);
+      const text = `${head}token=${SECRET} ${runs.join(" ")} end`;
+      const custom = Array.from({ length: n }, (_, i) => ({ start: i, end: i + 1 }));
+      let at = text.indexOf(" q0");
+      custom.push({ start: head.length, end: at + 3 });
+      for (let i = 1; i < n; i++) {
+        at = text.indexOf(` q${i}.`, at + 1);
+        custom.push({ start: at, end: at + 1 + `q${i}`.length });
+      }
+      return { text, custom, redacted: redactToSentinel(text, S) };
+    };
+    const small = build(3);
+    expect(coverCustomSecrets(small.text, small.redacted, S, small.custom, [])).toBe(`aaa ${S} end`);
+    const built = new Map<number, ReturnType<typeof build>>(); // the redactor is not what is timed
+    const at = (n: number) => built.get(n) ?? built.set(n, build(n)).get(n)!;
+    at(2000);
+    at(16000);
+    expectLinearScan(
+      "region growth chain",
+      (n) => coverCustomSecrets(at(n).text, at(n).redacted, S, at(n).custom, []),
+      2000,
+    );
+  });
 });
 
 describe("locating secrets in the clear text", () => {
