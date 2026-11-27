@@ -55,13 +55,13 @@ export function redactSecretsWithCustom(
   text: string,
   compiled: CompiledCustom,
   sentinel: string,
-  addresses: () => Array<Interval & { failClosed?: true }>,
+  addresses: () => Array<Interval & { separated?: true }>,
 ): string {
   const redacted = redactToSentinel(text, sentinel);
   if (!redacted.includes(sentinel)) return redacted;
   const custom = findCustomSpans(text, compiled);
   if (custom.length === 0) return redacted;
-  // An address after a separator is joined as the detector read it, "::" included (#2979).
+  // An address split off a separator by #2979 is joined as it was read before, "::" included.
   return coverCustomSecrets(text, redacted, sentinel, custom, addresses().map(asDetectorRead));
 }
 

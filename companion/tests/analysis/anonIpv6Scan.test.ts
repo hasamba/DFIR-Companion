@@ -622,10 +622,8 @@ describe.each([true, false])("more word:: separator shapes, maskPublicIps=%s (#2
     expect(back).toBe(input);
     expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual([["ANON_IP_1", value, "IP"]]);
     const start = input.indexOf(value);
-    // An address on its own was read as "::" + value today; a joined one was not.
-    const separated = value.includes("::") ? {} : { separated: true };
     expect(findReservableIpv6Spans(input, mask)).toEqual([
-      { start, end: start + value.length, failClosed: true, ...separated },
+      { start, end: start + value.length, failClosed: true, separated: true },
     ]);
   });
 
@@ -651,6 +649,24 @@ describe.each([true, false])("more word:: separator shapes, maskPublicIps=%s (#2
   it("a suppression of the address as it was read before still leaves it visible", () => {
     const a = createAnonymizer(policy(mask), { ...known(), suppressed: ["::abc:10"] });
     expect(a.apply("Evtx::abc:10.0.0.5")).toBe("Evtx::abc:ANON_IP_1");
+  });
+
+  // Code review: a #2976 join keeps its extent when custom values group with what touches it.
+  it("an email before a #2976 join keeps its own token", () => {
+    const a = createAnonymizer(
+      { ...policy(mask), categories: { ...policy(mask).categories, EMAIL: true } },
+      known([{ value: "a00:5::1 tail", category: "HOST" }]),
+    );
+    expect(a.apply("foo@example.com::a00:5::1 tail")).toBe("ANON_EMAIL_1::ANON_HOST_1");
+  });
+
+  // The analyst left "::1" visible: a custom value that touches the join must not group it away.
+  it("a custom value before a #2976 join does not group an address a suppression left in clear", () => {
+    const a = createAnonymizer(policy(mask), {
+      ...known([{ value: "x:", category: "HOST" }]),
+      suppressed: ["::1"],
+    });
+    expect(a.apply("x::a00:5::1::1")).toBe("ANON_HOST_1:ANON_IP_1::1");
   });
 
   it.each([

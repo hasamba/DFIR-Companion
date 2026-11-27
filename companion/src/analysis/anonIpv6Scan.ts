@@ -44,7 +44,8 @@ export interface Ipv6Span {
   end: number;
   // Hide as an internal address whatever its value grades: the address after a word:: separator (#2976).
   failClosed?: true;
-  // A fail-closed span the detector read with the "::" in front ("::a00:5" out of "Evtx::a00:5", #2979).
+  // A fail-closed span read with the "::" in front before #2979 ("::a00:5" out of "Evtx::a00:5"); a
+  // #2976 join was not, and keeps its extent everywhere.
   separated?: true;
 }
 
@@ -197,8 +198,9 @@ interface Step {
 // - Joined otherwise ("Evtx::7f00:1::5", or after a redacted secret): also today's scan of the next
 //   match sets aside nothing outside it and resumes at its end, and the join ends at JOIN_END.
 // - Alone ("Evtx::a00:5"): the rest of the match, when it has two groups or more. A bare "1"
-//   ("Evtx::1") would be learned by screenshot auto-discovery and mask every "1" later. `separated`
-//   tells the restore that the address was read as "::a00:5" today.
+//   ("Evtx::1") would be learned by screenshot auto-discovery and mask every "1" later.
+// `separated` marks the two new shapes: today they were read with the "::" in front ("::a00:5"), and
+// the restore and the passes that group what touches an address judge them that way (asDetectorRead).
 // Same characters hidden, minus the separator colons, and the scan resumes where it would have. The two
 // new shapes never apply to a "::" right after a span set aside ("xfd00::a00:5::1"): that follows an
 // address, not a word.
@@ -211,12 +213,13 @@ function afterSeparator(text: string, m: RegExpExecArray, grade: Grade, opts: Sc
   const joined = stickyAt(text, at);
   const next = stickyAt(text, end);
   const joinEnd = joined ? at + joined[0].length : -1;
-  const join = { spans: [{ start: at, end: joinEnd, failClosed: true as const }], resume: joinEnd };
+  const join = (span: Ipv6Span) => ({ spans: [span], resume: joinEnd });
   if (next && joinEnd === end + next[0].length) {
     const keepNext = gradeMatch(text, next, grade, opts) === "keep";
-    if (keepNext && WORD_CHAR.test(lead)) return join; // #2976, unchanged
+    // #2976, unchanged: the extent it has always had.
+    if (keepNext && WORD_CHAR.test(lead)) return join({ start: at, end: joinEnd, failClosed: true });
     if (start !== prevEnd && joinsCleanly(text, scanMatch(text, next, grade, opts, end), end, joinEnd))
-      return join;
+      return join({ start: at, end: joinEnd, failClosed: true, separated: true });
   }
   if (start === prevEnd || !text.slice(at, end).includes(":")) return null;
   return { spans: [{ start: at, end, failClosed: true as const, separated: true as const }], resume: end };
@@ -274,11 +277,11 @@ function scanMatch(text: string, m: RegExpExecArray, grade: Grade, opts: ScanOpt
  * (#2979). The passes that join or group what TOUCHES an address — a custom value, a redacted secret —
  * use this, so "x:" or a secret that ran up to the separator still reaches the address it reached.
  */
-export function asDetectorRead(span: Pick<Ipv6Span, "start" | "end" | "failClosed">): {
+export function asDetectorRead(span: Pick<Ipv6Span, "start" | "end" | "separated">): {
   start: number;
   end: number;
 } {
-  return span.failClosed ? { start: span.start - 2, end: span.end } : { start: span.start, end: span.end };
+  return span.separated ? { start: span.start - 2, end: span.end } : { start: span.start, end: span.end };
 }
 
 export type SeparatorFlags = Pick<Ipv6Span, "failClosed" | "separated">;
@@ -291,7 +294,8 @@ export function groupAsRead<G extends { start: number; end: number; category: un
   found: readonly Ipv6Span[],
   group: (read: Array<{ start: number; end: number }>) => G[],
 ): Array<{ start: number; end: number; category: G["category"]; flags?: SeparatorFlags }> {
-  const closed = new Map(found.filter((f) => f.failClosed).map((f) => [`${f.start - 2}:${f.end}`, f]));
+  const key = (f: Ipv6Span) => `${asDetectorRead(f).start}:${f.end}`;
+  const closed = new Map(found.filter((f) => f.failClosed).map((f) => [key(f), f]));
   return group(found.map(asDetectorRead)).map((g) => {
     const f = g.category === null ? closed.get(`${g.start}:${g.end}`) : undefined;
     if (!f) return { start: g.start, end: g.end, category: g.category };
