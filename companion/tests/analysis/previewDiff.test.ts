@@ -222,6 +222,46 @@ describe("previewDiff — possible leaks are guesses on the masked side (#2531)"
     for (const w of diff.warnings) expect(masked.slice(w.m[0], w.m[1])).not.toMatch(/ANON_/);
   });
 
+  // #2958: the hint finds IPv6 addresses with the anonymizer's own scan, so it flags what the IP
+  // category would have masked — including an address joined to a word by a colon.
+  describe("IPv6 uses the anonymizer's scan (#2958)", () => {
+    const ipv6Warnings = (clear: string, maskPublicIps: boolean) => {
+      const { masked, diff } = run(clear, policy(maskPublicIps, { IP: false, HOST: false }), {
+        hosts: [],
+        accounts: [],
+        internalDomains: [],
+      });
+      return kinds(masked, diff).filter(([, k]) => k === "ip");
+    };
+
+    it.each([
+      ["host node12:fd00::1 up", "fd00::1"],
+      ["host win2019:fd00::1 up", "fd00::1"],
+      ["host dc:fd00::1 up", "fd00::1"],
+      ["net fd00:abcd:: up", "fd00:abcd::"],
+      ["peer ::ffff:10.0.0.5 up", "::ffff:10.0.0.5"],
+      ["x fd00::beefX y", "fd00::beef"],
+    ])("%s flags %s", (clear, expected) => {
+      expect(ipv6Warnings(clear, false)).toEqual([[expected, "ip"]]);
+    });
+
+    it("flags the address right after a token, at the masked offsets", () => {
+      const clear = "WS-FIN-07:fd00::1 up";
+      const { masked, diff } = run(clear, policy(true, { IP: false }));
+      expect(masked).toMatch(/^ANON_HOST_\d+:fd00::1 up$/);
+      expect(kinds(masked, diff)).toEqual([["fd00::1", "ip"]]);
+    });
+
+    it("keeps a complete public address whole, and visible when public IPs are kept", () => {
+      expect(ipv6Warnings("peer 2001:fd00::1 up", false)).toEqual([]);
+      expect(ipv6Warnings("peer 2001:fd00::1 up", true)).toEqual([["2001:fd00::1", "ip"]]);
+    });
+
+    it("leaves loopback in any spelling alone", () => {
+      expect(ipv6Warnings("a ::1 b ::ffff:127.0.0.1 c ::ffff:7f00:1 d", true)).toEqual([]);
+    });
+  });
+
   it("warnings survive the fallback", () => {
     const anon = createAnonymizer(policy(true, { IP: false }), KNOWN);
     const diff = previewDiff("x\ny\nz", "talk to 10.0.0.9", anon, policy(true, { IP: false }));
