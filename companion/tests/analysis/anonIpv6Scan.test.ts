@@ -495,6 +495,17 @@ describe.each([true, false])("IPv6 after a word:: separator, maskPublicIps=%s (#
     expect(run(input, mask).out).toBe(expected);
   });
 
+  // Code review: an internal address the retry finds BEFORE the "::" wins over the restart past it.
+  it.each([
+    ["xfd:fd00::2001:db8::1", "fd00::2001:db8"],
+    ["xfe8:fe80::2001:db8::1", "fe80::2001:db8"],
+  ])("an internal address before the separator still fails closed: %s", (input, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(back).toBe(input);
+    expect(out.startsWith(input.slice(0, input.indexOf(value)) + "ANON_IP_1")).toBe(true);
+    expect(pairs[0]).toEqual(expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" }));
+  });
+
   it.each([
     "Server2016::Foo",
     "Server2016::Foo()",

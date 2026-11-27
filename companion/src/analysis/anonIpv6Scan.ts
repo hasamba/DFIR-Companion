@@ -206,24 +206,29 @@ export function findIpv6Literals(
       continue;
     }
     const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
+    const rules = retryRules(text, m, g, glued, opts);
+    // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
+    // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
+    // only an internal address, so a fingerprint never mints a public token (#2959).
+    const compressed = m[0].includes("::");
+    const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
+    const inner = rules ? retryInside(text, span, ok, grade, rules) : null;
     const restart = glued ? separatorRestart(text, m, grade, opts) : null;
-    if (restart !== null) {
+    // An internal address found BEFORE the separator ("fd00::2001:db8" out of "xfd:fd00::2001:db8::1")
+    // still wins: it fails closed (#2974 review). One found after it is the restart's to take whole.
+    const innerFirst =
+      inner &&
+      restart !== null &&
+      inner.start < restart &&
+      grade(text.slice(inner.start, inner.end)) === "keep";
+    if (restart !== null && !innerFirst) {
       re.lastIndex = restart; // the address after the separator starts a token of its own
       continue;
     }
-    const rules = retryRules(text, m, g, glued, opts);
-    if (rules) {
-      // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
-      // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
-      // only an internal address, so a fingerprint never mints a public token (#2959).
-      const compressed = m[0].includes("::");
-      const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
-      const inner = retryInside(text, span, ok, grade, rules);
-      if (inner) {
-        out.push(inner);
-        re.lastIndex = inner.end; // the real address can run past the rejected match
-        continue;
-      }
+    if (inner) {
+      out.push(inner);
+      re.lastIndex = inner.end; // the real address can run past the rejected match
+      continue;
     }
     // "2019::" out of "Win2019:: x", and "2016::F" out of "Server2016::Foo" (#2959), are words.
     const inWord = glued && (m[0].endsWith("::") || /^\p{L}/u.test(text.slice(span.end, span.end + 1)));
