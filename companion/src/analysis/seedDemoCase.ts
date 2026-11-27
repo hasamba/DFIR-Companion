@@ -39,6 +39,10 @@ const SHA_RANSOM = "deadbeef1234567890abcdef1234567890abcdef1234567890abcdef1234
 // 64 hex chars, like the rest — a 66-char value is not a SHA-256 and any consumer that validates
 // digest length (MISP) rejects the whole indicator (#177).
 const SHA_DROPPER = "cafe0001002003004005006007008009000a000b000c000d000e000f00100011";
+// PSEXESVC.exe — the service binary PsExec drops on every target. One hash on DC01, FS01 and WEB01
+// is what lets the Evidence Chain reconstruct the lateral path (#3024).
+const SHA_PSEXESVC = "5e5c0de15e5c0de15e5c0de15e5c0de15e5c0de15e5c0de15e5c0de15e5c0de1";
+const PSEXESVC_PATH = "c:\\windows\\psexesvc.exe";
 const MD5_BEACON = "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d";
 const MD5_MIMIKATZ = "4d3c2b1a0f9e8d7c6b5a4938271605f4";
 
@@ -666,7 +670,7 @@ export async function seedDemoCase(
       parentName: "explorer.exe",
       action: "execute" as const,
       description:
-        "Excel opened Q1-2026-Invoice.xlsm; user clicked 'Enable Content' to run macro. Excel spawned cmd.exe (pid 4812).",
+        "Excel (running as GLOBALTECH\\jsmith) opened Q1-2026-Invoice.xlsm; user clicked 'Enable Content' to run macro. Excel spawned cmd.exe (pid 4812).",
     },
     {
       id: "e003",
@@ -822,7 +826,7 @@ export async function seedDemoCase(
       port: 445,
       action: "network_send" as const,
       description:
-        "PsExec.exe executed from WKSTN-JSMITH targeting DC01 (10.10.20.15). Command: PsExec.exe \\\\DC01 -s cmd.exe. EventID 4648 on DC01 (explicit credential logon, account: jsmith).",
+        "PsExec.exe executed from WKSTN-JSMITH targeting DC01 (10.10.20.15). Command: PsExec.exe \\\\DC01 -s cmd.exe. EventID 4648 on DC01 (explicit credential logon, account: GLOBALTECH\\jsmith).",
     },
     {
       id: "e013",
@@ -833,6 +837,8 @@ export async function seedDemoCase(
       sourceScreenshots: [],
       asset: "DC01",
       sources: ["Chainsaw"],
+      sha256: SHA_PSEXESVC,
+      path: PSEXESVC_PATH,
       description:
         "Service 'PSEXESVC' installed on DC01 (EventID 7045). Image path: %SystemRoot%\\PSEXESVC.exe. Service type: Interactive. Ran as SYSTEM.",
     },
@@ -899,6 +905,8 @@ export async function seedDemoCase(
       sourceScreenshots: [],
       asset: "FS01",
       sources: ["Chainsaw"],
+      sha256: SHA_PSEXESVC,
+      path: PSEXESVC_PATH,
       srcIp: "10.10.10.45",
       dstIp: "10.10.20.30",
       port: 445,
@@ -915,6 +923,8 @@ export async function seedDemoCase(
       sourceScreenshots: [],
       asset: "WEB01",
       sources: ["Chainsaw"],
+      sha256: SHA_PSEXESVC,
+      path: PSEXESVC_PATH,
       srcIp: "10.10.10.45",
       dstIp: "10.10.20.40",
       port: 445,
