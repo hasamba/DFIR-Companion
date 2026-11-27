@@ -14,6 +14,7 @@ import {
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { scanTokenLiterals } from "./anonTokenLiterals.js";
+import { findIpv6Literals, type Ipv6Grade } from "./anonIpv6Scan.js";
 import {
   NETBIOS_ACCT,
   UPN_ACCT,
@@ -254,19 +255,12 @@ export function isMaskableIpv6(ip: string): boolean {
   return groups[0] >= 0x2000 && groups[0] <= 0x3fff; // 2000::/3 global unicast
 }
 
-// Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
-// Handles full (a:b:c:d:e:f:g:h), compressed (::), and IPv4-mapped (::ffff:x.x.x.x).
-//
-// The two "::ffff:…" (IPv4-mapped) branches are FIRST in the alternation on purpose. JS regex
-// alternation is first-match, not longest-match: a generic branch like the bare "::" one further
-// down can match a truncated prefix of a mapped address (e.g. just "::ffff:127" out of
-// "::ffff:127.0.0.1", stopping at the first "." since "." isn't a hex digit) and the engine never
-// backtracks to try the more specific, longer-matching branch below it. Putting the specific
-// dotted/hex-group mapped forms first means they get first refusal at a "::ffff:" prefix, so the
-// WHOLE address is consumed as one match before IPV4_RE (run second, see anonIps below) ever gets
-// a chance to tokenize the embedded dotted quad on its own and leave a dangling "::ffff:" behind.
-const IPV6_RE =
-  /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}/gi;
+// IPV6_RE and its scan live in anonIpv6Scan.ts. An internal address fails closed even glued to a
+// word; a routable one is masked unless it starts inside a word with an internal one inside (#2953).
+function ipv6Grade(ip: string): Ipv6Grade {
+  if (isInternalIpv6(ip)) return "keep";
+  return isMaskableIpv6(ip) ? "weak" : null;
+}
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 
@@ -525,9 +519,9 @@ export function createAnonymizer(
   }
 
   function reservableIpv6Spans(text: string): Array<{ start: number; end: number }> {
-    return [...text.matchAll(IPV6_RE)]
-      .filter((m) => isInternalIpv6(m[0]) || isMaskableIpv6(m[0])) // detector false positives stay put
-      .map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+    // Shared by the set-aside and the secret/custom pass (#2952), so both agree on what an address
+    // is; detector false positives stay put, and a glued or "::"-ended address is found (#2953).
+    return findIpv6Literals(text, ipv6Grade, { splitUnknown: true, wholeToken: false });
   }
 
   function restoreIpv6Literals(t: string, literals: Reserved[]): string {

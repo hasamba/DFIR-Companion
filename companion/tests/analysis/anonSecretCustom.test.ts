@@ -98,6 +98,13 @@ describe("custom entity that contains a secret (#2952)", () => {
     noFragments(a, "fd00", "abcd", SECRET);
   });
 
+  it("a word-glued address ending in :: cut by the region is hidden whole (#2953)", () => {
+    const text = `x node12:fd00:abcd::]:${PW}=${SECRET} y`;
+    const { out, a } = mask([other(`abcd::]:${PW}=${SECRET}`)], text);
+    expect(out).toBe(`x node12:${R} y`);
+    noFragments(a, "fd00", "abcd", SECRET);
+  });
+
   it("a public IPv6 address cut by the region is hidden even with public IPs visible", () => {
     const text = `x [2a01:4f8::5]:${PW}=${SECRET} y 2a01:4f8::5`;
     const { out } = mask([other(`4f8::5]:${PW}=${SECRET}`)], text, policy({ maskPublicIps: false }));
