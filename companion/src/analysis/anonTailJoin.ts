@@ -295,7 +295,9 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
         if (g.out === ip) return { out: d.ended(tok, e.value, at, end - ip.length, t) + ip, skip: 0 };
         return { out: d.ended(tok + g.out, e.value, at, end + g.skip, t), skip: g.skip };
       }
-      const split = cut ? null : savedPhoneTail(h, e.value, at, end, t);
+      const split = cut
+        ? null
+        : (savedPhoneTail(h, e.value, at, end, t) ?? mappedPhone(h, e.value, at, end, t));
       if (split) return split;
       const extra = cut ? (EXTRA.exec(next)?.[0] ?? "") : "";
       const run = extra ? extraRun(h, e.value, cut, extra, at, end, t) : null;
@@ -380,6 +382,20 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     );
     const skip = m[0].length;
     return { out: d.ended(tok + gap + phone, value, at, end + skip, t), skip };
+  }
+  // #3033: an address set aside whole with its dotted IPv4 ("::ffff:10.0.0.100", which IPV6_RE reads
+  // in one piece) has no cut tail to join. A phone number that starts in its last number is split
+  // as for "fd00::10.0.0.100", whose cut tail (".0.0.100") it may start in: the address keeps its
+  // token, still saved, and the rest of the number is its own token, never saved.
+  function mappedPhone(h: Head, value: string, at: number, end: number, t: string): Step | null {
+    if (!DOTTED_V6.test(value)) return null;
+    const next = t.slice(end, end + NEXT);
+    const ipv4 = value.slice(value.lastIndexOf(":") + 1);
+    const c = FIFTH_OCTET.test(next) ? null : crossing(ipv4.slice(ipv4.indexOf(".")), next, d.crossers());
+    if (!c || !phoneOk(c, d.suppressed)) return null;
+    const tok = h.mint(value);
+    const p = phoneOut(c, false);
+    return { out: d.ended(tok + p.out, value, at, end + p.skip, t), skip: p.skip };
   }
   function joinOne(t: string, token: string): string {
     const value = d.real(token);
