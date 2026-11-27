@@ -46,6 +46,7 @@ const SAMPLES = [
   join("sk-", "ant-", "api03-", rep("Ab12Cd34", 24)),
   join("sk-", rep("Ab12Cd34", 12), "T3Blbk", "FJ", rep("Kl12Mn34", 12)),
   SK,
+  join(BS, SK), // ... glued after a name in an account (#3029)
   join("S", "G.", rep("Ab12Cd34", 12), ".", rep("Mn34Op56", 12)),
   join("S", "G.", rep("Ab12Cd34", 22), ".", rep("Mn34Op56", 43)),
   join("np", "m_", rep("N1p2", 40)),

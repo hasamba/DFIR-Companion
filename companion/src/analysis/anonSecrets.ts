@@ -57,6 +57,11 @@ export const VENDOR_SECRETS: readonly RegExp[] = [
   /sk-ant-[a-z]{2,10}\d{2}-(?=[0-9a-z_-]{0,256}[A-Z])[A-Za-z0-9_-]{16,}/g,
   /sk-[A-Za-z0-9_-]{8,200}T3BlbkFJ[A-Za-z0-9_-]{8,}/g, // ... an OpenAI key glued to a word (its "OpenAI" marker)
   /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g, // OpenAI legacy key
+  // ... glued after a name in an account, path, e-mail or host (CORP\bob + key, #3029): after a "\"
+  // or "/" in the same word, or before a ".", "@" or "\". At least three digits, upper- and lower-case
+  // letters, so a host or folder name such as kiosk-FrontDesk01 is not one; a bare word such as
+  // desk-Ab12Cd34... stays readable (#3005).
+  /(?:(?<=[\\/][A-Za-z0-9._$-]{0,64})|(?=sk-[A-Za-z0-9]{20,256}[.@\\]))sk-(?=(?:[A-Za-z]{0,64}\d){3})(?=(?:[a-z0-9]{0,64}[A-Z]){3})(?=(?:[A-Z0-9]{0,64}[a-z]){3})[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
   /\bSG\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // SendGrid key
   /SG\.[A-Za-z0-9_-]{20,24}\.[A-Za-z0-9_-]{40,46}(?![A-Za-z0-9_-])/g, // ... glued to a word: ~69 characters
   /\bnpm_[A-Za-z0-9]{36,}/g, // npm token

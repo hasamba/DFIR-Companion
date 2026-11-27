@@ -41,15 +41,21 @@ function run(text: string, opts: { secrets?: boolean; mask?: boolean; custom?: C
 const holds = (held: string[], secret: string) => held.some((v) => v.includes(CORE(secret)));
 
 describe.each([true, false])("a secret glued into an account or email, maskPublicIps=%s (#3006)", (mask) => {
-  it.each([SK, JWT])(
-    "keeps the domain token of an internal UPN and hides the name one way (%#)",
-    (secret) => {
-      const r = run(`logon bob${secret}${AT}${INTERNAL} ok`, { mask });
-      expect(r.out).toBe(`logon ${SEC}${AT}${tok("DOMAIN", 1)} ok`);
-      expect(holds(r.held, secret)).toBe(false);
-      expect(r.a.discoveries()).toEqual([{ value: INTERNAL, category: "DOMAIN" }]);
-    },
-  );
+  it("keeps the domain token of an internal UPN and hides the name one way", () => {
+    const r = run(`logon bob${JWT}${AT}${INTERNAL} ok`, { mask });
+    expect(r.out).toBe(`logon ${SEC}${AT}${tok("DOMAIN", 1)} ok`);
+    expect(holds(r.held, JWT)).toBe(false);
+    expect(r.a.discoveries()).toEqual([{ value: INTERNAL, category: "DOMAIN" }]);
+  });
+
+  // An sk- key glued after the name is found by the secret pass since #3029, so the rest of the
+  // address goes with it, domain included (#3028).
+  it("hides an internal UPN whole when the secret pass finds the key", () => {
+    const r = run(`logon bob${SK}${AT}${INTERNAL} ok`, { mask });
+    expect(r.out).toBe(`logon ${SEC} ok`);
+    expect(holds(r.held, SK)).toBe(false);
+    expect(r.a.discoveries()).toEqual([]);
+  });
 
   it.each([SK, JWT])("hides an external email whole, its domain included (%#)", (secret) => {
     const r = run(`mail bob${secret}x${AT}${EXTERNAL} ok`, { mask });
@@ -62,7 +68,7 @@ describe.each([true, false])("a secret glued into an account or email, maskPubli
   it("sends a bare repeat of a UPN name one way, in any letter case", () => {
     const name = `bob${SK}`;
     const r = run(`logon ${name}${AT}${INTERNAL} then ${name.toUpperCase()} again`, { mask });
-    expect(r.out).toBe(`logon ${SEC}${AT}${tok("DOMAIN", 1)} then ${SEC} again`);
+    expect(r.out).toBe(`logon ${SEC} then ${SEC} again`); // the key is found by the secret pass (#3029)
     expect(holds(r.held, SK)).toBe(false);
   });
 

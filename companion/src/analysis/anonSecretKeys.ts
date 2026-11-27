@@ -163,8 +163,10 @@ export function isSecretKey(key: string): boolean {
 // suffix of a longer key (or of a `--flag`) from reading as a key of its own. Pretty-printed JSON
 // puts newlines around the separator, so whitespace there is unbounded; nothing after it can
 // backtrack, so each key start still scans its own blank run once.
+// A run of digits glued in front (007password=) still lets a key start, when the run itself starts at
+// that boundary (#3029); a digit inside a longer word does not.
 const KEY_RE =
-  /(?<![\w.-])(?:(?<!\\)|(?=[A-Za-z][\w-]{0,127}[ \t]*=))(\\"|"|')?([A-Za-z][\w.-]{0,127})\1(\s*)[:=](\s*)/g;
+  /(?:(?<![\w.-])|(?<=(?<![\w.-])\d{1,16}))(?:(?<!\\)|(?=[A-Za-z][\w-]{0,127}[ \t]*=))(\\"|"|')?([A-Za-z][\w.-]{0,127})\1(\s*)[:=](\s*)/g;
 
 const CLI_FLAG_RE =
   /(?<![\w-])--(?:password|secret|token|api-key|apikey|access-token|client-secret)(?:[ \t]{1,16}|=)/gi;
@@ -245,7 +247,8 @@ export function redactKeyedSecrets(text: string, placeholder: string): string {
   for (let m = re.exec(text); m; m = re.exec(text)) {
     // After a "\\" (CONTOSO\\password=, a registry value) only an exact key counts (#3005): a
     // fragment there is a value NAME (Run\\PasswordManager=<exe>, WDigest\\UseLogonCredential=1).
-    const afterBackslash = !m[1] && text[m.index - 1] === "\\";
+    const digits = /\d*$/.exec(text.slice(Math.max(0, m.index - 16), m.index))?.[0].length ?? 0;
+    const afterBackslash = !m[1] && text[m.index - 1 - digits] === "\\";
     if (afterBackslash ? !isExactKey(normalizeKey(m[2])) : !isSecretKey(m[2])) continue;
     // A newline around the separator belongs to JSON only. After a bare `Enter password:` it is the
     // end of a prompt, and the next line's first word is not the password.
