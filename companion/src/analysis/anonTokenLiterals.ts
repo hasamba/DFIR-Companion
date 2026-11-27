@@ -37,6 +37,131 @@ export function scanTokenLiterals(
   return { text: out, literals };
 }
 
+// #2992 — a token glued to a digit read back as another token: "ANON_IP_1" + "0" is "ANON_IP_10".
+// A minted token right before a digit is followed by this delimiter; restore() consumes exactly one
+// after a token it minted. Inserted when the next text is delimiters then a digit, so one already
+// in the input after a token survives the round trip (byte stuffing). Visible, rare after a value.
+export const TOKEN_DELIMITER = "\u00B7";
+const DELIMITER_THEN_DIGIT = `${TOKEN_DELIMITER}*[0-9]`;
+const DELIMITED = new RegExp(`${TOKEN_DELIMITER}(?=${DELIMITER_THEN_DIGIT})`, "y");
+const NEEDS_DELIMITER = new RegExp(DELIMITER_THEN_DIGIT, "y");
+// After a site's match: a digit, or an IPv6 placeholder whose plain return may start with one.
+const MAY_GLUE = /[0-9\uE000]/;
+const LAST_TOKEN = /ANON_([A-Z]+)_(\d+)$/;
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/** 1 when text[at] is a delimiter this module would have inserted (followed by delimiters + digit). */
+export function delimiterAt(text: string, at: number): number {
+  DELIMITED.lastIndex = at;
+  return DELIMITED.test(text) ? 1 : 0;
+}
+
+/** `tokenSource` plus the optional delimiter it consumes — the reader form of a minted token. */
+function delimitedTokenSource(tokenSource: string): string {
+  return `(?:${tokenSource})(?:${TOKEN_DELIMITER}(?=${DELIMITER_THEN_DIGIT}))?`;
+}
+
+export interface TokenReaders {
+  /** Every token (with the delimiter it owns) replaced by `fn(upper token)`; undefined keeps it. */
+  replace(text: string, fn: (upperToken: string) => string | undefined): string;
+  /** True when the whole string is one token, with its delimiter and the digits after it. */
+  isToken(s: string): boolean;
+}
+
+/** The readers of minted tokens: each consumes the delimiter a token owns. Fresh regexes per call. */
+export function tokenReaders(tokenSource: string): TokenReaders {
+  const source = delimitedTokenSource(tokenSource);
+  return {
+    replace: (text, fn) =>
+      text.replace(new RegExp(source, "gi"), (m) => fn(m.replace(TOKEN_DELIMITER, "").toUpperCase()) ?? m),
+    isToken: (s) => new RegExp(`^${source}[0-9]*$`, "i").test(s.trim()),
+  };
+}
+
+/** A character absent from `text`, so the input can never forge it. "" when none is free. */
+function absentChar(text: string): string {
+  for (let c = 0xe002; c <= 0xf8ff; c++) {
+    const ch = String.fromCharCode(c);
+    if (!text.includes(ch)) return ch;
+  }
+  return "";
+}
+
+export interface TokenEnds {
+  /** A new apply() call on `text`, with the anonymizer's token -> value map. */
+  start(text: string, toReal: ReadonlyMap<string, string>): void;
+  /** A site's splice of text[at, end) as `result` (`value` when nothing was minted). */
+  ended(result: string, value: string, at: number, end: number, text: string): string;
+  /** The final text; a value a later pass swallowed an alias into gets the token's real text. */
+  finish(text: string, toReal: Map<string, string>): string;
+}
+
+/**
+ * The per-anonymizer state for the sites that can splice a token before a digit. Such a token is
+ * spliced as an ALIAS of the same shape (same length, letters for letters, the same number), so every
+ * later pass reads exactly the text it read before; any mark between the token and the digit would
+ * give those passes a boundary they never had. finish() puts the token back with the delimiter.
+ * One mark, before an address returned as it is that starts with a digit right after a token, is
+ * safe: an address opens with at most four hex digits and a colon, so no later pass starts there,
+ * and none starts inside a token's number.
+ */
+export function tokenEnds(tokenSource: string, categories: readonly string[]): TokenEnds {
+  let mark = "";
+  let aliases = new Map<string, string>(); // alias -> token
+  let input = "";
+  let known: ReadonlyMap<string, string> = new Map();
+  let before = 0; // toReal entries older than this call: never rewritten
+  const taken = new Set(categories);
+  // An alias spelling found nowhere: not in the text, this call's input, or any stored value.
+  const free = (code: string, text: string) =>
+    !taken.has(code) && ![text, input, ...known.values()].some((t) => t.includes(`ANON_${code}_`));
+  function alias(token: string, letters: number, text: string): string | null {
+    for (let k = aliases.size; k < aliases.size + 4096; k++) {
+      let code = "";
+      for (let n = k, i = 0; i < letters; i++, n = Math.floor(n / 26)) code = LETTERS[n % 26] + code;
+      const a = token.replace(LAST_TOKEN, `ANON_${code}_$2`);
+      if (aliases.has(a) || !free(code, text)) continue;
+      aliases.set(a, token);
+      return a;
+    }
+    return null;
+  }
+  return {
+    start: (text, toReal) => {
+      mark = absentChar(text);
+      aliases = new Map();
+      input = text;
+      known = toReal;
+      before = toReal.size;
+    },
+    ended: (result, value, at, end, text) => {
+      const after = /^[0-9]/.test(result) && LAST_TOKEN.test(text.slice(Math.max(0, at - 64), at));
+      const head = after ? mark : "";
+      const last = result !== value && MAY_GLUE.test(text[end] ?? "") ? LAST_TOKEN.exec(result) : null;
+      const token = last ? last[0] : "";
+      const swapped = last ? alias(token, last[1].length, text) : null;
+      return head + (swapped ? result.slice(0, -token.length) + swapped : result);
+    },
+    finish: (text, toReal) => {
+      const names = [...aliases.keys()].sort((a, b) => b.length - a.length);
+      const source = [...names, tokenSource].join("|");
+      const out = text.replace(
+        new RegExp(`(${source})${mark && `${mark}?`}`, "gi"),
+        (m, tok: string, at: number, w: string) => {
+          const token = aliases.get(tok) ?? (toReal.has(tok.toUpperCase()) ? tok : null);
+          if (token === null) return m;
+          NEEDS_DELIMITER.lastIndex = at + m.length;
+          return NEEDS_DELIMITER.test(w) ? token + TOKEN_DELIMITER : token;
+        },
+      );
+      for (const [tok, value] of [...toReal].slice(before))
+        for (const [a, t] of aliases)
+          if (value.includes(a)) toReal.set(tok, value.replaceAll(a, toReal.get(t) ?? t)); // #2991
+      return mark ? out.replaceAll(mark, "") : out;
+    },
+  };
+}
+
 /**
  * #2991 — put back the real text of every token `lookup` knows in `value`. A later pass (account,
  * email, host, …) can match text that already holds a token an earlier pass minted; the new token

@@ -13,7 +13,7 @@ import {
 } from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
-import { expandMintedTokens, scanTokenLiterals } from "./anonTokenLiterals.js";
+import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { findIpv6Literals, groupAsRead, ipv4TailJoin, ipv6Mask } from "./anonIpv6Scan.js";
 import type { Ipv6Grade, Ipv6Span, SeparatorFlags } from "./anonIpv6Scan.js";
 import {
@@ -78,17 +78,11 @@ export const ALL_TOKEN_CATEGORIES = Object.keys(TOKEN_CATEGORY_KEYS) as readonly
 const TOKEN_ALTERNATION = [...ALL_TOKEN_CATEGORIES].sort((a, b) => b.length - a.length).join("|");
 const TOKEN_RE = new RegExp(`ANON_(?:${TOKEN_ALTERNATION})_\\d+`, "gi");
 
-/** True when the whole string is a single anonymization token. Used to drop Presidio findings
- *  that fired on a token rather than on real text. Builds a fresh non-global regex per call so
- *  it never shares lastIndex state with TOKEN_RE. */
+const READERS = tokenReaders(TOKEN_RE.source); // every reader takes the delimiter a token owns (#2992)
 /** Every anonymization token in `text` replaced by `mark` — the token-neutral form of a text. */
-export function neutralizeAnonTokens(text: string, mark: string): string {
-  return text.replace(new RegExp(TOKEN_RE.source, "gi"), mark);
-}
-
-export function isAnonToken(s: string): boolean {
-  return new RegExp(`^ANON_(?:${TOKEN_ALTERNATION})_\\d+$`, "i").test(s.trim());
-}
+export const neutralizeAnonTokens = (text: string, mark: string): string => READERS.replace(text, () => mark);
+/** True when the whole string is a single token (a Presidio finding that fired on one). */
+export const isAnonToken = (s: string): boolean => READERS.isToken(s);
 
 export interface CustomEntity {
   value: string;
@@ -347,6 +341,7 @@ export function createAnonymizer(
 
   const compiled = compileCustomEntities(known.custom ?? [], policy.maskPublicIps);
   let forceCustom = false; // true while a custom match mints: the explicit "hide this" beats a veto
+  const ends = tokenEnds(TOKEN_RE.source, ALL_TOKEN_CATEGORIES); // a token a digit may follow gets a delimiter (#2992)
   function assign(category: AnonTokenCategory, raw: string): string {
     const real = expandMintedTokens(raw, TOKEN_RE.source, (tok) => toReal.get(tok)); // #2991: no nesting
     if (!forceCustom && real === raw && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
@@ -454,13 +449,14 @@ export function createAnonymizer(
     );
   }
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
-  // FromBase64String('…'). Tokenize ONLY the blob — the command verb + flag stay visible as
-  // tradecraft signal (the model still sees that an encoded command ran), and victim data embedded
-  // in the encoded payload never reaches the wire. The `=` padding is matched outside the class.
+  // FromBase64String('…'). Tokenize ONLY the blob — the verb + flag stay visible as tradecraft signal,
+  // and victim data in the payload never reaches the wire. `=` padding is matched outside the class.
   const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/_-]{16,}={0,2})/gi;
   const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/_-]{16,}={0,2})(["'])/gi;
   function anonEncodedCmd(t: string): string {
-    let out = t.replace(ENC_CMD_RE, (_m, flag: string, blob: string) => flag + assign("CMD", blob));
+    let out = t.replace(ENC_CMD_RE, (m, flag: string, blob: string, at: number, w: string) =>
+      ends.ended(flag + assign("CMD", blob), flag + blob, at, at + m.length, w),
+    );
     out = out.replace(FROM_B64_RE, (_m, a: string, blob: string, c: string) => a + assign("CMD", blob) + c);
     return out;
   }
@@ -543,13 +539,16 @@ export function createAnonymizer(
     const range = (read: string) => rangeCategory(compiled, read); // #2946: a custom range names it
     const tail = { suppressed, crossers: policy.categories.PHONE ? [PHONE_IL, PHONE_NANP] : [] };
     return t.replace(IPV6_RESTORE_RE, (m, idxStr: string, cut = "", at: number) => {
+      // A token right before a digit gets a delimiter at the end (#2992); a tail left after it cannot.
+      const out = (r: string, v: string, rest: string) =>
+        rest ? r + rest : ends.ended(r, v, at, at + m.length, t);
       const entry = literals[Number(idxStr)];
       if (entry === undefined) return m; // belt-and-braces with the strip above: never invent a value
-      if (entry.category) return mintCustom(entry.category, entry.value) + cut;
+      if (entry.category) return out(mintCustom(entry.category, entry.value), entry.value, cut);
       const d = ipv6Mask<AnonTokenCategory>(entry, { range, closed: "IP", base, suppressed });
-      if (!d) return entry.value + cut; // in clear: the IPv4 pass masks the tail's IPv4 as before
+      if (!d) return out(entry.value + cut, entry.value + cut, ""); // in clear: the IPv4 pass masks the tail
       const j = ipv4TailJoin(entry.value, cut, t.slice(at + m.length, at + m.length + 32), d.forced, tail);
-      return (d.forced ? forcing(() => assign(d.cat, j.value)) : assign(d.cat, j.value)) + j.rest;
+      return out(d.forced ? forcing(() => assign(d.cat, j.value)) : assign(d.cat, j.value), j.value, j.rest);
     });
   }
 
@@ -597,14 +596,13 @@ export function createAnonymizer(
   // Exact values, wildcard patterns and IPv4 ranges in ONE pass over the text (anonCustomSpans.ts).
   // An EXTIP entry is skipped there when maskPublicIps is off: the redacted export keeps adversary
   // infrastructure visible, so a screenshot-discovered public IP must not be re-hidden by value.
-  // A custom group set aside with an IPv6 address (#2950) is minted here too, so it keeps the
-  // custom pass's place in the order (before the bare-username pass learns from it).
+  // A custom group set aside with an IPv6 address (#2950) is minted here too: the custom pass's place.
   function anonCustom(t: string, literals: readonly Reserved[]): string {
     const spans = findCustomSpans(t, compiled);
     const out = spans.length === 0 ? t : forcing(() => spliceSpans(t, spans, mintRaw));
-    return out.replace(IPV6_PLACEHOLDER_RE, (m, i: string) => {
-      const entry = literals[Number(i)];
-      return entry?.category ? mintCustom(entry.category, entry.value) : m;
+    return out.replace(IPV6_PLACEHOLDER_RE, (m, i: string, at: number, w: string) => {
+      const e = literals[Number(i)];
+      return e?.category ? ends.ended(mintCustom(e.category, e.value), e.value, at, at + m.length, w) : m;
     });
   }
   function mintRaw(cat: AnonTokenCategory, m: string): string {
@@ -625,6 +623,7 @@ export function createAnonymizer(
   function apply(text: string): string {
     // A forged sentinel in attacker-influenced text must not turn into a placeholder at the end.
     let t = text.replace(SECRET_SENTINEL_RE, "");
+    ends.start(t, toReal);
     // A literal token in the input is never minted later, and one minted already is escaped (#2569).
     // A literal equal to a SAVED token is escaped too (#2657), or the saved value could adopt it.
     const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok));
@@ -671,11 +670,12 @@ export function createAnonymizer(
     if (policy.categories.CARD) t = anonCards(t);
     if (policy.categories.PHONE) t = anonPhones(t);
     if (policy.categories.NATID) t = anonNatIds(t);
+    t = ends.finish(t, toReal);
     return t.replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
   }
 
   function restore(text: string): string {
-    return text.replace(TOKEN_RE, (m) => toReal.get(m.toUpperCase()) ?? m);
+    return READERS.replace(text, (tok) => toReal.get(tok));
   }
 
   function restoreDeep<T>(value: T): T {

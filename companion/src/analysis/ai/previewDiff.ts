@@ -1,6 +1,7 @@
 import type { AnonPair, AnonPolicy, Anonymizer } from "../anonymize.js";
 import { SECRET_PLACEHOLDER } from "../anonymize.js";
 import { possibleLeaks, type PreviewWarning } from "./previewLeaks.js";
+import { delimiterAt } from "../anonTokenLiterals.js";
 
 /**
  * The GitHub-style diff "Preview what the AI will see" draws (#2531): which clear value became which
@@ -151,7 +152,8 @@ function walk(
       });
       cur.ci += asValue;
     }
-    cur.mi = at + tok.length;
+    // A delimiter after a minted token is framing, not clear text (#2992); a secret owns none.
+    cur.mi = at + tok.length + (isSecret ? 0 : delimiterAt(masked, at + tok.length));
   }
   const rest = masked.slice(cur.mi);
   if (!closeSecret(clear, rest, cur, marks, cBase, mBase, null)) return null;
