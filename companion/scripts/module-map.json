@@ -180,6 +180,7 @@
     "anonMap.ts": "analysis/privacy",
     "anonEntities.ts": "analysis/privacy",
     "anonRevision.ts": "analysis/privacy",
+    "anonSecretCustom.ts": "analysis/privacy",
     "anonSecretKeys.ts": "analysis/privacy",
     "anonSecretValues.ts": "analysis/privacy",
     "anonSecrets.ts": "analysis/privacy",
