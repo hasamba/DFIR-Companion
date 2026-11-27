@@ -1,4 +1,5 @@
 import { escapeRegExp } from "./regexEscape.js";
+import { MAX_LITERAL, compileLong, nextLong } from "./anonChunkedMatch.js";
 
 // Username handling for the anonymizer (#1780). A victim account appears in three qualified shapes
 // — DOMAIN\user, user@internal.domain and the profile segment of C:\Users\user or /home/user — and
@@ -7,7 +8,7 @@ import { escapeRegExp } from "./regexEscape.js";
 // the bare name, so the redacted package, the AI wire and the support bundle all carried it in
 // cleartext. This module holds what the anonymizer needs to close that: the shared detector
 // patterns, the guard list of ordinary words that must never be replaced globally, and the one
-// regex that finds every known username as a whole word.
+// matcher that finds every known username as a whole word.
 
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts,
 // except that a match may not start after "-" either: in \\DC-QA-01\C$ it started at "QA-01" and
@@ -247,13 +248,50 @@ export function collectUsernames(src: UsernameSources): string[] {
 // or "_" in any script, so "jdoe" never fires inside "jdoes", "xjdoe" or an ANON_USER_n token.
 const UNICODE_WORD = "\\p{L}\\p{N}_";
 
-/** One case-insensitive, whole-word, longest-first alternation of the names; null when none. */
-export function usernameRegExp(names: Iterable<string>): RegExp | null {
+export type NameReplacer = (m: string, offset: number, whole: string) => string;
+/** Usable as the first argument of String.replace, like the RegExp it stands in for. */
+export interface UsernameMatcher {
+  [Symbol.replace](text: string, fn: NameReplacer): string;
+}
+type Span = [number, number];
+
+/** A case-insensitive, whole-word, longest-first matcher of the names; null when none. */
+export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null {
   const list = [...new Set([...names].map((n) => n.trim()).filter((n) => n && !isGuardedUsername(n)))];
   if (list.length === 0) return null;
   list.sort((a, b) => b.length - a.length || a.localeCompare(b));
-  const alternation = list.map(escapeRegExp).join("|");
-  return new RegExp(`(?<![${UNICODE_WORD}])(?:${alternation})(?![${UNICODE_WORD}])`, "giu");
+  const short = list.filter((n) => n.length <= MAX_LITERAL);
+  const long = list.filter((n) => n.length > MAX_LITERAL).map(compileLong); // #3007
+  const re = short.length
+    ? new RegExp(`(?<![${UNICODE_WORD}])(?:${short.map(escapeRegExp).join("|")})(?![${UNICODE_WORD}])`, "giu")
+    : null;
+  if (re && long.length === 0) return { [Symbol.replace]: (text, fn) => text.replace(re, fn) };
+  // The leftmost match wins, the longest on a tie, and the scan resumes at its end: what the single
+  // alternation did before a long name had to leave it.
+  const next = (text: string, from: number): Span | null => {
+    let best: Span | null = null;
+    const offer = (c: Span | null) => {
+      if (c && (!best || c[0] < best[0] || (c[0] === best[0] && c[1] > best[1]))) best = c;
+    };
+    if (re) {
+      re.lastIndex = from;
+      const m = re.exec(text);
+      offer(m ? [m.index, m.index + m[0].length] : null);
+    }
+    for (const ln of long) offer(nextLong(text, ln, from));
+    return best;
+  };
+  return {
+    [Symbol.replace](text: string, fn: NameReplacer): string {
+      let out = "";
+      let at = 0;
+      for (let m = next(text, 0); m; m = next(text, at)) {
+        out += text.slice(at, m[0]) + fn(text.slice(m[0], m[1]), m[0], text);
+        at = m[1];
+      }
+      return out + text.slice(at);
+    },
+  };
 }
 
 // A URL or a dotted host name that no earlier pass tokenized is not a known victim value, so it is

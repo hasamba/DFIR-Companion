@@ -34,7 +34,7 @@ import {
   preservedSpans,
   replaceUncServers,
   strictlyInside,
-  usernameRegExp,
+  usernameMatcher,
 } from "./anonUsernames.js";
 
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
@@ -395,7 +395,7 @@ export function createAnonymizer(
   // the USER pass always hid the whole account, and a visible "ANON_USER_1@corp.example" would be
   // swept up whole by the EMAIL pass — a token nested in a token, which restore() cannot undo.
   const learned = new Set<string>();
-  let bareRe: RegExp | null | undefined;
+  let bareRe: ReturnType<typeof usernameMatcher> | undefined;
   function learn(name: string): void {
     const k = name.toLowerCase();
     if (isGuardedUsername(k) || learned.has(k) || suppressed.has(k)) return;
@@ -436,7 +436,7 @@ export function createAnonymizer(
   // Every learned username as a whole word, after HOST and DOMAIN have claimed their spans (so
   // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
   function anonBareUsernames(t: string): string {
-    if (bareRe === undefined) bareRe = usernameRegExp(learned);
+    if (bareRe === undefined) bareRe = usernameMatcher(learned);
     if (!bareRe) return t;
     let spans: Array<[number, number]> | undefined; // computed once, only when a name matches
     return t.replace(bareRe, (m: string, offset: number, whole: string) => {
