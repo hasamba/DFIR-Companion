@@ -57,6 +57,8 @@ function apStep(chunk, listed) {
   if (!title && tactic) title = tactic.label;
   if (!title && !when) return null;
   desc = desc.trim();
+  // Nothing left but punctuation ("— May 16 10:00." leaves "."): say nothing rather than print it (#3023).
+  if (!/[\p{L}\p{N}]/u.test(desc)) desc = "";
   return {
     title,
     summary: apLabel(desc, listed ? null : when),
