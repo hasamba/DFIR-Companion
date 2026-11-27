@@ -105,12 +105,52 @@ describe("anonymizer — the tail never stops part-way through what the address 
   });
 });
 
+describe("anonymizer — an address glued after a redacted token is not split (#3005)", () => {
+  // Since #3005 redacts a token glued to an address, the address pass saw only what the token left
+  // (`::ffff:10.0.0.5` plus glued digits) and split it, so part of an address master masked whole
+  // went out in clear.
+  const cats = { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true };
+  const blob = "SQBFAFgAIAAoAE4AZQB3AC0ATwBi";
+  const anon = (mask: boolean) =>
+    createAnonymizer(
+      { enabled: true, redactSecrets: true, maskPublicIps: mask, categories: cats } as AnonPolicy,
+      {
+        hosts: [],
+        accounts: [],
+        internalDomains: [],
+      },
+    );
+  const glued = ["::5", "192.168.1.5", "23456789", "0::2", "fd00::2", ""];
+  for (const mask of [true, false]) {
+    it.each(glued)(`a token, fd00::ffff:10.0.0.5, then %s (public masking ${mask})`, (after) => {
+      const out = anon(mask).apply(`x ${SLACK}fd00::ffff:10.0.0.5${after} y`);
+      expect(out).not.toMatch(/ffff|10\.0\.0|::/);
+      expect(out).not.toContain(SLACK);
+      expect(out).toContain(PH);
+    });
+  }
+
+  it("the token right after the address is still found", () => {
+    const out = anon(true).apply(`Bearer ${BEARER}2001:db8::1${JWT} x`);
+    expect(out).not.toContain(JWT.slice(-12));
+    expect(out).not.toContain("db8");
+  });
+
+  it("an encoded command right after the address is still masked", () => {
+    const out = anon(true).apply(`Bearer ${BEARER}2001:db8::15FromBase64String('${blob}==')`);
+    expect(out).not.toContain(blob);
+    expect(out).toMatch(/ANON_CMD_\d+/);
+  });
+});
+
 describe("redactSecretText — the glued-address tail scans in linear time (#3016)", () => {
   it.each([
     ["token then colon groups", (n: number) => `${SLACK}a` + ":ab".repeat(n)],
     ["token then :: runs", (n: number) => `${SLACK}a` + "::a".repeat(n)],
     ["tokens glued to colons", (n: number) => `${SLACK}a::`.repeat(n)],
     ["Bearer then colon groups", (n: number) => `Bearer ${BEARER}` + ":1".repeat(n)],
+    ["token then a long hex-letter word", (n: number) => `${SLACK}a::a` + "b".repeat(n)],
+    ["tokens before hex-letter runs", (n: number) => `${SLACK}a::a${"b".repeat(80)} `.repeat(n)],
   ])("%s", (name, bait) => {
     expectLinearScan(name, (n) => redactSecretText(bait(n)), 2000);
   });

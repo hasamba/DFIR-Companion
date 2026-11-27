@@ -67,17 +67,20 @@ const VENDOR_SECRETS: RegExp[] = [
 
 // A token that ends in a hex character and is glued to an IPv6 address has taken the address's hex
 // head (`fd00` of `fd00::2`), so the rest (`::2`) would go out in clear or be tokenized as the wrong
-// address (#3016). This optional tail takes the rest into the same placeholder: colon groups that
-// contain "::", then an optional dotted IPv4 tail (and a fifth dotted number, as #3012 masks it).
-// The tail is all or nothing: it must end where the address ends, never before a word character,
-// "@", or a "." or ":" that more of a value follows. Stopping early would put the rest of the
-// address (or the domain of `fd00::5@example.test`) in clear where the address pass masked it, so
-// the tail is then not taken at all. Requiring "::" keeps `:12:34:56`, MAC addresses and
-// `::Method()` out of it. The VENDOR_SECRETS sources stay as they are, so code that derives
-// regexes from them does not meet the tail.
+// address (#3016), or be split by the address pass so part of it shows (`::ffff:10.0.0.5` followed
+// by more digits, #3005). This optional tail takes the rest of the address-character run into the
+// same placeholder, once a "::" plus a hex digit follows within the first groups: digits, ":", a
+// "." before a digit and hex letters, up to 64 characters. That hides more than the address when
+// digits are glued after it, never less. It stops before a word that starts with hex letters
+// (`eyJ…`, `From…`, `corp…`), so the next token, command or name is still found, and before the
+// last characters ahead of an "@", which start an e-mail. Requiring "::" plus a hex digit keeps
+// `:12:34:56`, MAC addresses and `::Method()` out of it. The VENDOR_SECRETS sources stay as they
+// are, so code that derives regexes from them does not meet the tail.
+const HEX_WORD_AHEAD = "[A-Fa-f]{0,64}[G-Zg-z_]";
 const GLUED_V6_TAIL =
-  "(?:(?<=[0-9A-Fa-f])(?=(?::[0-9A-Fa-f]{1,4}){0,6}::)(?::[0-9A-Fa-f]{0,4}){2,8}" +
-  "(?:\\d{1,3}(?:\\.\\d{1,3}){3,4})?(?![0-9A-Za-z_@]|[.:][0-9A-Za-z:]))?";
+  "(?:(?<=[0-9A-Fa-f])(?=(?::[0-9A-Fa-f]{1,4}){0,6}::[0-9A-Fa-f])" +
+  `(?:[0-9:]|[A-Fa-f](?!${HEX_WORD_AHEAD})|\\.(?=\\d)){3,64}` +
+  `(?:(?![0-9A-Fa-f:@]|\\.\\d)|(?=[0-9A-Fa-f]{1,4}@)|(?=${HEX_WORD_AHEAD})))?`;
 const VENDOR_SECRETS_GLUED_V6 = VENDOR_SECRETS.map((re) => new RegExp(re.source + GLUED_V6_TAIL, re.flags));
 
 // Slack incoming-webhook URL: the host stays (it says what the URL is), the path segments go.
