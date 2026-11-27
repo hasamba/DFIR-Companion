@@ -437,3 +437,96 @@ describe("public IPv6 after a short label that runs into a word (#2971)", () => 
     expect(run(input, true).out).toBe(input);
   });
 });
+
+// #2974: with public masking on, a public address after a label GLUED to a word that runs into a word
+// ("node12:2001:db8::1Method") stayed in clear; #2971 covered only an unglued label. The outer match is
+// ungraded, so #2959's glued PUBLIC match ("Server2016::Foo") still never qualifies.
+describe("public IPv6 after a word-glued label that runs into a word (#2974)", () => {
+  it.each([
+    ["node12:2001:db8::1Method", "node12:ANON_EXTIP_1Method", "2001:db8::1"],
+    ["x node12:2001:db8::1_eth0 y", "x node12:ANON_EXTIP_1_eth0 y", "2001:db8::1"],
+  ])("masks %s when public IPs are masked", (input, expected, value) => {
+    const { out, back, pairs } = run(input, true);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual([["ANON_EXTIP_1", value, "EXTIP"]]);
+  });
+
+  it("leaves node12:2001:db8::1Method alone when public IPs are kept, with no set-aside span", () => {
+    const input = "node12:2001:db8::1Method";
+    expect(run(input, false).out).toBe(input);
+    expect(findReservableIpv6Spans(input, false)).toEqual([]);
+  });
+
+  it("over-masks a word-glued label before 2016::Foo, as dc:2016::Foo already is (recorded tradeoff)", () => {
+    expect(run("node12:2016::Foo", true).out).toBe("node12:ANON_EXTIP_1oo");
+    expect(run("node12:2016::Foo", false).out).toBe("node12:2016::Foo");
+  });
+});
+
+// #2974: a "::" separator glued to a word before an address ("Evtx::2001:db8::1Method", the
+// Velociraptor artifact::field shape) cut the address in two: "::2001:db8" (an IPv4-compatible
+// spelling of a public IPv4) and "::1" (loopback). The address after the separator is one token.
+describe.each([true, false])("IPv6 after a word:: separator, maskPublicIps=%s (#2974)", (mask) => {
+  it.each([
+    ["Evtx::2001:db8::1Method", "Evtx::ANON_EXTIP_1Method", "2001:db8::1"],
+    ["x Evtx::2001:db8::1 y", "x Evtx::ANON_EXTIP_1 y", "2001:db8::1"],
+    ["Data::2001:db8::1Method", "Data::ANON_EXTIP_1Method", "2001:db8::1"],
+    ["Evtx::2001:db8:: x", "Evtx::ANON_EXTIP_1 x", "2001:db8::"],
+    ["Windows.EventLogs.Evtx::2001:db8::5", "Windows.EventLogs.Evtx::ANON_EXTIP_1", "2001:db8::5"],
+    ["Evtx::2001:db8::abcd:1Method", "Evtx::ANON_EXTIP_1Method", "2001:db8::abcd:1"],
+    ["Evtx::2001:fd00::1Method", "Evtx::ANON_EXTIP_1Method", "2001:fd00::1"],
+  ])("%s is one address, masked whole or left whole", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(mask ? expected : input);
+    expect(back).toBe(input);
+    expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual(
+      mask ? [["ANON_EXTIP_1", value, "EXTIP"]] : [],
+    );
+    const start = input.indexOf(value);
+    expect(findReservableIpv6Spans(input, mask)).toEqual([{ start, end: start + value.length }]);
+  });
+
+  it.each([
+    ["Windows.EventLogs.Evtx::fd00::1", "Windows.EventLogs.Evtx::ANON_IP_1"],
+    ["Evtx::fd00::1Method", "Evtx::ANON_IP_1Method"],
+    ["Server2016::fd00::1", "Server2016::ANON_IP_1"],
+  ])("an internal address after the separator still fails closed: %s", (input, expected) => {
+    expect(run(input, mask).out).toBe(expected);
+  });
+
+  it.each([
+    "Server2016::Foo",
+    "Server2016::Foo()",
+    "Win2019:: x",
+    "std::cout",
+    "use std::os::fd::AsRawFd",
+    "[Convert]::FromBase64String",
+    "mac 00:1a:2b:3c:4d:5e seen",
+    "at 12:34:56 local",
+    "fp fd:3a:11:22:33:44:55:66 seen",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
+  });
+
+  it("2019:fd00::1 keeps today's behavior", () => {
+    expect(run("2019:fd00::1", mask).out).toBe(mask ? "ANON_EXTIP_1" : "2019:fd00::1");
+  });
+});
+
+describe("custom IPv6 range after a word:: separator, IP category off (#2974)", () => {
+  const ranges: CustomEntity[] = [{ value: "2001:db8::/32", category: "IP", match: "pattern" }];
+  it.each([
+    ["Evtx::2001:db8::1 x", "Evtx::ANON_IP_1 x"],
+    ["Evtx::2001:db8:: x", "Evtx::ANON_IP_1 x"],
+    ["Evtx::2001:db8::1: x", "Evtx::ANON_IP_1: x"],
+  ])("%s -> %s", (input, expected) => {
+    const { out, back } = run(input, true, ranges, false);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+  });
+
+  it.each(["Evtx::2001:db8::1Method", "Evtx::2002:db8::1 x"])("leaves %s byte-identical", (input) => {
+    expect(run(input, true, ranges, false).out).toBe(input);
+  });
+});
