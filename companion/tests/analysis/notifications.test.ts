@@ -32,7 +32,7 @@ function channel(over: Partial<NotificationChannel> = {}): NotificationChannel {
     name: "Slack",
     enabled: true,
     minSeverity: "High",
-    events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
+    events: { critical_finding: true, playbook_update: true, milestone: false, mention: true, import: false },
     webhookUrl: "https://hooks.slack.com/services/x",
     createdAt: NOW,
     updatedAt: NOW,
@@ -74,7 +74,13 @@ describe("shouldNotify", () => {
     expect(
       shouldNotify(
         channel({
-          events: { critical_finding: false, playbook_update: true, milestone: false, mention: true },
+          events: {
+            critical_finding: false,
+            playbook_update: true,
+            milestone: false,
+            mention: true,
+            import: false,
+          },
         }),
         event(),
       ),
@@ -91,12 +97,24 @@ describe("shouldNotify", () => {
   it("milestones bypass the threshold (gated only by the toggle)", () => {
     const ch = channel({
       minSeverity: "Critical",
-      events: { critical_finding: true, playbook_update: true, milestone: true, mention: true },
+      events: {
+        critical_finding: true,
+        playbook_update: true,
+        milestone: true,
+        mention: true,
+        import: false,
+      },
     });
     expect(shouldNotify(ch, event({ kind: "milestone", severity: "Info" }))).toBe(true);
     const off = channel({
       minSeverity: "Info",
-      events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
+      events: {
+        critical_finding: true,
+        playbook_update: true,
+        milestone: false,
+        mention: true,
+        import: false,
+      },
     });
     expect(shouldNotify(off, event({ kind: "milestone", severity: "Info" }))).toBe(false);
   });
@@ -104,12 +122,24 @@ describe("shouldNotify", () => {
   it("mentions bypass the threshold (gated only by the toggle)", () => {
     const ch = channel({
       minSeverity: "Critical",
-      events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
+      events: {
+        critical_finding: true,
+        playbook_update: true,
+        milestone: false,
+        mention: true,
+        import: false,
+      },
     });
     expect(shouldNotify(ch, event({ kind: "mention", severity: "Info" }))).toBe(true);
     const off = channel({
       minSeverity: "Info",
-      events: { critical_finding: true, playbook_update: true, milestone: false, mention: false },
+      events: {
+        critical_finding: true,
+        playbook_update: true,
+        milestone: false,
+        mention: false,
+        import: false,
+      },
     });
     expect(shouldNotify(off, event({ kind: "mention", severity: "Info" }))).toBe(false);
   });
@@ -219,7 +249,13 @@ describe("parseChannelInput", () => {
     const ch = parseChannelInput({
       type: "slack",
       webhookUrl: "https://hooks.slack.com/services/x",
-      events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
+      events: {
+        critical_finding: true,
+        playbook_update: true,
+        milestone: false,
+        mention: true,
+        import: false,
+      },
     });
     expect(ch.ok).toBe(true);
     expect(ch.draft?.events.milestone).toBe(false);
