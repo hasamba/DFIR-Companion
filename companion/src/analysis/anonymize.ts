@@ -215,7 +215,8 @@ export function isInternalIpv6(ip: string): boolean {
   // Unique-local fc00::/7 is a first 16-bit group of fc00-fdff: always four hex digits. A shorter
   // "fd"/"fc" first group (0x00fd) is not one — that is a fingerprint or EUI-64 byte run (#2959).
   if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;
-  if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true; // link-local fe80::/10
+  // Link-local fe80::/10 is a first group of fe80-febf: four hex digits too ("fe8" is 0x0fe8, #2966).
+  if (/^fe[89ab][0-9a-f]:/.test(lower)) return true;
   const mapped = embeddedIpv4(lower);
   if (mapped && isInternalIp(mapped)) return true;
   // Mirror the NAT64 branch in isMaskableIpv6() so an INTERNAL destination behind the well-known

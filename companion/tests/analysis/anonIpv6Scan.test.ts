@@ -253,3 +253,33 @@ describe.each([true, false])("IPv6 false positives, maskPublicIps=%s (#2959)", (
     expect(run(input, mask).out).toBe(mask ? "dump_ANON_EXTIP_1_eth0" : input);
   });
 });
+
+// #2966: link-local fe80::/10 is a first group of fe80-febf, always four hex digits. A byte run that
+// opens with "fe8:" (0x0fe8) is not one. A short fe8-feb label was hidden whole before, so an
+// internal address inside it must stay hidden whatever follows it.
+describe.each([true, false])("IPv6 link-local first group, maskPublicIps=%s (#2966)", (mask) => {
+  it.each([
+    "x fe8:3a:11:22:33:44:55:66 y",
+    "fe8:1:2:3:4:5:6:7",
+    "FEB:3A:11:22:33:44:55:66",
+    "x fe9::1 y",
+    "fp fea:11:22:33:44:55:66:77 x",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
+  });
+
+  it.each([
+    ["x fe80::1 y", "x ANON_IP_1 y", "fe80::1"],
+    ["fe80::1%eth0", "ANON_IP_1%eth0", "fe80::1"],
+    ["x febf:1:2:3:4:5:6:7 y", "x ANON_IP_1 y", "febf:1:2:3:4:5:6:7"],
+    ["fe8:fe80::1Method", "fe8:ANON_IP_1Method", "fe80::1"],
+    ["fea:fe80::1_eth0", "fea:ANON_IP_1_eth0", "fe80::1"],
+    ["fe8:fe80::1:x", "fe8:ANON_IP_1:x", "fe80::1"],
+    ["feb:fd00:1:2:3:4:5:6:7_eth0", "feb:ANON_IP_1_eth0", "fd00:1:2:3:4:5:6:7"],
+  ])("still tokenizes the internal address in %s", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+});

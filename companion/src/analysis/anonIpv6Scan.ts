@@ -61,6 +61,8 @@ const WIDE_START = /^[0-9a-f]{4}:/i;
 // A retried "keep" hit that may run into a word: a four-digit opening group, or a "::" opening
 // ("node12:::1xyz", "node12:::ffff:10.0.0.5xyz") — the caller graded it internal (#2965).
 const INTERNAL_OPENING = /^(?:[0-9a-f]{4}:|::)/i;
+// The short first groups the old loose unique-local / link-local checks graded internal (#2959, #2966).
+const SHORT_INTERNAL_LEAD = /^(?:f[cd][0-9a-f]?|fe[89ab]):/i;
 
 interface RetryRules {
   // Only a hit that opens with a four-digit group counts (a "weak" match whose colon run goes on).
@@ -116,10 +118,11 @@ function retryRules(
   const runGoesOn = text[m.index + m[0].length] === ":";
   const shortLead = !opts.splitUnknown && g === null && !WIDE_START.test(m[0]);
   if (!glued && !unknown && !runGoesOn && !shortLead) return null;
-  // A match that opens with a 2-3 digit "fd"/"fc" group was hidden whole before #2959; an internal
-  // address inside it ("fd:fd00::1Method") must stay hidden even where it runs into a word.
+  // A match that opens with a 2-3 digit "fd"/"fc" group was hidden whole before #2959, and one that
+  // opens with a 3-digit "fe8"-"feb" group before #2966; an internal address inside it
+  // ("fd:fd00::1Method", "fe8:fe80::1:x") must stay hidden even where it runs into a word.
   // The range path's unglued retry (#2965) is new and keeps its whole-token rule.
-  const shortUla = g === null && /^f[cd][0-9a-f]?:/i.test(m[0]) && (glued || opts.splitUnknown);
+  const shortUla = g === null && SHORT_INTERNAL_LEAD.test(m[0]) && (glued || opts.splitUnknown);
   return { wideOnly: !glued && !unknown, keepRunsOn: shortUla, wordAfter: !opts.wholeToken };
 }
 
