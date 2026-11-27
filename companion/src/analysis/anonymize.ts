@@ -11,7 +11,8 @@ import {
   rangeCategory,
   spliceSpans,
 } from "./anonCustomSpans.js";
-import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
+import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
+import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { scanTokenLiterals } from "./anonTokenLiterals.js";
 import {
   NETBIOS_ACCT,
@@ -510,9 +511,7 @@ export function createAnonymizer(
     // a forged placeholder must never index the literals table and make restore() invent an
     // address in text that never contained one.
     const text = t.replace(IPV6_SENTINEL_RE, "");
-    const found = [...text.matchAll(IPV6_RE)]
-      .filter((m) => isInternalIpv6(m[0]) || isMaskableIpv6(m[0])) // detector false positives stay put
-      .map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+    const found = reservableIpv6Spans(text);
     if (found.length === 0) return { text, literals: [] };
     const literals: Reserved[] = [];
     let out = "";
@@ -523,6 +522,12 @@ export function createAnonymizer(
       at = s.end;
     }
     return { text: out + text.slice(at), literals };
+  }
+
+  function reservableIpv6Spans(text: string): Array<{ start: number; end: number }> {
+    return [...text.matchAll(IPV6_RE)]
+      .filter((m) => isInternalIpv6(m[0]) || isMaskableIpv6(m[0])) // detector false positives stay put
+      .map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
   }
 
   function restoreIpv6Literals(t: string, literals: Reserved[]): string {
@@ -619,8 +624,15 @@ export function createAnonymizer(
     // known or custom entity never becomes a reversible token (restore() and discoveries() would
     // hand it back), and the redactor sees every secret in its full context — a key outside a
     // custom group and the credential inside it (#2950). The placeholder then hides behind a
-    // sentinel until the last pass, so no tokenizer rewrites it.
-    if (policy.redactSecrets) t = redactSecretText(t).split(SECRET_PLACEHOLDER).join(SECRET_SENTINEL);
+    // sentinel until the last pass, so no tokenizer rewrites it. A custom value that overlaps a
+    // secret is redacted with it, whole and one way (#2952), so the secret, custom and IPv6 passes
+    // must see one text: a forged IPv6 sentinel goes first, with or without the IP category — the
+    // custom pass skips a match beside one.
+    t = t.replace(IPV6_SENTINEL_RE, "");
+    if (policy.redactSecrets) {
+      const spans = () => (policy.categories.IP ? reservableIpv6Spans(t) : []);
+      t = redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans);
+    }
     // Then reserve IPv6 literals — before anonCustom or any other pass — so nothing can substitute
     // inside one. Only when IP masking is active: if the IP category is off, no later step ever
     // reparses an IPv6 literal, so there is nothing to protect it FROM. A custom value that extends
