@@ -76,6 +76,9 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     // unglued "fd00::Bar" -> "ANON_IP_1r" already does.
     ["node12:fd00::Bar", "node12:ANON_IP_1r", "fd00::Ba"],
     ["dc:fe80::CafeFactory", "dc:ANON_IP_1Factory", "fe80::Cafe"],
+    // #2965: an address that opens with "::" after a label, followed by a word, fails CLOSED too.
+    ["node12:::1xyz", "node12:ANON_IP_1xyz", "::1"],
+    ["x node12:::ffff:10.0.0.5xyz y", "x node12:ANON_IP_1xyz y", "::ffff:10.0.0.5"],
   ])("%s -> %s", (input, expected, value) => {
     const { out, back, pairs } = run(input, mask);
     expect(out).toBe(expected);
@@ -156,6 +159,13 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     ["Windows.EventLogs.Evtx::fd00::1", "Windows.EventLogs.Evtx::ANON_IP_1"],
     ["x fd00:abcd:: y", "x ANON_IP_1 y"],
     ["x fd00::1 y", "x ANON_IP_1 y"],
+    // #2965: a label that is not glued to a word, in front of an in-range address. A short first
+    // group is a label, never the front of a real global address; nine groups are never one.
+    ["dc:fd00::1 up", "dc:ANON_IP_1 up"],
+    ["x dc:fd00::1 y", "x dc:ANON_IP_1 y"],
+    ["x dc:fd00:1:2:3:4:5:6:7 y", "x dc:ANON_IP_1 y"],
+    ["x 0:fd00:abcd:: y", "x 0:ANON_IP_1 y"],
+    ["x 2019:fd00:1:2:3:4:5:6:7 y", "x 2019:ANON_IP_1 y"],
   ])("%s -> %s", (input, expected) => {
     const { out, back } = run(input, true, range, false);
     expect(out).toBe(expected);
@@ -166,14 +176,32 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     "x fd00::beefMethod y",
     "x fd00::1:2:3:4:5:6:7:8 y",
     "x node12:fd00::1xyz y",
-    "x dc:fd00:1:2:3:4:5:6:7 y",
-    "x 2019:fd00:1:2:3:4:5:6:7 y",
+    "x dc:fd00::1xyz y",
+    "x fd:fd00::1xyz y",
+    "x fc:fd00::1Method y",
+    "x fd0:fd00::1_eth0 y",
+    "x dc:fd00:1:2:3:4:5:6:7:8 y",
   ])("never hides the front of a longer token: %s", (input) => {
     expect(run(input, true, range, false).out).toBe(input);
   });
 
   it("never hides part of an address outside the range", () => {
     expect(run("x 2001:fd00::1 y", true, range, false).out).toBe("x 2001:fd00::1 y");
+    expect(run("x 2001:fd00:1:2:3:4:5:6 y", true, range, false).out).toBe("x 2001:fd00:1:2:3:4:5:6 y");
+  });
+
+  it.each([
+    "mac 00:1a:2b:3c:4d:5e seen",
+    "at 12:34:56 local",
+    "2026-11-27T12:34:56Z logon",
+    "std::os::fd::AsRawFd",
+    "namespace fd:: {",
+    "fp 12:34:fd:00:11:22:33:44:55:66 x",
+    "SHA1 ab:cd:fd:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:01",
+    "fp fd:3a:11:22:33:44:55:66 seen",
+    "dc:fd00:1:2:3:4:5:6",
+  ])("leaves %s byte-identical (#2965)", (input) => {
+    expect(run(input, true, range, false).out).toBe(input);
   });
 });
 

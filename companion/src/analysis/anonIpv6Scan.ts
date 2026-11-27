@@ -58,6 +58,9 @@ const endsToken = (text: string, end: number) => ENDS_TOKEN.test(text.slice(end,
 // A real unique-local (fc00::/7) or link-local (fe80::/10) address opens with a FOUR-digit group;
 // a fingerprint or MAC byte run has two-digit groups, a code namespace like "fd::" too (#2956).
 const WIDE_START = /^[0-9a-f]{4}:/i;
+// A retried "keep" hit that may run into a word: a four-digit opening group, or a "::" opening
+// ("node12:::1xyz", "node12:::ffff:10.0.0.5xyz") — the caller graded it internal (#2965).
+const INTERNAL_OPENING = /^(?:[0-9a-f]{4}:|::)/i;
 
 interface RetryRules {
   // Only a hit that opens with a four-digit group counts (a "weak" match whose colon run goes on).
@@ -71,7 +74,7 @@ interface RetryRules {
 
 function hitEndsWell(text: string, end: number, hit: string, keep: boolean, rules: RetryRules): boolean {
   if (endsToken(text, end) || (keep && rules.keepRunsOn)) return true;
-  return rules.wordAfter && keep && WIDE_START.test(hit) && WORD_CHAR.test(text.slice(end, end + 1));
+  return rules.wordAfter && keep && INTERNAL_OPENING.test(hit) && WORD_CHAR.test(text.slice(end, end + 1));
 }
 
 // Re-run the detector at every group start inside the rejected match, on the FULL text (the real
@@ -98,7 +101,9 @@ function retryInside(
 // the caller would hide (#2959's full-form retry covers "dc:fd00:1:2:3:4:5:6:7"), or its colon run
 // goes on past it. Nine or more groups are never one address, so a "weak" first eight
 // ("2019:fd00:1:2:3:4:5:6" out of "2019:fd00:1:2:3:4:5:6:7") is retried too, for a four-digit-opening
-// internal address only (#2956).
+// internal address only (#2956). A custom-range caller retries a match that opens with a short
+// group ("dc:fd00::1") or whose colon run goes on, for a four-digit-opening in-range address only:
+// neither can be the front of a real address, which the range path must never split (#2965).
 function retryRules(
   text: string,
   m: RegExpExecArray,
@@ -107,11 +112,14 @@ function retryRules(
   opts: { splitUnknown: boolean; wholeToken: boolean },
 ): RetryRules | null {
   const unknown = opts.splitUnknown && g === null;
-  const runGoesOn = opts.splitUnknown && text[m.index + m[0].length] === ":";
-  if (!glued && !unknown && !runGoesOn) return null;
+  // A range caller's grade is "keep" or null, never "weak", so a null run that goes on qualifies.
+  const runGoesOn = text[m.index + m[0].length] === ":";
+  const shortLead = !opts.splitUnknown && g === null && !WIDE_START.test(m[0]);
+  if (!glued && !unknown && !runGoesOn && !shortLead) return null;
   // A match that opens with a 2-3 digit "fd"/"fc" group was hidden whole before #2959; an internal
   // address inside it ("fd:fd00::1Method") must stay hidden even where it runs into a word.
-  const shortUla = g === null && /^f[cd][0-9a-f]?:/i.test(m[0]);
+  // The range path's unglued retry (#2965) is new and keeps its whole-token rule.
+  const shortUla = g === null && /^f[cd][0-9a-f]?:/i.test(m[0]) && (glued || opts.splitUnknown);
   return { wideOnly: !glued && !unknown, keepRunsOn: shortUla, wordAfter: !opts.wholeToken };
 }
 
@@ -121,9 +129,10 @@ function retryRules(
  * `splitUnknown`: also retry inside a rejected match that is not glued to a word — "dc:fd00::1" is
  * a valid literal in unallocated space, and the internal address after the label must fail closed;
  * likewise a "weak" eight-group match whose colon run goes on ("2019:fd00:1:2:3:4:5:6:7"), for a
- * four-digit-opening internal address only. A custom-range
- * caller passes false: a complete address outside the range ("2001:fd00::1") must never have part
- * of it hidden.
+ * four-digit-opening internal address only. A custom-range caller passes false: a complete
+ * address outside the range ("2001:fd00::1") must never have part of it hidden. It still retries a
+ * short-opening or run-on match ("dc:fd00::1", "2019:fd00:1:2:3:4:5:6:7"), which no real address
+ * can be the front of (#2965).
  * `wholeToken`: a match that does not end the token ("fd00::beef" out of "fd00::beefMethod") is
  * rejected. The IP category passes false so an internal address keeps failing CLOSED.
  */
