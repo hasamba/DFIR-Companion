@@ -3,7 +3,8 @@ import { isIP } from "node:net";
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
-import { anonPairKey, exactValueRegExp } from "./anonPatterns.js";
+import { anonPairKey } from "./anonPatterns.js";
+import { replaceKnownValues, type KnownValue } from "./anonKnownValues.js";
 import {
   compileCustomEntities,
   findCustomSpans,
@@ -369,7 +370,7 @@ export function createAnonymizer(
       const cat = catOf(token);
       const key = anonPairKey(cat, real);
       if (seen.has(key) || tails.unsaved(key)) continue; // a cut phone number is never saved (#2995)
-      if (cutUsers.has(token) && !savedUsers.has(token)) continue; // a cut profile name (#3000)
+      if (cutUsers.has(token) && !savedUsers.has(token)) continue; // a cut profile name or joined run (#3000)
       seen.add(key);
       out.push({ value: real, category: cat });
     }
@@ -406,7 +407,7 @@ export function createAnonymizer(
   const knownHosts = new Set(known.hosts.map((h) => h.toLowerCase()));
   const qualifier = (q: string) => assign(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q);
   const savedUsers = new Set<string>(); // USER tokens, by how they were minted
-  const cutUsers = new Set<string>(); // masked in place, never learned or saved (replaceUserPaths)
+  const cutUsers = new Set<string>(); // masked in place, never saved: replaceUserPaths, joined runs (#3013)
   function userToken(user: string, saved = true): string {
     if (saved) learn(user);
     if (oneWay(user)) return SECRET_SENTINEL; // the qualifier keeps its own token
@@ -470,21 +471,21 @@ export function createAnonymizer(
   function anonSids(t: string): string {
     return t.replace(SID_RE, (m) => assign("REG", m));
   }
-  function anonHosts(t: string): string {
-    let out = t;
-    for (const h of known.hosts) {
-      if (h.length < 2) continue;
-      out = out.replace(exactValueRegExp(h), (m) => assign("HOST", m));
-    }
-    return out;
-  }
-  function anonDomains(t: string): string {
-    let out = t;
-    for (const d of known.internalDomains) {
-      if (d.length < 2) continue;
-      out = out.replace(exactValueRegExp(d), (m) => assign("DOMAIN", m));
-    }
-    return out;
+  // Known hosts, then internal domains, longest first; overlapping values join one token (#3013).
+  const knownOf = (on: boolean, list: string[], category: AnonTokenCategory): KnownValue[] =>
+    on ? list.filter((v) => v.length >= 2).map((value) => ({ value, category })) : [];
+  const knownValues = [
+    ...knownOf(policy.categories.HOST, known.hosts, "HOST"),
+    ...knownOf(policy.categories.DOMAIN, known.internalDomains, "DOMAIN"),
+  ];
+  function joinKnown(span: KnownValue, parts: KnownValue[]): string {
+    for (const p of parts) assign(p.category, p.value); // the values it joined are saved, the run is not
+    const lower = span.value.toLowerCase(); // ...unless the run is itself a known or already-minted value
+    const run =
+      !toToken.has(anonPairKey(span.category, span.value)) &&
+      knownValues.every((v) => v.value.toLowerCase() !== lower);
+    const token = assign(span.category, span.value);
+    return (run && cutUsers.add(token), token);
   }
   // An IPv6 literal (especially an IPv4-mapped one like ::ffff:10.0.0.5) is an atomic lexical
   // unit: whatever text is embedded inside it must be classified and tokenized as ONE address,
@@ -653,8 +654,8 @@ export function createAnonymizer(
     if (policy.categories.PATH) t = anonUserPaths(t);
     if (policy.categories.CMD) t = anonEncodedCmd(t);
     if (policy.categories.REG) t = anonSids(t);
-    if (policy.categories.HOST) t = anonHosts(t);
-    if (policy.categories.DOMAIN) t = anonDomains(t);
+    const kept = (v: string) => suppressed.has(v.toLowerCase());
+    t = replaceKnownValues(t, knownValues, (v) => assign(v.category, v.value), joinKnown, kept);
     if (policy.categories.USER) t = anonBareUsernames(t);
     t = tails.joinMarked(t); // a custom value that ends in an address head takes its intact tail (#2995)
     if (policy.categories.IP) {

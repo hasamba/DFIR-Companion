@@ -1,5 +1,5 @@
 import { escapeRegExp } from "./regexEscape.js";
-import { MAX_LITERAL, compileLong, nextLong } from "./anonChunkedMatch.js";
+import { MAX_LITERAL, compileLong, nextLong, valuesCanOverlap } from "./anonChunkedMatch.js";
 
 // Username handling for the anonymizer (#1780). A victim account appears in three qualified shapes
 // — DOMAIN\user, user@internal.domain and the profile segment of C:\Users\user or /home/user — and
@@ -260,32 +260,6 @@ export interface UsernameMatcher {
 }
 type Span = [number, number];
 const WORD_CHAR = /[\p{L}\p{N}_]/u;
-const BOUNDARY = /[^\p{L}\p{N}_]/gu;
-
-/**
- * True when one name can start inside another and run past its end: a part of A that begins after
- * a non-word character is a strict prefix of B. Compared in two lower-case foldings; a miss only
- * keeps the plain alternation, which is what ran before #3010.
- */
-function namesCanOverlap(names: readonly string[]): boolean {
-  for (const fold of [(n: string) => n.toLowerCase(), (n: string) => n.toUpperCase().toLowerCase()]) {
-    const keys = [...new Set(names.map(fold))].sort();
-    const startsLonger = (p: string) => {
-      let lo = 0;
-      let hi = keys.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (keys[mid] < p) lo = mid + 1;
-        else hi = mid;
-      }
-      return [keys[lo], keys[lo + 1]].some((k) => k !== undefined && k !== p && k.startsWith(p));
-    };
-    for (const a of keys)
-      for (const m of a.matchAll(BOUNDARY))
-        if (m.index + 1 < a.length && startsLonger(a.slice(m.index + 1))) return true;
-  }
-  return false;
-}
 
 /** A case-insensitive, whole-word, longest-first matcher of the names; null when none. */
 export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null {
@@ -297,7 +271,7 @@ export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null
   const re = short.length
     ? new RegExp(`(?<![${UNICODE_WORD}])(?:${short.map(escapeRegExp).join("|")})(?![${UNICODE_WORD}])`, "giu")
     : null;
-  if (re && long.length === 0 && !namesCanOverlap(list))
+  if (re && long.length === 0 && !valuesCanOverlap(list))
     return {
       [Symbol.replace]: (text, fn) => text.replace(re, (m: string, at: number) => fn(m, at, text) ?? m),
     };

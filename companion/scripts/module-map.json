@@ -175,6 +175,7 @@
     "anonControl.ts": "analysis/privacy",
     "anonChecksums.ts": "analysis/privacy",
     "anonChunkedMatch.ts": "analysis/privacy",
+    "anonKnownValues.ts": "analysis/privacy",
     "anonCustomSpans.ts": "analysis/privacy",
     "anonIpv6Scan.ts": "analysis/privacy",
     "anonTailJoin.ts": "analysis/privacy",

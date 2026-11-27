@@ -81,3 +81,29 @@ export function matchSpans(re: RegExp | LongValueMatcher, text: string): Span[] 
   for (let m = nextSpan(re, text, 0); m; m = nextSpan(re, text, Math.max(m[1], m[0] + 1))) out.push(m);
   return out;
 }
+
+const BOUNDARY = /[^\p{L}\p{N}_]/gu;
+/**
+ * True when one value can start inside another and run past its end (#3010, #3013): a part of A
+ * that begins after a non-word character is a strict prefix of B (A and B may be the same value).
+ * Compared in two lower-case foldings; a miss only keeps the plain pass that ran before.
+ */
+export function valuesCanOverlap(names: readonly string[]): boolean {
+  for (const fold of [(n: string) => n.toLowerCase(), (n: string) => n.toUpperCase().toLowerCase()]) {
+    const keys = [...new Set(names.map(fold))].sort();
+    const startsLonger = (p: string) => {
+      let lo = 0;
+      let hi = keys.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (keys[mid] < p) lo = mid + 1;
+        else hi = mid;
+      }
+      return [keys[lo], keys[lo + 1]].some((k) => k !== undefined && k !== p && k.startsWith(p));
+    };
+    for (const a of keys)
+      for (const m of a.matchAll(BOUNDARY))
+        if (m.index + 1 < a.length && startsLonger(a.slice(m.index + 1))) return true;
+  }
+  return false;
+}
