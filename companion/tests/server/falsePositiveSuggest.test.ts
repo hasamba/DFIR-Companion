@@ -142,4 +142,31 @@ describe("POST /cases/:id/false-positive/suggest", () => {
     expect(aiCandidate.score).toBe(0);
     expect(aiCandidate.reasons).toEqual(["suggested by AI"]);
   });
+
+  // #3032: the Findings panel's flag button sends the finding's TITLE (finding false-positive
+  // markers are keyed by title), so the suggest route must resolve a finding by title too.
+  it("resolves a finding anchor sent by its title, as the dashboard sends it (#3032)", async () => {
+    const res = await request(app)
+      .post("/cases/c1/false-positive/suggest")
+      .send({ kind: "finding", ref: "  Lateral movement via PsExec " });
+    expect(res.status).toBe(200);
+    expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["f2"]);
+  });
+
+  it("keeps a title-referenced anchor finding out of the AI's pool (#3032)", async () => {
+    // The fake AI tries to return the anchor itself (f1) plus a genuinely new finding (f3).
+    const provider = fakeProvider(JSON.stringify({ candidateIds: ["f1", "f3"] }));
+    const pipeline = new AnalysisPipeline({
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    const aiApp = createApp(store, { stateStore, pipeline });
+    const res = await request(aiApp)
+      .post("/cases/c1/false-positive/suggest")
+      .send({ kind: "finding", ref: "Lateral movement via PsExec", ai: true });
+    expect(res.status).toBe(200);
+    expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["f2", "f3"]);
+  });
 });

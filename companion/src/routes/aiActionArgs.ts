@@ -97,6 +97,8 @@ export type SimilarKind = "event" | "finding";
 /** What the mark-false-positive "find similar" AI pass is asked about, built from the case. */
 export interface SimilarCandidates {
   readonly kind: SimilarKind;
+  /** The resolved anchor's id — the ref may have been a finding title. */
+  readonly anchorId: string;
   readonly deterministic: ReturnType<typeof findSimilarEvents>;
   readonly anchorLabel: string;
   /** Everything the deterministic pass did not already pick, capped at 100: what the AI reads. */
@@ -114,10 +116,13 @@ export function similarCandidates(
   kind: SimilarKind,
   ref: string,
 ): SimilarCandidates | null {
+  // A finding is flagged by its TITLE (finding false-positive markers are keyed by title), so
+  // resolve it by id first, then by title (#3032).
   const anchor =
     kind === "event"
       ? state.forensicTimeline.find((e) => e.id === ref)
-      : state.findings.find((f) => f.id === ref);
+      : (state.findings.find((f) => f.id === ref) ??
+        state.findings.find((f) => f.title.trim() === ref.trim()));
   if (!anchor) return null;
   const deterministic =
     kind === "event"
@@ -127,8 +132,8 @@ export function similarCandidates(
     kind === "event" ? state.forensicTimeline : state.findings;
   const anchorLabel = similarLabel(kind, anchor);
   const seen = new Set(deterministic.map((c) => c.id));
-  const rest = pool.filter((item) => item.id !== ref && !seen.has(item.id)).slice(0, 100);
-  return { kind, deterministic, anchorLabel, rest };
+  const rest = pool.filter((item) => item.id !== anchor.id && !seen.has(item.id)).slice(0, 100);
+  return { kind, anchorId: anchor.id, deterministic, anchorLabel, rest };
 }
 
 /** The text the AI is shown for an event (its description) or a finding (its title). */

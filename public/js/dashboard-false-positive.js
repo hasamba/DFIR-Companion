@@ -224,7 +224,8 @@
           ...document.querySelectorAll(".fp-candidate:checked"),
         ].map((cb) => ({
           kind: cb.dataset.kind,
-          ref: cb.value,
+          // A finding's marker is matched by TITLE (applyFalsePositive), not id (#3032).
+          ref: cb.dataset.kind === "finding" && cb.dataset.label ? cb.dataset.label : cb.value,
           label: cb.dataset.label,
         }));
         const items = [
