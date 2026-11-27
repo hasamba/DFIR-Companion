@@ -37,9 +37,16 @@ const known = (custom: CustomEntity[] = [], suppressed: string[] = []): KnownEnt
   custom,
   suppressed,
 });
-type Opts = { suppressed?: string[]; EMAIL?: boolean; PHONE?: boolean };
+type Opts = {
+  suppressed?: string[];
+  EMAIL?: boolean;
+  PHONE?: boolean;
+  custom?: CustomEntity[];
+  secrets?: boolean;
+};
 const run = (text: string, mask: boolean, opts: Opts = {}) => {
-  const a = createAnonymizer(policy(mask, opts.EMAIL, opts.PHONE), known([], opts.suppressed));
+  const p = { ...policy(mask, opts.EMAIL, opts.PHONE), redactSecrets: opts.secrets === true };
+  const a = createAnonymizer(p, known(opts.custom, opts.suppressed));
   const out = a.apply(text);
   return { out, back: a.restore(out), pairs: a.pairs().map((p) => [p.token, p.value]) };
 };
@@ -108,6 +115,24 @@ describe.each([true, false])("IPv6 that ends inside a dotted IPv4, maskPublicIps
     expect(r.pairs).toEqual([["ANON_IP_1", "fd00::10"]]);
     // The head's token, then the rest of the input as it was.
     expect(r.out).toBe("ANON_IP_1" + input.slice("fd00::10".length));
+  });
+
+  it("a custom range on the head makes the whole public address one internal token", () => {
+    const custom: CustomEntity[] = [{ value: "2001:db8::/32", category: "IP", match: "pattern" }];
+    const r = run("x 2001:db8::10.0.0.5 y", mask, { custom });
+    expect(r.out).toBe("x ANON_IP_1 y");
+    expect(r.pairs).toEqual([["ANON_IP_1", "2001:db8::10.0.0.5"]]);
+    expect(r.back).toBe("x 2001:db8::10.0.0.5 y");
+  });
+
+  it("the issue's example, a vendor key in front, sends no octet in clear", () => {
+    const key = ["sk", "_live_", "ABCDEFGHIJKLMNOP"].join("");
+    const r = run(`${key}x Evtx::7f00:ffff::10.0.0.5`, mask, { secrets: true });
+    expect(r.out).toBe("[REDACTED_SECRET] Evtx::ANON_IP_1::ANON_IP_2");
+    expect(r.pairs).toEqual([
+      ["ANON_IP_1", "7f00:ffff"],
+      ["ANON_IP_2", "10.0.0.5"],
+    ]);
   });
 
   it("keeps 2019:fd00::1 as today", () => {
