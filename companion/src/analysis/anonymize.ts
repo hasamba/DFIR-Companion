@@ -21,7 +21,7 @@ import {
   UPN_ACCT,
   PATH_DOMAINS,
   USER_PATH_RE,
-  WELL_KNOWN_PROFILE,
+  keepsProfileNameInClear,
   bareUsername,
   collectUsernames,
   insideSuppressedAccount,
@@ -444,8 +444,8 @@ export function createAnonymizer(
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
   function anonUserPaths(t: string): string {
-    return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
-      WELL_KNOWN_PROFILE.test(name) ? m : prefix + userToken(name),
+    return t.replace(USER_PATH_RE, (m, prefix: string, name: string, at: number, w: string) =>
+      keepsProfileNameInClear(name, w[at + m.length]) ? m : prefix + userToken(name),
     );
   }
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside

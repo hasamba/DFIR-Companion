@@ -31,11 +31,24 @@ export function replaceUncServers(text: string, mint: (server: string) => string
 export const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
 export const PATH_DOMAINS =
   /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
-// Capture the profile-dir prefix + the username segment; tokenize only the username.
+// Capture the profile-dir prefix + the username segment; tokenize only the username. The name stops
+// at , the character that opens the anonymizer's IPv6 placeholder: the profile pass runs while
+// each address is held aside, and a name that ran on into the placeholder broke it, so the address
+// was lost and a USER value holding the private character was stored (#3000).
 export const USER_PATH_RE =
-  /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/|\/root\/)([^\\/\r\n"'<>|:*?]+)/g;
+  /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/|\/root\/)([^\\/\r\n"'<>|:*?]+)/g;
 export const WELL_KNOWN_PROFILE =
   /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
+const IPV6_PLACEHOLDER_START = "";
+
+/**
+ * Whether a profile-path name stays in clear: a built-in profile (Public, Default, …) does, unless an
+ * IPv6 placeholder follows it directly. Before #3000 such a name ran on into the placeholder and was
+ * tokenized whole, so it stays a USER token there and nothing that was masked goes out in clear.
+ */
+export function keepsProfileNameInClear(name: string, next: string | undefined): boolean {
+  return next !== IPV6_PLACEHOLDER_START && WELL_KNOWN_PROFILE.test(name);
+}
 
 /** Shorter names are never replaced as bare words: "al" or "jo" would shred ordinary prose. */
 export const MIN_BARE_USERNAME_LENGTH = 3;
