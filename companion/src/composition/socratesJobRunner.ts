@@ -6,7 +6,11 @@ import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import { checkStatus, fetchVerdicts } from "../integrations/socrates/socratesApi.js";
-import { SocratesJobStore, type SocratesJob } from "../integrations/socrates/socratesJobStore.js";
+import {
+  SocratesJobStore,
+  isTerminalSocratesStatus,
+  type SocratesJob,
+} from "../integrations/socrates/socratesJobStore.js";
 import { pollUntilImported } from "../integrations/socrates/socratesPoller.js";
 import { recoverSocratesJobs } from "../integrations/socrates/socratesRecovery.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
@@ -56,6 +60,10 @@ export interface SocratesJobRunner {
 }
 
 const POLL_INTERVAL_MS = 5_000;
+
+const RECOVERY_FAILED_MESSAGE =
+  "Interrupted by a server restart, and the analysis could not be recovered. Check the timeline, " +
+  "and re-run the file if its results are missing.";
 
 export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJobRunner {
   const { store } = deps;
@@ -189,21 +197,13 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
           caseId,
           async () => {
             // Adopt the submissions a restart left unfinished, so each still sends one message.
-            submissions.adopt(caseId, await jobs.list(caseId));
-            return recoverSocratesJobs(caseId, {
-              store: jobs,
-              isActive: owned,
-              configured: () => Boolean(deps.socratesConfig()?.baseUrl),
-              resume: (cid, job) => {
-                const cfg = deps.socratesConfig();
-                if (cfg?.baseUrl) start(cid, job, { ...cfg, baseUrl: cfg.baseUrl }, true);
-              },
-              closed: (cid, job) => {
-                submissions.settle(cid, job);
-                return closeDropLog(cid, job);
-              },
-              warn: warnLine,
-            });
+            const listed = await jobs.list(caseId);
+            submissions.adopt(caseId, listed);
+            try {
+              return await recoverCase(caseId);
+            } finally {
+              settleUnrecovered(caseId, listed);
+            }
           },
           generationOf(meta),
         );
@@ -215,6 +215,33 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
     }
     if (resumed || interrupted)
       logLine(`[socrates] after restart: ${resumed} analysis/es resumed, ${interrupted} marked interrupted`);
+  }
+
+  function recoverCase(caseId: string): ReturnType<typeof recoverSocratesJobs> {
+    return recoverSocratesJobs(caseId, {
+      store: jobs,
+      isActive: owned,
+      configured: () => Boolean(deps.socratesConfig()?.baseUrl),
+      resume: (cid, job) => {
+        const cfg = deps.socratesConfig();
+        if (cfg?.baseUrl) start(cid, job, { ...cfg, baseUrl: cfg.baseUrl }, true);
+      },
+      closed: (cid, job) => {
+        submissions.settle(cid, job);
+        return closeDropLog(cid, job);
+      },
+      warn: warnLine,
+    });
+  }
+
+  // A job recovery could not finish (its own recovery threw, or the whole case's did) and that no
+  // poller now drives is settled as failed, so its submission still sends its one message (#3035).
+  // The tracker ignores a job it already settled, so this never reports one twice.
+  function settleUnrecovered(caseId: string, listed: readonly SocratesJob[]): void {
+    for (const job of listed) {
+      if (isTerminalSocratesStatus(job.status) || owned(job.jobId)) continue;
+      submissions.settle(caseId, { ...job, status: "error", error: RECOVERY_FAILED_MESSAGE });
+    }
   }
 
   return {

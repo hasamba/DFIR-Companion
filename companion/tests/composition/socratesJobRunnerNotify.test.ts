@@ -98,4 +98,35 @@ describe("SO-CRATES job runner messages (#3008)", () => {
     await h.runner.resumeAll();
     expect(h.sent).toHaveLength(1);
   });
+
+  it("a job whose recovery throws still settles its submission as failed (#3035)", async () => {
+    const h = await harness();
+    await h.runner.jobs.upsert("c1", job("j1", "good1", { status: "importing", zipEntry: "sample.zip!a" }));
+    await h.runner.jobs.upsert("c1", job("j2", "good2", { status: "importing", zipEntry: "sample.zip!b" }));
+    // Writing j1's interrupted state fails: recovery logs it and moves on to j2.
+    const real = h.runner.jobs.upsert.bind(h.runner.jobs);
+    vi.spyOn(h.runner.jobs, "upsert").mockImplementation(async (caseId, j) => {
+      if (j.jobId === "j1") throw new Error("disk full");
+      return real(caseId, j);
+    });
+    await h.runner.resumeAll();
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0].title).toBe("Import failed: SO-CRATES: sample.zip");
+    const text = h.sent[0].lines.join("\n");
+    expect(text).toContain("sample.zip!a");
+    expect(text).toContain("sample.zip!b");
+  });
+
+  it("a case whose recovery throws outright still reports its adopted submission (#3035)", async () => {
+    const h = await harness();
+    await h.runner.jobs.upsert("c1", job("j1", "good1", { status: "importing" }));
+    // The first list (adoption) works; recovery's own list then fails.
+    const real = h.runner.jobs.list.bind(h.runner.jobs);
+    vi.spyOn(h.runner.jobs, "list")
+      .mockImplementationOnce(real)
+      .mockRejectedValueOnce(new Error("read failed"));
+    await h.runner.resumeAll();
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0].title).toBe("Import failed: SO-CRATES: sample.zip");
+  });
 });
