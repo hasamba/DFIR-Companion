@@ -338,18 +338,29 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const last = /:(\d{1,3})$/.exec(value)?.[1];
     const m = /^((?:\.\d{1,3}){0,2}\.)(ANON_PHONE_\d+)(?!\d)/.exec(t.slice(end, end + 40));
     const head = m ? PHONE_HEAD.exec(d.real(m[2]) ?? "") : null;
-    if (!last || !m || !head || (m[1] + head[1]).split(".").length !== 4) return null;
+    if (!last || !m || !head || (m[1] + head[1]).split(".").length < 4) return null;
     const [, num, gap, rest] = head;
-    const ip = last + m[1] + num;
+    const run = last + m[1] + num;
+    const ip = run.split(".").slice(0, 4).join(".");
     const cat = d.ipv4Category(ip);
     if (!cat || d.suppressed.has(ip)) return null;
+    // A longer run ("2001:db8::10" + "." + the token of "10.0.0.100 555-0100") is one token, forced
+    // and unsaved, as runRaw masks it on a call without saved values; its readings are minted (#3027).
+    const ipTok = run === ip ? d.assign(cat, ip) : clearRun(cat, ip, run);
     const phone = unsaved(
       d.forcing(() => d.assign("PHONE", rest)),
       rest,
     );
     const skip = m[0].length;
-    const out = value.slice(0, -last.length) + d.assign(cat, ip) + gap + phone;
+    const out = value.slice(0, -last.length) + ipTok + gap + phone;
     return { out: d.ended(out, value, at, end + skip, t), skip };
+  }
+  function clearRun(cat: AnonTokenCategory, ip: string, run: string): string {
+    mintReadings(ip, run.slice(ip.length));
+    return unsaved(
+      d.forcing(() => d.assign(cat, run)),
+      run,
+    );
   }
   // #3019: a masked address head whose dotted tail ends in a saved phone value ("fd00::10" +
   // ".0.0." + the token of "100 555-0100"). As on a call without saved values, the whole address is
@@ -380,14 +391,16 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const v6 = DOTTED_V6.test(value);
     const v4 = !v6 && DOTTED_V4.test(value);
     const dotted = v6 || v4;
-    const octets = v4 ? "*" : dotted ? "+" : "{3}";
+    const octets = dotted ? "*" : "{3}";
     const re = new RegExp(`(?<!\\d)${token}((?:\\.\\d{1,3})${octets})\\b`, "g");
     return consume(t, re, (m) => {
       const tail = m[1];
       const end = m.index + m[0].length;
       const next = t.slice(end, end + NEXT);
       const keep = { out: m[0], skip: 0 };
-      if (v4 && tail === "") {
+      // A phone number that starts in the last number of a saved dotted tail ("fd00::10.0.0.100" +
+      // " 555-0100") is split, as on a call without saved values (#3027).
+      if (tail === "") {
         const p = phoneOut(lastOctetPhone(value, next, rules()), false);
         if (!p.skip) return keep;
         return { out: d.ended(m[0] + p.out, value, m.index, end + p.skip, t), skip: p.skip };
