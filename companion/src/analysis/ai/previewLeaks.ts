@@ -1,5 +1,7 @@
 import { isIPv6 } from "node:net";
+import { embeddedIpv4 } from "../iocValue.js";
 import {
+  findReservableIpv6Spans,
   isInternalIp,
   isInternalIpv6,
   isMaskableIpv4,
@@ -23,7 +25,6 @@ export interface PreviewWarning {
 
 const TOKEN_SHAPE = /ANON_[A-Z]+_\d+|\[REDACTED_SECRET\]/g;
 const IPV4 = /(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)/g;
-const IPV6 = /(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:[0-9A-Fa-f]{1,4}|(?:\d{1,3}\.){3}\d{1,3})?(?![\w:])/g;
 const EMAIL = /(?<![\w.%+-])[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}(?![\w-])/g;
 const DOMAIN =
   /(?<![\w.@\\-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+([A-Za-z]{2,24})(?![\w-]|\.[A-Za-z0-9])/g;
@@ -57,6 +58,7 @@ function ipLeak(ip: string, policy: Pick<AnonPolicy, "maskPublicIps">): boolean 
 
 function ipv6Leak(ip: string, policy: Pick<AnonPolicy, "maskPublicIps">): boolean {
   if (!/[0-9a-f]/i.test(ip) || !isIPv6(ip) || ip === "::1") return false;
+  if (embeddedIpv4(ip.toLowerCase())?.startsWith("127.")) return false; // loopback, as for IPv4
   return isInternalIpv6(ip) || (policy.maskPublicIps && isMaskableIpv6(ip));
 }
 
@@ -81,7 +83,9 @@ function collect(masked: string, policy: Pick<AnonPolicy, "maskPublicIps">): Can
       if (keep(hit)) out.push({ m: [hit.index, hit.index + hit[0].length], looksLike, rank });
   };
   add(EMAIL, "email", 0, () => true);
-  add(IPV6, "ip", 1, (h) => ipv6Leak(h[0], policy));
+  // IPv6: the anonymizer's own scan (#2958), so the hint marks what the IP category would mask.
+  for (const { start, end } of findReservableIpv6Spans(masked))
+    if (ipv6Leak(masked.slice(start, end), policy)) out.push({ m: [start, end], looksLike: "ip", rank: 1 });
   add(IPV4, "ip", 1, (h) => ipLeak(h[0], policy));
   add(DOMAIN, "domain", 2, (h) => domainLeak(h[1]));
   add(HOST, "host", 3, (h) => hostLeak(h[0], h[1]));
