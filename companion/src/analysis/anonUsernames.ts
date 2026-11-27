@@ -41,13 +41,22 @@ export const WELL_KNOWN_PROFILE =
   /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
 const IPV6_PLACEHOLDER_START = "";
 
+/** How a profile name is minted: a `saved` name is learned and saved as a discovery, others never. */
+export type ProfileNameMint = (name: string, saved: boolean) => string;
+
 /**
- * Whether a profile-path name stays in clear: a built-in profile (Public, Default, …) does, unless an
- * IPv6 placeholder follows it directly. Before #3000 such a name ran on into the placeholder and was
- * tokenized whole, so it stays a USER token there and nothing that was masked goes out in clear.
+ * Replace the username of every profile path with `mint(...)`, keeping the prefix. A name an IPv6
+ * placeholder cuts short ran on into it before #3000 and was tokenized whole, as a value holding the
+ * private character that never matched again. So it stays a USER token even when it is a built-in
+ * profile (Public, Default, …), and it is never learned or saved: a saved fragment such as "5" came
+ * back as a custom value on a later call and cut a SID or an address apart. A built-in profile name
+ * the path ends normally stays in clear.
  */
-export function keepsProfileNameInClear(name: string, next: string | undefined): boolean {
-  return next !== IPV6_PLACEHOLDER_START && WELL_KNOWN_PROFILE.test(name);
+export function replaceUserPaths(text: string, mint: ProfileNameMint): string {
+  return text.replace(USER_PATH_RE, (m, prefix: string, name: string, at: number, w: string) => {
+    const cut = w[at + m.length] === IPV6_PLACEHOLDER_START;
+    return !cut && WELL_KNOWN_PROFILE.test(name) ? m : prefix + mint(name, !cut);
+  });
 }
 
 /** Shorter names are never replaced as bare words: "al" or "jo" would shred ordinary prose. */

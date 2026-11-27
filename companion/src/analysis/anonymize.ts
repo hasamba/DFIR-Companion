@@ -21,8 +21,7 @@ import {
   NETBIOS_ACCT,
   UPN_ACCT,
   PATH_DOMAINS,
-  USER_PATH_RE,
-  keepsProfileNameInClear,
+  replaceUserPaths,
   bareUsername,
   collectUsernames,
   insideSuppressedAccount,
@@ -367,21 +366,19 @@ export function createAnonymizer(
     const out: CustomEntity[] = [];
     const seen = new Set<string>();
     for (const [token, real] of toReal) {
-      const cat = (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory;
+      const cat = catOf(token);
       const key = anonPairKey(cat, real);
       if (seen.has(key) || tails.unsaved(key)) continue; // a cut phone number is never saved (#2995)
+      if (cutUsers.has(token) && !savedUsers.has(token)) continue; // a cut profile name (#3000)
       seen.add(key);
       out.push({ value: real, category: cat });
     }
     return out;
   }
 
+  const catOf = (token: string) => (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory;
   function pairs(): AnonPair[] {
-    return [...toReal].map(([token, value]) => ({
-      token,
-      value,
-      category: (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory,
-    }));
+    return [...toReal].map(([token, value]) => ({ token, value, category: catOf(token) }));
   }
 
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
@@ -406,9 +403,13 @@ export function createAnonymizer(
   for (const n of known.usernames ?? []) learn(n);
   const knownHosts = new Set(known.hosts.map((h) => h.toLowerCase()));
   const qualifier = (q: string) => assign(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q);
-  function userToken(user: string): string {
-    learn(user);
-    return assign("USER", user);
+  const savedUsers = new Set<string>(); // USER tokens, by how they were minted
+  const cutUsers = new Set<string>(); // masked in place, never learned or saved (replaceUserPaths)
+  function userToken(user: string, saved = true): string {
+    if (saved) learn(user);
+    const token = assign("USER", user);
+    (saved ? savedUsers : cutUsers).add(token);
+    return token;
   }
   function accountToken(account: string): string {
     if (!forceCustom && suppressed.has(account.toLowerCase())) return account; // analyst veto
@@ -445,9 +446,7 @@ export function createAnonymizer(
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
   function anonUserPaths(t: string): string {
-    return t.replace(USER_PATH_RE, (m, prefix: string, name: string, at: number, w: string) =>
-      keepsProfileNameInClear(name, w[at + m.length]) ? m : prefix + userToken(name),
-    );
+    return replaceUserPaths(t, userToken);
   }
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
   // FromBase64String('…'). Tokenize ONLY the blob — the verb + flag stay visible as tradecraft signal,

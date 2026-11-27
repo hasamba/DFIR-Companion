@@ -123,3 +123,41 @@ describe("unchanged neighbours (#3000)", () => {
     expect(run("seen 2019:fd00::1 here", false).out).toBe("seen 2019:fd00::1 here");
   });
 });
+
+// A name the address cuts short (it ran on into the address before the fix) is masked in place but
+// never learned or saved: on a later call a saved fragment such as "5" came back as a custom value
+// and cut a SID or an address apart. Before the fix the value held the placeholder and never matched.
+describe.each([true, false])("a profile name cut short by an address, maskPublicIps=%s (#3000)", (mask) => {
+  it.each([
+    [`${WIN}5fd00::2`, "5"],
+    [`${WIN}${BOB}fd00::2 x`, BOB],
+    [`${HOME}${ALICE} fd00::2`, `${ALICE} `],
+    [`${WIN}Publicfd00::2 y`, "Public"],
+  ])("%s masks the name but never saves it", (text, name) => {
+    const r = run(text, mask);
+    expect(r.pairs).toContainEqual([U1, name]);
+    expect(r.back).toBe(text);
+    expect(r.values).not.toContain(name);
+    expect(r.values).toContain("fd00::2");
+  });
+
+  it("does not learn the cut name as a bare word", () => {
+    const r = run(`${WIN}${BOB}fd00::2 then ${BOB} ran`, mask);
+    expect(r.out).toBe(`${WIN}${U1}${IP1} then ${BOB} ran`);
+  });
+
+  it.each([`S-1-5-21-1-2-3-4 ${WIN}x`, "seen fd00::10.168.1.5 here"])(
+    "a saved discovery does not cut %s on a later call",
+    (later) => {
+      const first = createAnonymizer(policy(mask), known());
+      first.apply(`${WIN}5fd00::2`);
+      const seeded = createAnonymizer(policy(mask), { ...known(), custom: first.discoveries() });
+      const plain = createAnonymizer(policy(mask), known());
+      expect(seeded.apply(later)).toBe(plain.apply(later));
+    },
+  );
+
+  it("still saves a name the path ends normally", () => {
+    expect(run(`${WIN}${ALICE}${BS}x`, mask).values).toContain(ALICE);
+  });
+});
