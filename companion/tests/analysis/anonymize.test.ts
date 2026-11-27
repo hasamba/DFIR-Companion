@@ -1302,6 +1302,16 @@ describe("isInternalIpv6", () => {
     expect(isInternalIpv6("::ffff:10.0.0.1")).toBe(true);
   });
 
+  // #2959: fc00::/7 is a 16-bit first group of fc00-fdff, so it is always four hex digits.
+  it("judges unique-local by the whole first group, not its first characters", () => {
+    for (const ip of ["fd00::1", "fc00:1::5", "FD00::1", "[fd00::1]", "fdff:1:2:3:4:5:6:7", "fd00::"]) {
+      expect(isInternalIpv6(ip)).toBe(true);
+    }
+    for (const ip of ["fd:3a:11:22:33:44:55:66", "fd0::1", "fc::1", "fc:1::5"]) {
+      expect(isInternalIpv6(ip)).toBe(false);
+    }
+  });
+
   it("preserves public IPv6", () => {
     expect(isInternalIpv6("2001:4860:4860::8888")).toBe(false);
     expect(isInternalIpv6("2606:4700:4700::1111")).toBe(false);

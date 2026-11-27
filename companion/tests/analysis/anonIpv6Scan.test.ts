@@ -176,3 +176,52 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     expect(run("x 2001:fd00::1 y", true, range, false).out).toBe("x 2001:fd00::1 y");
   });
 });
+
+// #2959: a colon-separated byte run that starts with "fd:" or "fc:" was read as a unique-local
+// address (only the first characters were checked), and "Server2016::Foo" lost "2016::F" to a
+// public-address token. Narrowing those must never let a real internal address through.
+describe.each([true, false])("IPv6 false positives, maskPublicIps=%s (#2959)", (mask) => {
+  it.each([
+    "fp fd:3a:11:22:33:44:55:66 seen",
+    "fd:3a:11:22:33:44:55:66",
+    "FD:3A:11:22:33:44:55:66",
+    "fc:3a:11:22:33:44:55:66",
+    "fp fd:3a:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:01 x",
+    "fp 11:22:33:44:55:66:77:88:fd:3a:11:22:33:44:55:66 x",
+    "x fd0::1 y",
+    "Server2016::Foo",
+    "Server2016::Foo()",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
+  });
+
+  it.each([
+    ["x fd00::1 y", "x ANON_IP_1 y", "fd00::1"],
+    ["x fc00:1::5 y", "x ANON_IP_1 y", "fc00:1::5"],
+    ["x FD00::1 y", "x ANON_IP_1 y", "FD00::1"],
+    ["x fdff:1:2:3:4:5:6:7 y", "x ANON_IP_1 y", "fdff:1:2:3:4:5:6:7"],
+    ["x fd:fd00::1 y", "x fd:ANON_IP_1 y", "fd00::1"],
+    ["x fc:fc00:1::5 y", "x fc:ANON_IP_1 y", "fc00:1::5"],
+    ["x fd:fd00:1:2:3:4:5:6:7 y", "x fd:ANON_IP_1 y", "fd00:1:2:3:4:5:6:7"],
+    ["Server2016::fd00::1", "Server2016::ANON_IP_1", "fd00::1"],
+    ["fd:fd00::1Method", "fd:ANON_IP_1Method", "fd00::1"],
+    ["fd:fd00:1:2:3:4:5:6:7_eth0", "fd:ANON_IP_1_eth0", "fd00:1:2:3:4:5:6:7"],
+    ["fd:fe80::1_eth0", "fd:ANON_IP_1_eth0", "fe80::1"],
+    ["fd:fd00::1:", "fd:ANON_IP_1:", "fd00::1"],
+    ["xfc:fd00::1Method", "xfc:ANON_IP_1Method", "fd00::1"],
+    ["fd0:fd00::1Method", "fd0:ANON_IP_1Method", "fd00::1"],
+    ["fc0:fe80::1_eth0", "fc0:ANON_IP_1_eth0", "fe80::1"],
+    ["fd0:::1Method", "fd0:ANON_IP_1Method", "::1"],
+    ["fd0:64:ff9b::a00:1_eth0", "fd0:ANON_IP_1_eth0", "64:ff9b::a00:1"],
+  ])("still tokenizes the internal address in %s", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+
+  it("a public address between underscores is still masked when public IPs are masked", () => {
+    const input = "dump_2001:db8::1_eth0";
+    expect(run(input, mask).out).toBe(mask ? "dump_ANON_EXTIP_1_eth0" : input);
+  });
+});

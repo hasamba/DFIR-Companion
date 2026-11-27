@@ -14,7 +14,7 @@ import {
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { scanTokenLiterals } from "./anonTokenLiterals.js";
-import { findIpv6Literals, type Ipv6Grade } from "./anonIpv6Scan.js";
+import { findIpv6Literals, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
 import {
   NETBIOS_ACCT,
   UPN_ACCT,
@@ -212,7 +212,9 @@ function nat64EmbeddedIpv4(groups: number[]): string | null {
 export function isInternalIpv6(ip: string): boolean {
   const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
   if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
+  // Unique-local fc00::/7 is a first 16-bit group of fc00-fdff: always four hex digits. A shorter
+  // "fd"/"fc" first group (0x00fd) is not one — that is a fingerprint or EUI-64 byte run (#2959).
+  if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;
   if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true; // link-local fe80::/10
   const mapped = embeddedIpv4(lower);
   if (mapped && isInternalIp(mapped)) return true;
@@ -260,6 +262,12 @@ export function isMaskableIpv6(ip: string): boolean {
 function ipv6Grade(ip: string): Ipv6Grade {
   if (isInternalIpv6(ip)) return "keep";
   return isMaskableIpv6(ip) ? "weak" : null;
+}
+
+// Shared by the set-aside, the secret/custom pass (#2952) and the preview's leak hint (#2958), so all
+// agree on what an address is; false positives stay put, a glued or "::"-ended one is found (#2953).
+export function findReservableIpv6Spans(text: string): Ipv6Span[] {
+  return findIpv6Literals(text, ipv6Grade, { splitUnknown: true, wholeToken: false });
 }
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
@@ -505,7 +513,7 @@ export function createAnonymizer(
     // a forged placeholder must never index the literals table and make restore() invent an
     // address in text that never contained one.
     const text = t.replace(IPV6_SENTINEL_RE, "");
-    const found = reservableIpv6Spans(text);
+    const found = findReservableIpv6Spans(text);
     if (found.length === 0) return { text, literals: [] };
     const literals: Reserved[] = [];
     let out = "";
@@ -516,12 +524,6 @@ export function createAnonymizer(
       at = s.end;
     }
     return { text: out + text.slice(at), literals };
-  }
-
-  function reservableIpv6Spans(text: string): Array<{ start: number; end: number }> {
-    // Shared by the set-aside and the secret/custom pass (#2952), so both agree on what an address
-    // is; detector false positives stay put, and a glued or "::"-ended address is found (#2953).
-    return findIpv6Literals(text, ipv6Grade, { splitUnknown: true, wholeToken: false });
   }
 
   function restoreIpv6Literals(t: string, literals: Reserved[]): string {
@@ -624,7 +626,7 @@ export function createAnonymizer(
     // custom pass skips a match beside one.
     t = t.replace(IPV6_SENTINEL_RE, "");
     if (policy.redactSecrets) {
-      const spans = () => (policy.categories.IP ? reservableIpv6Spans(t) : []);
+      const spans = () => (policy.categories.IP ? findReservableIpv6Spans(t) : []);
       t = redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans);
     }
     // Then reserve IPv6 literals — before anonCustom or any other pass — so nothing can substitute
