@@ -65,6 +65,21 @@ const VENDOR_SECRETS: RegExp[] = [
   /\b(?=(?:AC|SK)[0-9A-F]{32}\b)(?<=(?:twilio[^\n]{0,60}|\b(?:account_?sid|auth_?token)["']?[ \t]{0,4}[=:][ \t]{0,4}["']?))(?:AC|SK)[0-9A-F]{32}\b/gi,
 ];
 
+// A token that ends in a hex character and is glued to an IPv6 address has taken the address's hex
+// head (`fd00` of `fd00::2`), so the rest (`::2`) would go out in clear or be tokenized as the wrong
+// address (#3016). This optional tail takes the rest into the same placeholder: colon groups that
+// contain "::", then an optional dotted IPv4 tail (and a fifth dotted number, as #3012 masks it).
+// The tail is all or nothing: it must end where the address ends, never before a word character,
+// "@", or a "." or ":" that more of a value follows. Stopping early would put the rest of the
+// address (or the domain of `fd00::5@example.test`) in clear where the address pass masked it, so
+// the tail is then not taken at all. Requiring "::" keeps `:12:34:56`, MAC addresses and
+// `::Method()` out of it. The VENDOR_SECRETS sources stay as they are, so code that derives
+// regexes from them does not meet the tail.
+const GLUED_V6_TAIL =
+  "(?:(?<=[0-9A-Fa-f])(?=(?::[0-9A-Fa-f]{1,4}){0,6}::)(?::[0-9A-Fa-f]{0,4}){2,8}" +
+  "(?:\\d{1,3}(?:\\.\\d{1,3}){3,4})?(?![0-9A-Za-z_@]|[.:][0-9A-Za-z:]))?";
+const VENDOR_SECRETS_GLUED_V6 = VENDOR_SECRETS.map((re) => new RegExp(re.source + GLUED_V6_TAIL, re.flags));
+
 // Slack incoming-webhook URL: the host stays (it says what the URL is), the path segments go.
 const SLACK_WEBHOOK_RE =
   /(\bhooks\.slack\.com\/services\/)[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_-]{1,64}){0,3}/gi;
@@ -79,8 +94,9 @@ const SAS_VERSION_RE = /[?&]sv=/i;
 // a bare Bearer value must contain a digit or a symbol — that is what keeps "Basic authentication
 // failed" and "bearer authentication" readable. An all-letter opaque Bearer token is therefore only
 // caught under a key (`Authorization:`): a recall trade-off for prose.
+// The Bearer value also takes a glued IPv6 address (#3016); the digit-or-symbol test reads the value only.
 const BARE_BASIC_RE = /\b(Basic[ \t]{1,4})([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])/gi;
-const BARE_BEARER_RE = /\b(Bearer[ \t]{1,4})([A-Za-z0-9._~+/=-]{8,})/gi;
+const BARE_BEARER_RE = new RegExp(`\\b(Bearer[ \\t]{1,4})([A-Za-z0-9._~+/=-]{8,})(${GLUED_V6_TAIL})`, "gi");
 
 // URL userinfo password (scheme://user:pass@host) — the password only; the user is tokenized later.
 // A match starts only where a run of scheme characters starts (#2967). Without that, a long run with
@@ -114,6 +130,6 @@ export function redactSecretText(text: string): string {
   out = redactKeyedSecrets(out, SECRET_PLACEHOLDER);
   // Vendor shapes last (#3005): a keyed or flag value that holds a vendor shape plus a glued tail
   // is hidden whole first; the vendor pass then catches shapes outside any key.
-  for (const re of VENDOR_SECRETS) out = out.replace(re, SECRET_PLACEHOLDER);
+  for (const re of VENDOR_SECRETS_GLUED_V6) out = out.replace(re, SECRET_PLACEHOLDER);
   return out;
 }
