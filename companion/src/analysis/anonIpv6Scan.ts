@@ -307,6 +307,76 @@ export function groupAsRead<G extends { start: number; end: number; category: un
   });
 }
 
+/** How a set-aside address is masked: its category and whether a suppression can veto it. */
+export interface Ipv6Mask<C> {
+  cat: C;
+  forced: boolean;
+}
+
+/**
+ * How a set-aside address is masked, or null to put it back in clear. `range`: a custom range's
+ * category, which names it (#2946). `closed`: the internal category a fail-closed span takes.
+ * `base`: the category by value (internal, or public when public masking is on).
+ * A fail-closed span is never back in clear through a suppression of its value (#2976), but one read
+ * as "::a00:5" before #2979 still honours a suppression of that spelling.
+ */
+export function ipv6Mask<C>(
+  entry: { value: string } & Pick<Ipv6Span, "failClosed" | "separated">,
+  rules: {
+    range: (read: string) => C | null;
+    closed: C;
+    base: (ip: string) => C | null;
+    suppressed: ReadonlySet<string>;
+  },
+): Ipv6Mask<C> | null {
+  const ip = entry.value;
+  const read = entry.separated === "alone" ? `::${ip}` : ip;
+  const ranged = rules.range(read);
+  if (ranged) return { cat: ranged, forced: true };
+  if (read !== ip && rules.suppressed.has(read.toLowerCase())) return null;
+  if (entry.failClosed) return { cat: rules.closed, forced: true };
+  const cat = rules.base(ip);
+  return cat !== null && !rules.suppressed.has(ip.toLowerCase()) ? { cat, forced: false } : null;
+}
+
+// A set-aside value whose last group can open a dotted IPv4 ("fd00::192" of "fd00::192.168.1.5").
+const CUT_OCTET = /:\d{1,3}$/;
+
+/**
+ * The value to mint for a masked address and the text left after its token (#2990). IPV6_RE cannot
+ * read ".", so the detector stops at the first octet of a dotted IPv4 tail; `cut` is the rest of that
+ * IPv4 (".168.1.5"), still intact after every earlier pass, and it joins the token. It does not when a
+ * later pass would read part of it with what follows (`next`): a fifth octet (the IPv4 pass takes the
+ * last four), or a `crossers` match such as a phone number ("100 555-0100"). Nor when the joined value
+ * is suppressed and the mask is not forced: the head keeps its token as before.
+ */
+export function ipv4TailJoin(
+  value: string,
+  cut: string,
+  next: string,
+  forced: boolean,
+  rules: { suppressed: ReadonlySet<string>; crossers: readonly RegExp[] },
+): { value: string; rest: string } {
+  const whole = value + cut;
+  const joins =
+    cut !== "" &&
+    CUT_OCTET.test(value) &&
+    !FIFTH_OCTET.test(next) &&
+    !rules.crossers.some((re) => crosses(re, cut + next, cut.length)) &&
+    (forced || !rules.suppressed.has(whole.toLowerCase()));
+  return joins ? { value: whole, rest: "" } : { value, rest: cut };
+}
+
+const FIFTH_OCTET = /^\.\d/;
+// Whether a match of `re` in `text` starts before `at` and ends after it.
+function crosses(re: RegExp, text: string, at: number): boolean {
+  for (const m of text.matchAll(new RegExp(re.source, "g" + re.flags.replace("g", "")))) {
+    if (m.index >= at) return false;
+    if (m.index + m[0].length > at) return true;
+  }
+  return false;
+}
+
 /**
  * The original detector pieces behind a fail-closed span (#2979): the match that opened with the "::"
  * separator and, for a joined span, the match after it. The preview's leak hint judges these, as it
