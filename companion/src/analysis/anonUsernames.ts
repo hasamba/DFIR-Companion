@@ -248,12 +248,44 @@ export function collectUsernames(src: UsernameSources): string[] {
 // or "_" in any script, so "jdoe" never fires inside "jdoes", "xjdoe" or an ANON_USER_n token.
 const UNICODE_WORD = "\\p{L}\\p{N}_";
 
-export type NameReplacer = (m: string, offset: number, whole: string) => string;
+/**
+ * `joined` is set when the span joins overlapping learned names (#3010): those are what is saved.
+ * Returning null for a joined span refuses the join: the first name is replaced alone and the scan
+ * goes on after it, as it did before #3010.
+ */
+export type NameReplacer = (m: string, offset: number, whole: string, joined?: string[]) => string | null;
 /** Usable as the first argument of String.replace, like the RegExp it stands in for. */
 export interface UsernameMatcher {
   [Symbol.replace](text: string, fn: NameReplacer): string;
 }
 type Span = [number, number];
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+const BOUNDARY = /[^\p{L}\p{N}_]/gu;
+
+/**
+ * True when one name can start inside another and run past its end: a part of A that begins after
+ * a non-word character is a strict prefix of B. Compared in two lower-case foldings; a miss only
+ * keeps the plain alternation, which is what ran before #3010.
+ */
+function namesCanOverlap(names: readonly string[]): boolean {
+  for (const fold of [(n: string) => n.toLowerCase(), (n: string) => n.toUpperCase().toLowerCase()]) {
+    const keys = [...new Set(names.map(fold))].sort();
+    const startsLonger = (p: string) => {
+      let lo = 0;
+      let hi = keys.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (keys[mid] < p) lo = mid + 1;
+        else hi = mid;
+      }
+      return [keys[lo], keys[lo + 1]].some((k) => k !== undefined && k !== p && k.startsWith(p));
+    };
+    for (const a of keys)
+      for (const m of a.matchAll(BOUNDARY))
+        if (m.index + 1 < a.length && startsLonger(a.slice(m.index + 1))) return true;
+  }
+  return false;
+}
 
 /** A case-insensitive, whole-word, longest-first matcher of the names; null when none. */
 export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null {
@@ -265,7 +297,10 @@ export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null
   const re = short.length
     ? new RegExp(`(?<![${UNICODE_WORD}])(?:${short.map(escapeRegExp).join("|")})(?![${UNICODE_WORD}])`, "giu")
     : null;
-  if (re && long.length === 0) return { [Symbol.replace]: (text, fn) => text.replace(re, fn) };
+  if (re && long.length === 0 && !namesCanOverlap(list))
+    return {
+      [Symbol.replace]: (text, fn) => text.replace(re, (m: string, at: number) => fn(m, at, text) ?? m),
+    };
   // The leftmost match wins, the longest on a tie, and the scan resumes at its end: what the single
   // alternation did before a long name had to leave it.
   const next = (text: string, from: number): Span | null => {
@@ -281,17 +316,62 @@ export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null
     for (const ln of long) offer(nextLong(text, ln, from));
     return best;
   };
+  // True when the part of `o` past `end` holds no letter, digit or "_" that the next match (which the
+  // scan emits anyway) leaves out: then the span is not widened and the tokens stay what they were.
+  const tailCovered = (text: string, o: Span, end: number): boolean => {
+    if (o[1] <= end) return true;
+    const w = text.slice(end, o[1]).search(WORD_CHAR);
+    const n = w < 0 ? null : next(text, end);
+    return w < 0 || (!!n && n[0] <= end + w && n[1] >= o[1]);
+  };
   return {
     [Symbol.replace](text: string, fn: NameReplacer): string {
       let out = "";
       let at = 0;
-      for (let m = next(text, 0); m; m = next(text, at)) {
-        out += text.slice(at, m[0]) + fn(text.slice(m[0], m[1]), m[0], text);
-        at = m[1];
+      for (let m = next(text, 0); m;) {
+        // #3010: a learned name that starts inside this match and runs past it joins the span, or its
+        // tail would go out in clear ("ann bob" + "bob carol dave" in "ann bob carol dave").
+        const span: Span = [m[0], m[1]];
+        const joined = [m];
+        let o = next(text, m[0] + 1);
+        for (; o && o[0] < span[1]; o = next(text, o[0] + 1)) {
+          if (tailCovered(text, o, span[1])) continue;
+          span[1] = o[1];
+          joined.push(o);
+        }
+        const names = joined.length > 1 ? joined.map(([s, e]) => text.slice(s, e)) : undefined;
+        const run = names ? fn(text.slice(span[0], span[1]), span[0], text, names) : null;
+        const end = run === null ? m[1] : span[1];
+        out +=
+          text.slice(at, m[0]) + (run ?? fn(text.slice(m[0], m[1]), m[0], text) ?? text.slice(m[0], m[1]));
+        at = end;
+        m = run === null && names ? next(text, end) : o; // the first match at or after the span's end
       }
       return out + text.slice(at);
     },
   };
+}
+
+/**
+ * Mint every bare-name match, except the user half of a suppressed account and a label inside an
+ * untokenized URL or dotted host. `mint` gets the names a joined run is made of (#3010).
+ */
+export function replaceBareNames(
+  text: string,
+  matcher: UsernameMatcher,
+  suppressed: ReadonlySet<string>,
+  mint: (m: string, joined?: string[]) => string,
+): string {
+  let spans: Span[] | undefined; // computed once, only when a name matches
+  return matcher[Symbol.replace](text, (m, offset, whole, joined) => {
+    // A joined run that would stay text is not joined: the first name alone gets these checks.
+    if (joined && suppressed.has(m.toLowerCase())) return null;
+    spans ??= preservedSpans(whole);
+    const keep =
+      insideSuppressedAccount(whole, offset, joined?.[0] ?? m, suppressed) ||
+      strictlyInside(spans, offset, m.length);
+    return !keep ? mint(m, joined) : joined ? null : m;
+  });
 }
 
 // A URL or a dotted host name that no earlier pass tokenized is not a known victim value, so it is

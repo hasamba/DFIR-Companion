@@ -26,14 +26,12 @@ import {
   replaceUserPaths,
   bareUsername,
   collectUsernames,
-  insideSuppressedAccount,
   isGuardedUsername,
   shortHostLabels,
   isNoiseAccount,
   isNoiseDomain,
-  preservedSpans,
+  replaceBareNames,
   replaceUncServers,
-  strictlyInside,
   usernameMatcher,
 } from "./anonUsernames.js";
 
@@ -437,14 +435,11 @@ export function createAnonymizer(
   // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
   function anonBareUsernames(t: string): string {
     if (bareRe === undefined) bareRe = usernameMatcher(learned);
-    if (!bareRe) return t;
-    let spans: Array<[number, number]> | undefined; // computed once, only when a name matches
-    return t.replace(bareRe, (m: string, offset: number, whole: string) => {
-      if (insideSuppressedAccount(whole, offset, m, suppressed)) return m;
-      spans ??= preservedSpans(whole);
-      if (strictlyInside(spans, offset, m.length)) return m;
-      return guard("USER", m);
-    });
+    return bareRe ? replaceBareNames(t, bareRe, suppressed, mintBareName) : t;
+  }
+  function mintBareName(m: string, joined?: string[]): string {
+    for (const n of joined ?? []) userToken(n); // a run joining overlapping names is never saved; its names are (#3010)
+    return joined ? userToken(m, false) : guard("USER", m);
   }
   const EMAIL_RE =
     /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
