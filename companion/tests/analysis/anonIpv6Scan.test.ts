@@ -55,6 +55,9 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     ["peer node12:fd00:abcd:: down", "peer node12:ANON_IP_1 down", "fd00:abcd::"],
     ["srvé:fd00::1", "srvé:ANON_IP_1", "fd00::1"],
     ["x ::ffff:10.0.0.5 y", "x ANON_IP_1 y", "::ffff:10.0.0.5"],
+    ["x node12:::ffff:a00:5 y", "x node12:ANON_IP_1 y", "::ffff:a00:5"],
+    ["win2019:::ffff:a00:5", "win2019:ANON_IP_1", "::ffff:a00:5"],
+    ["x node12:::1 y", "x node12:ANON_IP_1 y", "::1"],
   ])("%s -> %s", (input, expected, value) => {
     const { out, back, pairs } = run(input, mask);
     expect(out).toBe(expected);
@@ -118,6 +121,13 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     expect(out).toBe(expected);
     expect(back).toBe(input);
   });
+
+  it.each(["x fd00::beefMethod y", "x fd00::1:2:3:4:5:6:7:8 y", "x node12:fd00::1xyz y"])(
+    "never hides the front of a longer token: %s",
+    (input) => {
+      expect(run(input, true, range, false).out).toBe(input);
+    },
+  );
 
   it("never hides part of an address outside the range", () => {
     expect(run("x 2001:fd00::1 y", true, range, false).out).toBe("x 2001:fd00::1 y");

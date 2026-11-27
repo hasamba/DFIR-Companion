@@ -504,7 +504,7 @@ export function createAnonymizer(
     // a forged placeholder must never index the literals table and make restore() invent an
     // address in text that never contained one.
     const text = t.replace(IPV6_SENTINEL_RE, "");
-    const found = findIpv6Literals(text, ipv6Grade, true); // detector false positives stay put
+    const found = findIpv6Literals(text, ipv6Grade, { splitUnknown: true, wholeToken: false }); // detector false positives stay put
     if (found.length === 0) return { text, literals: [] };
     const literals: Reserved[] = [];
     let out = "";

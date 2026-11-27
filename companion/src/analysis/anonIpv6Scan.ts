@@ -52,6 +52,8 @@ function stickyAt(text: string, at: number): RegExpExecArray | null {
   return re.exec(text);
 }
 
+const endsToken = (text: string, end: number) => ENDS_TOKEN.test(text.slice(end, end + 1));
+
 // Re-run the detector at every group start inside the rejected match, on the FULL text (the real
 // address can run past the rejected match's end). The first acceptable one is the longest.
 function retryInside(
@@ -61,11 +63,11 @@ function retryInside(
   grade: (ip: string) => Ipv6Grade,
 ): Ipv6Span | null {
   for (let p = m.start + 1; p < m.end; p++) {
-    if (text[p - 1] !== ":" || text[p] === ":") continue;
+    if (text[p - 1] !== ":") continue; // a group start, or the "::" of "node12:::1"
     const hit = stickyAt(text, p);
     if (!hit) continue;
     const end = p + hit[0].length;
-    if (ENDS_TOKEN.test(text.slice(end, end + 1)) && accept(grade(hit[0]))) return { start: p, end };
+    if (endsToken(text, end) && accept(grade(hit[0]))) return { start: p, end };
   }
   return null;
 }
@@ -77,24 +79,26 @@ function retryInside(
  * "::" — "dc:fd00::1" is a valid literal in unallocated space, and the internal address after the
  * label must fail closed. A custom-range caller passes false: a complete address outside the
  * range ("2001:fd00::1") must never have part of it hidden.
+ * `wholeToken`: a match that does not end the token ("fd00::beef" out of "fd00::beefMethod") is
+ * rejected. The IP category passes false so an internal address keeps failing CLOSED.
  */
 export function findIpv6Literals(
   text: string,
   grade: (ip: string) => Ipv6Grade,
-  splitUnknown: boolean,
+  opts: { splitUnknown: boolean; wholeToken: boolean },
 ): Ipv6Span[] {
   const out: Ipv6Span[] = [];
   const re = new RegExp(IPV6_RE.source, "gi"); // local: no lastIndex shared with other callers
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const start = m.index;
     const span = { start, end: start + m[0].length };
-    const g = grade(m[0]);
+    const g = opts.wholeToken && !endsToken(text, span.end) ? null : grade(m[0]);
     if (g === "keep") {
       out.push(span);
       continue;
     }
     const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
-    if (glued || (splitUnknown && g === null && m[0].includes("::"))) {
+    if (glued || (opts.splitUnknown && g === null && m[0].includes("::"))) {
       // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
       const inner = retryInside(text, span, (x) => x === "keep" || (g === null && x !== null), grade);
       if (inner) {

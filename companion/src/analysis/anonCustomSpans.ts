@@ -88,9 +88,10 @@ function rangeCandidates(text: string, c: CompiledCustom): Candidate[] {
       if (category) out.push({ start: m.index ?? 0, end: (m.index ?? 0) + ip.length, category, kind: 2 });
     }
   // IPV6_CANDIDATE cannot start inside a word, so "node12:fd00::1" and "Evtx::fd00::1" need the IP
-  // category's scan (#2953). splitUnknown=false: a complete address outside the range stays whole.
+  // category's scan (#2953). A complete address outside the range stays whole, and a match must
+  // end its token ("fd00::beefMethod" is not an address).
   const inRange = (ip: string) => (rangeCategory(c, ip) ? "keep" : null);
-  for (const s of findIpv6Literals(text, inRange, false)) {
+  for (const s of findIpv6Literals(text, inRange, { splitUnknown: false, wholeToken: true })) {
     const category = rangeCategory(c, text.slice(s.start, s.end));
     if (category) out.push({ ...s, category, kind: 2 });
   }
