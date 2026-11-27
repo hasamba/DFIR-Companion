@@ -962,7 +962,9 @@ The case-scoped half of Velociraptor. Everything on this panel lands in the conn
 - **Run a bundle** — every saved bundle with a **▶ Run** button. The button is disabled, and says
   why, until a case is connected and the Velociraptor API is configured. The run form (wait, expiry,
   OS, minimum severity, time scope, and the **include labels** / **exclude labels** pickers)
-  opens under the bundle. The job card above the list shows the running hunt, with **Collect now**
+  opens under the bundle. Opening it re-reads the case's client list from Velociraptor, so the label
+  pickers offer the labels the fleet carries now; a note beside them says when the labels were read,
+  or that they may be out of date when the refresh failed (the last list stays usable). The job card above the list shows the running hunt, with **Collect now**
   to pull early and **Cancel** to stop it. Cancel asks what to do in Velociraptor: nothing (stop
   tracking it here only; the hunt keeps running there), stop the hunt (its results stay on the
   server), or delete the hunt and its results from the server (needs the server-admin permission).

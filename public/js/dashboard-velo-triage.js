@@ -758,6 +758,12 @@
   function veloClientsList() {
     return _veloClients;
   }
+  // A fresh inventory from outside this module (the run form's refresh, #2970). Bumping the sequence
+  // drops any cached GET still in flight, so an older snapshot cannot land on top of this one.
+  function acceptVeloClientInventory(inv) {
+    veloClientsSeq++;
+    renderVeloClients(inv);
+  }
   function veloMonAutoBrowsed() {
     return _veloMonAutoBrowsed;
   }
@@ -777,6 +783,7 @@
   window.veloTimeScopePreview = veloTimeScopePreview;
   window.veloBundlesList = veloBundlesList;
   window.veloClientsList = veloClientsList;
+  window.acceptVeloClientInventory = acceptVeloClientInventory;
   window.veloMonAutoBrowsed = veloMonAutoBrowsed;
   window.setVeloMonAutoBrowsed = setVeloMonAutoBrowsed;
 })();

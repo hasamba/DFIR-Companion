@@ -1378,6 +1378,7 @@ export const FEATURES: Feature[] = [
       "veloTimeScopePreview",
       "veloBundlesList",
       "veloClientsList",
+      "acceptVeloClientInventory",
       "veloMonAutoBrowsed",
       "setVeloMonAutoBrowsed",
     ],
@@ -2542,7 +2543,7 @@ export const NON_FEATURES = new Set([
   "dashboard-ai-agent-hits.js", // pure helper: the AI Agent findings table's filters and shortened cells (#2911)
   "dashboard-velo-clients.js", // pure helper: the client lists' "list was cut" notice + the AI Agent picker's rows (#2887)
   "dashboard-velo-hunt-cancel.js", // pure helper: a hunt card's Cancel button + dialog, state on the overlay's dataset
-  "dashboard-velo-collect.js", // pure helper: the Fleet Collection panel's run list + run form over the cached bundles, holds nothing
+  "dashboard-velo-collect.js", // pure helper: the Fleet Collection panel's run list + run form over the cached bundles; holds only the label-refresh token (#2970)
   "dashboard-anon-patterns.js", // helper for the Anonymization panel's custom list (#2946): pattern entries + match tags
   "dashboard-escape.js",
   "dashboard-time.js",

@@ -170,3 +170,130 @@ describe("the bundle load fans out", () => {
     expect(bundleList.innerHTML).not.toContain("Connect to a case first");
   });
 });
+
+// #2970 — opening a run form refreshes the client list, so the label pickers offer what the fleet
+// carries NOW rather than what it carried at the last manual Settings refresh.
+describe("veloRefreshRunFormLabels (#2970)", () => {
+  type Reply = { ok: boolean; status?: number; body: unknown } | Error;
+  function harness(reply: Reply, enabled = true) {
+    const calls: { url: string; body: unknown }[] = [];
+    const accepted: unknown[] = [];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const mod = loadDashboardModule<VeloCollectApi>(
+      "dashboard-velo-collect.js",
+      [
+        "dashboard-escape.js",
+        "dashboard-velo-case.js",
+        "dashboard-velo-clients.js",
+        "dashboard-velo-labels.js",
+      ],
+      {
+        document,
+        activeCaseId: "case-a",
+        veloEnabled: enabled,
+        acceptVeloClientInventory: (inv: unknown) => accepted.push(inv),
+        fetch: async (url: string, init: { body: string }) => {
+          calls.push({ url, body: JSON.parse(init.body) as unknown });
+          await gate;
+          if (reply instanceof Error) throw reply;
+          return {
+            ok: reply.ok,
+            status: reply.status ?? (reply.ok ? 200 : 502),
+            json: async () => reply.body,
+          };
+        },
+      },
+    );
+    const wrap = { innerHTML: "" };
+    const note = { textContent: "", title: "" };
+    const form = {
+      isConnected: true,
+      style: { display: "block" },
+      dataset: {} as Record<string, string>,
+      querySelector: (sel: string) =>
+        sel === ".velo-lbl-wrap" ? wrap : sel === ".velo-lbl-note" ? note : null,
+    };
+    return { mod, calls, accepted, release, form, wrap, note };
+  }
+  const INV = {
+    updatedAt: new Date(2026, 10, 27, 9, 5).toISOString(),
+    clients: [{ clientId: "C.1", hostname: "WS-EXAMPLE-01", labels: ["lab-b"] }],
+  };
+
+  it("refreshes the open case's client list and re-renders the pickers from it", async () => {
+    const h = harness({ ok: true, body: INV });
+    const done = h.mod.veloRefreshRunFormLabels(h.form);
+    expect(h.note.textContent).toBe("refreshing labels…");
+    h.release();
+    await done;
+    // The case's own refresh (case write), not Settings' administrator-only global one.
+    expect(h.calls).toEqual([{ url: "/cases/case-a/ai-agent/endpoints/refresh", body: {} }]);
+    expect(h.wrap.innerHTML).toContain('value="lab-b"');
+    expect(h.note.textContent).toBe("labels as of 09:05");
+    expect(h.accepted).toHaveLength(1); // the shared cache (Settings count, monitor picker) moves too
+  });
+
+  it("keeps the cached list and says why when the refresh fails", async () => {
+    const h = harness({ ok: false, status: 502, body: { error: "connection refused" } });
+    h.wrap.innerHTML = "CACHED";
+    const done = h.mod.veloRefreshRunFormLabels(h.form);
+    h.release();
+    await done;
+    expect(h.wrap.innerHTML).toBe("CACHED");
+    expect(h.accepted).toHaveLength(0);
+    expect(h.note.textContent).toBe("labels may be out of date — refresh failed (connection refused)");
+  });
+
+  it("survives a network error the same way", async () => {
+    const h = harness(new Error("Failed to fetch"));
+    h.wrap.innerHTML = "CACHED";
+    const done = h.mod.veloRefreshRunFormLabels(h.form);
+    h.release();
+    await done;
+    expect(h.wrap.innerHTML).toBe("CACHED");
+    expect(h.note.textContent).toContain("refresh failed (Failed to fetch)");
+  });
+
+  it("drops a reply that lands after the form was closed, replaced or reopened", async () => {
+    for (const change of [
+      (f: { style: { display: string } }) => (f.style.display = "none"),
+      (f: { isConnected: boolean }) => (f.isConnected = false),
+      (f: { dataset: Record<string, string> }) => (f.dataset.lblSeq = "other"),
+    ]) {
+      const h = harness({ ok: true, body: INV });
+      h.wrap.innerHTML = "CACHED";
+      const done = h.mod.veloRefreshRunFormLabels(h.form);
+      change(h.form);
+      h.release();
+      await done;
+      expect(h.wrap.innerHTML).toBe("CACHED");
+      expect(h.accepted).toHaveLength(0);
+    }
+  });
+
+  it("drops a reply that lands after the case changed", async () => {
+    const h = harness({ ok: true, body: INV });
+    h.wrap.innerHTML = "CACHED";
+    const done = h.mod.veloRefreshRunFormLabels(h.form);
+    h.mod.activeCaseId = "case-b";
+    h.release();
+    await done;
+    expect(h.wrap.innerHTML).toBe("CACHED");
+    expect(h.accepted).toHaveLength(0);
+  });
+
+  it("asks nothing with no case connected", async () => {
+    const h = harness({ ok: true, body: INV });
+    h.mod.activeCaseId = null;
+    await h.mod.veloRefreshRunFormLabels(h.form);
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it("asks nothing of a Velociraptor server that is not configured", async () => {
+    const h = harness({ ok: true, body: INV }, false);
+    await h.mod.veloRefreshRunFormLabels(h.form);
+    expect(h.calls).toHaveLength(0);
+    expect(h.note.textContent).toBe("");
+  });
+});

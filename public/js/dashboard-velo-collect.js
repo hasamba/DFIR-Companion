@@ -141,9 +141,9 @@ function toggleVeloRunForm(id) {
           <input type="datetime-local" class="velo-ts-end" title="Collect until (UTC) — leave empty to keep collecting forward" data-safe-style="padding:4px" />
           <span data-safe-style="font-size:10px;color:var(--text-muted)">UTC</span>
         </span>
-        ${veloLabelPickerHtml("inc", fleetLabels)}
-        ${veloLabelPickerHtml("exc", fleetLabels)}
+        <span class="velo-lbl-wrap" data-safe-style="display:contents">${veloLabelPickerHtml("inc", fleetLabels)}${veloLabelPickerHtml("exc", fleetLabels)}</span>
         <button class="velo-run-go">Run hunt</button>
+        <span class="velo-lbl-note" data-safe-style="font-size:11px;color:var(--text-dim)"></span>
         <span class="velo-run-msg" data-safe-style="font-size:12px;color:var(--text-muted)"></span>
       </div>
       <div data-safe-style="font-size:11px;color:var(--text-dim);margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Collection timeout: <strong>${timeoutNote}</strong> — set it on the bundle (Settings → Velociraptor → <em>Edit</em>) for slow artifacts like THOR. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>
@@ -163,7 +163,57 @@ function toggleVeloRunForm(id) {
     veloTimeScopePreview(id, form);
   const caseScope = window.DfirScope ? window.DfirScope.get() : null;
   if (veloPrefillTimeScope(form, caseScope)) veloTimeScopePreview(id, form);
+  veloRefreshRunFormLabels(form);
+}
+
+// Refresh the client list as the run form opens and redraw its label pickers from it (#2970). The
+// pickers used to show whatever the last manual Settings refresh cached, so a label added or removed
+// on the server since then was wrong in the one place it decides which endpoints a hunt reaches.
+//
+// A reply is applied only to the form instance that asked, still open, in the same case: a close,
+// a re-open (new token), a re-rendered list (detached form) or a case switch all drop it. A failed
+// refresh leaves the cached list in place and says so — a stale picker beats an empty one.
+let veloLblSeq = 0;
+function veloRefreshRunFormLabels(form) {
+  const note = form.querySelector(".velo-lbl-note");
+  const caseId = veloCaseId();
+  if (!veloEnabled || !caseId) return Promise.resolve();
+  const token = String(++veloLblSeq);
+  form.dataset.lblSeq = token;
+  const live = () =>
+    form.isConnected !== false &&
+    form.style.display === "block" &&
+    form.dataset.lblSeq === token &&
+    veloCaseId() === caseId;
+  const say = (st) => {
+    if (note) note.textContent = veloLabelFreshnessText(st);
+  };
+  say({ pending: true });
+  // The CASE's refresh, not Settings' global one: under team auth that stays the administrator's,
+  // while this one needs case write — the same right that launching the hunt needs.
+  return fetch(`/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints/refresh`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  })
+    .then((r) => r.json().then((j) => ({ ok: r.ok, j: j || {} })))
+    .then(({ ok, j }) => {
+      if (!live()) return;
+      if (!ok || j.error) return say({ ok: false, error: j.error || "" });
+      if (typeof acceptVeloClientInventory === "function") acceptVeloClientInventory(j);
+      const st = veloLabelPickerState(form);
+      const labels = veloFleetLabels(j.clients || []);
+      const wrap = form.querySelector(".velo-lbl-wrap");
+      if (wrap)
+        wrap.innerHTML =
+          veloLabelPickerHtml("inc", labels, { ...st.inc, refreshed: true }) +
+          veloLabelPickerHtml("exc", labels, { ...st.exc, refreshed: true });
+      veloWireLabelPickers(form);
+      say({ ok: true, updatedAt: j.updatedAt, truncated: j.truncated });
+    })
+    .catch((e) => live() && say({ ok: false, error: (e && e.message) || "" }));
 }
 
 window.renderVeloRunList = renderVeloRunList;
 window.toggleVeloRunForm = toggleVeloRunForm;
+window.veloRefreshRunFormLabels = veloRefreshRunFormLabels;

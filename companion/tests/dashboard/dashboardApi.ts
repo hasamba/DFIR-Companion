@@ -562,7 +562,22 @@ export interface ScopeApi {
 export interface VeloLabelsApi {
   veloFleetLabels(clients: { clientId: string; labels?: string[] }[] | null): string[];
   veloLabelSummaryText(kind: string, picked: string[]): string;
-  veloLabelPickerHtml(kind: string, labels: string[]): string;
+  veloLabelPickerHtml(
+    kind: string,
+    labels: string[],
+    opts?: { picked?: string[]; open?: boolean; refreshed?: boolean },
+  ): string;
+  veloLabelFreshnessText(state: {
+    pending?: boolean;
+    ok?: boolean;
+    updatedAt?: string;
+    truncated?: boolean;
+    error?: string;
+  }): string;
+  veloLabelPickerState(form: { querySelector(sel: string): unknown } | null): {
+    inc: { picked: string[]; open: boolean };
+    exc: { picked: string[]; open: boolean };
+  };
   veloPickedLabels(form: { querySelector(sel: string): unknown } | null, kind: string): string[];
   veloWireLabelPickers(form: { querySelector(sel: string): unknown } | null): void;
 }
@@ -669,6 +684,9 @@ export interface VeloCaseApi {
 // Only the slice these suites drive: the bundle list that carries the Run button.
 export interface VeloTriageApi {
   loadVeloBundles(): Promise<void>;
+  loadVeloClients(): void;
+  acceptVeloClientInventory(inv: { updatedAt?: string; clients?: unknown[] }): void;
+  veloClientsList(): { clientId: string; labels?: string[] }[];
   activeCaseId: string | null;
   veloEnabled: boolean;
 }
@@ -678,6 +696,7 @@ export interface VeloTriageApi {
 export interface VeloCollectApi {
   renderVeloRunList(bundles: { id: string; name: string; artifacts: string[] }[]): void;
   veloPrefillTimeScope(form: unknown, scope: { start?: string | null; end?: string | null } | null): boolean;
+  veloRefreshRunFormLabels(form: unknown): Promise<void>;
   activeCaseId: string | null;
   veloEnabled: boolean;
 }
