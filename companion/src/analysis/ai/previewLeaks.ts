@@ -1,5 +1,6 @@
 import { isIPv6 } from "node:net";
 import { embeddedIpv4 } from "../iocValue.js";
+import { separatorPieces } from "../anonIpv6Scan.js";
 import {
   findReservableIpv6Spans,
   isInternalIp,
@@ -84,10 +85,13 @@ function collect(masked: string, policy: Pick<AnonPolicy, "maskPublicIps">): Can
   };
   add(EMAIL, "email", 0, () => true);
   // IPv6: the anonymizer's own scan (#2958), so the hint marks what the IP category would mask.
-  // A joined address after a word:: separator is hidden whatever its value grades (#2976).
-  for (const { start, end, failClosed } of findReservableIpv6Spans(masked, policy.maskPublicIps))
-    if (failClosed || ipv6Leak(masked.slice(start, end), policy))
-      out.push({ m: [start, end], looksLike: "ip", rank: 1 });
+  // An address after a word:: separator is hidden whatever its value grades (#2976); it is flagged
+  // when a piece the detector read before the separator was split off looks like a leak (#2979).
+  for (const span of findReservableIpv6Spans(masked, policy.maskPublicIps)) {
+    const pieces = span.failClosed ? separatorPieces(masked, span) : [masked.slice(span.start, span.end)];
+    if (pieces.some((p) => ipv6Leak(p, policy)))
+      out.push({ m: [span.start, span.end], looksLike: "ip", rank: 1 });
+  }
   add(IPV4, "ip", 1, (h) => ipLeak(h[0], policy));
   add(DOMAIN, "domain", 2, (h) => domainLeak(h[1]));
   add(HOST, "host", 3, (h) => hostLeak(h[0], h[1]));
