@@ -4,7 +4,13 @@ import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 import { exactValueRegExp } from "./anonPatterns.js";
-import { compileCustomEntities, findCustomSpans, rangeCategory, spliceSpans } from "./anonCustomSpans.js";
+import {
+  compileCustomEntities,
+  findCustomSpans,
+  groupWithLiterals,
+  rangeCategory,
+  spliceSpans,
+} from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
 import { scanTokenLiterals } from "./anonTokenLiterals.js";
 import {
@@ -494,26 +500,37 @@ export function createAnonymizer(
   const IPV6_SENTINEL = "\uE000";
   const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
+  type Reserved = { value: string; category: AnonTokenCategory | null }; // null: a plain address
 
-  function reserveIpv6Literals(t: string): { text: string; literals: string[] } {
-    const literals: string[] = [];
+  // A custom value that extends past an address is set aside WITH it, as one span that carries
+  // the custom category (#2950); anonCustom() mints it, so the custom value wins as one token.
+  function reserveIpv6Literals(t: string): { text: string; literals: Reserved[] } {
     // Case text is ATTACKER-INFLUENCED (logs, screenshots, imported evidence), so a hand-crafted
     // "\uE000IPV6:0\uE000" can arrive in the input. Strip the sentinel before minting any of our own:
     // a forged placeholder must never index the literals table and make restore() invent an
     // address in text that never contained one.
-    const text = t.replace(IPV6_SENTINEL_RE, "").replace(IPV6_RE, (m) => {
-      if (!isInternalIpv6(m) && !isMaskableIpv6(m)) return m; // detector false positive — leave it alone
-      const i = literals.length;
-      literals.push(m);
-      return `${IPV6_SENTINEL}IPV6:${i}${IPV6_SENTINEL}`;
-    });
-    return { text, literals };
+    const text = t.replace(IPV6_SENTINEL_RE, "");
+    const found = [...text.matchAll(IPV6_RE)]
+      .filter((m) => isInternalIpv6(m[0]) || isMaskableIpv6(m[0])) // detector false positives stay put
+      .map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+    if (found.length === 0) return { text, literals: [] };
+    const literals: Reserved[] = [];
+    let out = "";
+    let at = 0;
+    for (const s of groupWithLiterals(text, compiled, found)) {
+      out += `${text.slice(at, s.start)}${IPV6_SENTINEL}IPV6:${literals.length}${IPV6_SENTINEL}`;
+      literals.push({ value: text.slice(s.start, s.end), category: s.category });
+      at = s.end;
+    }
+    return { text: out + text.slice(at), literals };
   }
 
-  function restoreIpv6Literals(t: string, literals: string[]): string {
+  function restoreIpv6Literals(t: string, literals: Reserved[]): string {
     return t.replace(IPV6_PLACEHOLDER_RE, (m, idxStr: string) => {
-      const ip = literals[Number(idxStr)];
-      if (ip === undefined) return m; // belt-and-braces with the strip above: never invent a value
+      const entry = literals[Number(idxStr)];
+      if (entry === undefined) return m; // belt-and-braces with the strip above: never invent a value
+      if (entry.category) return mintCustom(entry.category, entry.value);
+      const ip = entry.value;
       const ranged = rangeCategory(compiled, ip); // #2946: a custom range names the category
       if (ranged) return forcing(() => assign(ranged, ip));
       if (isInternalIpv6(ip)) return assign("IP", ip);
@@ -565,12 +582,21 @@ export function createAnonymizer(
   // Exact values, wildcard patterns and IPv4 ranges in ONE pass over the text (anonCustomSpans.ts).
   // An EXTIP entry is skipped there when maskPublicIps is off: the redacted export keeps adversary
   // infrastructure visible, so a screenshot-discovered public IP must not be re-hidden by value.
-  function anonCustom(t: string): string {
+  // A custom group set aside with an IPv6 address (#2950) is minted here too, so it keeps the
+  // custom pass's place in the order (before the bare-username pass learns from it).
+  function anonCustom(t: string, literals: readonly Reserved[]): string {
     const spans = findCustomSpans(t, compiled);
-    if (spans.length === 0) return t;
-    return forcing(() =>
-      spliceSpans(t, spans, (cat, m) => (cat === "USER" ? accountToken(m) : assign(cat, m))),
-    );
+    const out = spans.length === 0 ? t : forcing(() => spliceSpans(t, spans, mintRaw));
+    return out.replace(IPV6_PLACEHOLDER_RE, (m, i: string) => {
+      const entry = literals[Number(i)];
+      return entry?.category ? mintCustom(entry.category, entry.value) : m;
+    });
+  }
+  function mintRaw(cat: AnonTokenCategory, m: string): string {
+    return cat === "USER" ? accountToken(m) : assign(cat, m);
+  }
+  function mintCustom(cat: AnonTokenCategory, m: string): string {
+    return forcing(() => mintRaw(cat, m));
   }
   function forcing<T>(fn: () => T): T {
     forceCustom = true;
@@ -589,20 +615,23 @@ export function createAnonymizer(
     const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok));
     for (const lit of scan.literals) reserved.add(lit);
     t = scan.text;
-    // Reserve IPv6 literals FIRST — before anonCustom or any other pass — so nothing can
-    // substitute inside one. Only when IP masking is active: if the IP category is off, no later
-    // step ever reparses an IPv6 literal, so there is nothing to protect it FROM.
-    let ipv6Literals: string[] = [];
+    // One-way secrets go before anything is tokenized or set aside, so a secret that is also a
+    // known or custom entity never becomes a reversible token (restore() and discoveries() would
+    // hand it back), and the redactor sees every secret in its full context — a key outside a
+    // custom group and the credential inside it (#2950). The placeholder then hides behind a
+    // sentinel until the last pass, so no tokenizer rewrites it.
+    if (policy.redactSecrets) t = redactSecretText(t).split(SECRET_PLACEHOLDER).join(SECRET_SENTINEL);
+    // Then reserve IPv6 literals — before anonCustom or any other pass — so nothing can substitute
+    // inside one. Only when IP masking is active: if the IP category is off, no later step ever
+    // reparses an IPv6 literal, so there is nothing to protect it FROM. A custom value that extends
+    // past an address is reserved with it as one group (#2950).
+    let ipv6Literals: Reserved[] = [];
     if (policy.categories.IP) {
       const reserved = reserveIpv6Literals(t);
       t = reserved.text;
       ipv6Literals = reserved.literals;
     }
-    // One-way secrets go before anything is tokenized, so a secret that is also a known or custom
-    // entity never becomes a reversible token (restore() and discoveries() would hand it back).
-    // The placeholder then hides behind a sentinel until the last pass, so no tokenizer rewrites it.
-    if (policy.redactSecrets) t = redactSecretText(t).split(SECRET_PLACEHOLDER).join(SECRET_SENTINEL);
-    t = anonCustom(t); // analyst-added entities win over every detector (outside IPv6 literals)
+    t = anonCustom(t, ipv6Literals); // analyst-added entities win over every detector
     // UNC server names before accounts, or \\DC-QA-01\C$ reads as an account (#2073).
     if (policy.categories.HOST) t = replaceUncServers(t, (s) => assign("HOST", s));
     if (policy.categories.USER) t = anonAccounts(t);
