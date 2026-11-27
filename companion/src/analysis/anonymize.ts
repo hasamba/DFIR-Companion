@@ -626,8 +626,9 @@ export function createAnonymizer(
     // custom group and the credential inside it (#2950). The placeholder then hides behind a
     // sentinel until the last pass, so no tokenizer rewrites it. A custom value that overlaps a
     // secret is redacted with it, whole and one way (#2952), so the secret, custom and IPv6 passes
-    // must see one text: a forged IPv6 sentinel goes first.
-    if (policy.categories.IP) t = t.replace(IPV6_SENTINEL_RE, "");
+    // must see one text: a forged IPv6 sentinel goes first, with or without the IP category — the
+    // custom pass skips a match beside one.
+    t = t.replace(IPV6_SENTINEL_RE, "");
     if (policy.redactSecrets) {
       const spans = () => (policy.categories.IP ? reservableIpv6Spans(t) : []);
       t = redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans);

@@ -110,6 +110,14 @@ describe("custom entity that contains a secret (#2952)", () => {
     expect(out).not.toContain(cred);
   });
 
+  for (const IP of [false, true])
+    it(`a forged IPv6 sentinel beside the custom value changes nothing (IP ${IP ? "on" : "off"})`, () => {
+      const p = policy({}, { IP });
+      const F = String.fromCharCode(0xe000);
+      expect(mask([other(VALUE)], `${F}${VALUE}${F} y`, p).out).toBe(`${R} y`);
+      expect(mask([other("srv01")], `${F}srv01${F} y`, p).out).toBe("ANON_OTHER_1 y");
+    });
+
   it("a custom value inside a private-key block leaves the block as it was", () => {
     const text = `${KEY_HEAD}\nabc srv01 def\n${KEY_TAIL} tail`;
     const { out, a } = mask([other("srv01")], text);
