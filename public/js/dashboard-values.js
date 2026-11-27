@@ -389,6 +389,7 @@ function ntfEventsSummary(ev) {
   if (ev.playbook_update) on.push("playbook");
   if (ev.milestone) on.push("milestones");
   if (ev.mention) on.push("mentions");
+  if (ev.import) on.push("imports");
   return on.length ? on.join(", ") : "nothing";
 }
 

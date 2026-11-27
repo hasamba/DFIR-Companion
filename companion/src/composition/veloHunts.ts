@@ -87,6 +87,7 @@ import {
   scopeTagOf,
   superTimelineCap,
 } from "./veloSuperShare.js";
+import { notifyHuntCollect } from "./veloImportNotify.js";
 
 export interface VeloHuntsDeps {
   store: CaseStore;
@@ -692,6 +693,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       if (await current()) await huntStore.upsert(caseId, job); // a forgotten hunt is not written back
       await regradeAfterCollect(options.stateStore, caseId, runStateExclusive, logLine); // final coverage (#2670)
       options.onVeloHunt?.(caseId);
+      notifyHuntCollect(options, caseId, job, settled); // #2978: the "import finished" message
       if (failure)
         options.onAiStatus?.(caseId, {
           status: "error",

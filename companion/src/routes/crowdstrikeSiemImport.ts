@@ -23,6 +23,7 @@ import { beginImportSection } from "./importSection.js";
 import { gradeArmOf } from "./importSettle.js";
 import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
+import { countsFromSettled, type ImportCounts } from "../analysis/importNotification.js";
 
 export const NGSIEM_SOURCE_LABEL = "CrowdStrike NG-SIEM";
 const EVIDENCE_SOURCE = "CrowdStrike Next-Gen SIEM";
@@ -89,13 +90,13 @@ async function saveEvidence(ctx: RouteContext, spec: SiemSearchSpec, rows: reado
   return { storedName, text, seq, importedAt };
 }
 
-/** Import the event rows inside the case's import section and settle them. Returns new events added. */
+/** Import the event rows inside the case's import section and settle them. Returns what it added (#2978). */
 async function importAndSettle(
   ctx: RouteContext,
   spec: SiemSearchSpec,
   saved: Awaited<ReturnType<typeof saveEvidence>>,
   forImport: ReturnType<typeof importRows>,
-): Promise<number> {
+): Promise<ImportCounts> {
   const { options } = ctx;
   const pipeline = options.pipeline;
   const settle = routeSettleDeps(ctx);
@@ -145,7 +146,7 @@ async function importAndSettle(
     if (changed || settled.principalNamesChanged) {
       await ctx.pushImportCheckpoint(spec.caseId, baseline, `crowdstrike (${saved.storedName})`);
     }
-    return diff.added.length;
+    return countsFromSettled(settled);
   } finally {
     section.release();
   }
@@ -161,7 +162,7 @@ export async function landSearchResult(
   result: NgsiemRunResult,
   /** Closes the job's Cancel and says whether a cancel already landed — called before the first write. */
   closeCancel: () => boolean = () => false,
-): Promise<SiemSearchOutcome & { storedName?: string }> {
+): Promise<SiemSearchOutcome & { storedName?: string; counts?: ImportCounts }> {
   const base: SiemSearchOutcome = {
     title: spec.title,
     rows: result.rows.length,
@@ -189,9 +190,9 @@ export async function landSearchResult(
   const saved = await saveEvidence(ctx, spec, result.rows);
   const forImport = importRows(result.rows, spec.query, result);
   if (!forImport.events) return { ...base, storedName: saved.storedName };
-  const added = await importAndSettle(ctx, spec, saved, forImport);
-  if (added > 0) ctx.resynthesizeInBackground(spec.caseId);
-  return { ...base, events: forImport.events, added, storedName: saved.storedName };
+  const counts = await importAndSettle(ctx, spec, saved, forImport);
+  if (counts.added > 0) ctx.resynthesizeInBackground(spec.caseId);
+  return { ...base, events: forImport.events, added: counts.added, storedName: saved.storedName, counts };
 }
 
 /** The activity entry: what ran, where, over which range, what came back, and who pressed Run. */

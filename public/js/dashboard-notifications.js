@@ -133,6 +133,7 @@
         playbook_update: document.getElementById("ntfEvtPlaybook").checked,
         milestone: document.getElementById("ntfEvtMilestone").checked,
         mention: document.getElementById("ntfEvtMention").checked,
+        import: document.getElementById("ntfEvtImport").checked, // #2978
       },
     };
     if (type === "email") {

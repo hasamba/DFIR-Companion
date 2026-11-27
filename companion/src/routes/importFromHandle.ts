@@ -26,6 +26,7 @@ import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobT
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { gradeArmOf } from "./importSettle.js";
 import { sendPipelineError } from "./presidioApproval.js";
+import { trackRouteImport } from "./importNotify.js";
 
 /**
  * Import a file the server already holds open, from the head sniff onward: the one flow shared by
@@ -194,6 +195,7 @@ export async function importFromHandle(
     // Held through the diff below; released in the `.finally`. See routes/importSection.ts.
     let baseline: ImportBaseline | null = null;
     let section: ImportSection | null = null;
+    const outcome = trackRouteImport(ctx, caseId, storedName); // #2978: the "import finished" message
     // Plaso streams from disk; everything else dispatches the in-memory string.
     const run = async (): Promise<unknown> => {
       await tracking.start();
@@ -219,6 +221,7 @@ export async function importFromHandle(
         // from the POST-demote state. No snapshot / a failed settle → WARN + recovery (#2890).
         const settleTarget = { caseId, storedNames: [storedName], tag: "import" };
         const settled = await settleImportOrRecover(settleDeps, settleTarget, baseline, storedName);
+        outcome.settled(settled);
         if (baseline && settled) {
           try {
             const { superTimelineAddedCount, superTimelineEvicted } = settled;
@@ -304,6 +307,7 @@ export async function importFromHandle(
           /* non-fatal */
         }
         if (job) await options.jobManager?.finish(job.jobId);
+        outcome.finished();
         resynthesizeInBackground(caseId);
       })
       .catch(async (err) => {
@@ -317,6 +321,7 @@ export async function importFromHandle(
           return;
         }
         if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });
+        outcome.failed(err, Boolean(job));
         recordImportFailure(caseId, kind, storedName, err, debug);
         recordAiError(caseId, "import", err);
         options.onAiStatus?.(caseId, {

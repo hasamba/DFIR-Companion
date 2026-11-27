@@ -49,6 +49,10 @@ const eventsSchema = z.object({
   playbook_update: z.boolean().catch(true),
   milestone: z.boolean().catch(false),
   mention: z.boolean().catch(false),
+  // #2978: ON for a channel saved before imports had a toggle. Unlike `mention` this was asked for —
+  // the analyst wanted import results on the channels they already have — and it carries the same
+  // class of case content (source name, counts) those channels already receive for findings.
+  import: z.boolean().catch(true),
 });
 
 const channelSchema = z.object({
@@ -62,6 +66,7 @@ const channelSchema = z.object({
     playbook_update: true,
     milestone: false,
     mention: false,
+    import: true,
   } as Record<NotificationEventKind, boolean>),
   webhookUrl: z.string().optional(),
   smtp: smtpSchema.optional(),

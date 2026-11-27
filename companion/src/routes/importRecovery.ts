@@ -22,6 +22,7 @@ import { evictedInImport } from "./importBase.js";
 import { safeKind, createImportDebugRecorder } from "../analysis/importDebug.js";
 import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { decodeImportedText } from "../ingest/decodeText.js";
+import { trackRouteImport } from "./importNotify.js";
 
 // The kinds whose streamed first run read the stored file from disk: a resume reads it the same way.
 const readsStoredFile = (kind: string): boolean =>
@@ -129,6 +130,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           `start startBatch=${startBatch} streaming=${parameters.streaming} ` +
             `forensicBefore=${before.forensicTimeline.length}`,
         );
+        const outcome = trackRouteImport(ctx, job.caseId, parameters.storedName); // #2978
         try {
           let text: string | undefined;
           // Plaso, a streamed cloud export (#2303) and a streamed Velociraptor JSON Lines file (#2705)
@@ -204,6 +206,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           );
           const timelineDiff = diffTimeline(before.forensicTimeline, finalState.forensicTimeline);
           const iocDiff = diffIocs(before.iocs, finalState.iocs);
+          outcome.settled({ timelineDiff, superTimelineAddedCount });
           // This handler settles inline, inside the case's import section, rather than through
           // settleForensicImport: it re-selects the pre-crash batches by stored name, because those
           // rows are already in the forensic timeline but were never settled. The done line is the
@@ -272,6 +275,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
             await warn("deobfuscation pass failed", error);
           }
           ctx.resynthesizeInBackground(job.caseId);
+          outcome.finished();
           options.onAiStatus?.(job.caseId, {
             status: "idle",
             at: new Date().toISOString(),
@@ -284,8 +288,10 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           // A resumed import fails the way a live one does: the FAILED line and the diagnostics ring
           // entry come from recordImportFailure, once (#1438). A cancel already logged its own line
           // inside dispatchImport / importPlasoFileLogged, so it is not repeated here.
-          if (!cancelled)
+          if (!cancelled) {
+            outcome.failed(error);
             ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error, recorder);
+          }
           options.onAiStatus?.(
             job.caseId,
             cancelled

@@ -428,6 +428,7 @@ describe("parseChannelInput", () => {
         playbook_update: true,
         milestone: true,
         mention: true,
+        import: true, // #2978
       });
     });
   });

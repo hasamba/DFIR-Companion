@@ -3374,8 +3374,8 @@
            not in .env. See tests/settings/settingsEssentialAll.test.ts. -->
       <div class="stab-pane" id="stab-notifications" data-essential="pane">
         <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
-          Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, <strong>investigation milestones</strong>, and
-          <strong>@mentions</strong> in comments to Slack, MS Teams, Mattermost, Discord, Telegram, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
+          Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, <strong>investigation milestones</strong>,
+          <strong>finished imports</strong>, and <strong>@mentions</strong> in comments to Slack, MS Teams, Mattermost, Discord, Telegram, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
         </div>
         <div data-safe-style="background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--tag-orange-text);margin-bottom:12px">
           ⚠ Notifications send case content (finding/task titles) to a third party. Off by default — each channel is opt-in. Don't enable on a sensitive case unless the destination is trusted.
@@ -3436,6 +3436,7 @@
             <label data-safe-style="display:flex;align-items:center;gap:4px"><input id="ntfEvtPlaybook" type="checkbox" checked /> playbook</label>
             <label data-safe-style="display:flex;align-items:center;gap:4px"><input id="ntfEvtMilestone" type="checkbox" checked /> milestones</label>
             <label data-safe-style="display:flex;align-items:center;gap:4px"><input id="ntfEvtMention" type="checkbox" checked /> mentions</label>
+            <label data-safe-style="display:flex;align-items:center;gap:4px" title="An evidence import finished or failed — what it added and any files that failed"><input id="ntfEvtImport" type="checkbox" checked /> imports</label>
             <label data-safe-style="display:flex;align-items:center;gap:4px"><input id="ntfEnabled" type="checkbox" checked /> enabled</label>
           </div>
           <div data-safe-style="display:flex;gap:8px;align-items:center">

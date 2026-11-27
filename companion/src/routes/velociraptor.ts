@@ -607,7 +607,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       });
     }
     const client = vc.client;
-    const importJobDeps = { jobManager: options.jobManager, onAiStatus: options.onAiStatus, logLine };
+    const importJobDeps = { ...options, logLine, dispatchNotify: ctx.dispatchNotify }; // #2978
     // Already in this case? The gate answers 409 with what needs importing, never reads rows (#2700).
     const gate = { store: ctx.store, caseId, reimport: req.body?.reimport, superOnly, minSeverity, logLine };
     try {

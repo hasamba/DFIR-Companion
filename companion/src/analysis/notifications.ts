@@ -51,6 +51,7 @@ export const NOTIFICATION_EVENT_KINDS = [
   "playbook_update",
   "milestone",
   "mention",
+  "import", // #2978: an evidence import finished or failed (analysis/importNotification.ts)
 ] as const;
 export type NotificationEventKind = (typeof NOTIFICATION_EVENT_KINDS)[number];
 
@@ -157,7 +158,7 @@ export interface NotificationChannel {
 export function shouldNotify(channel: NotificationChannel, event: NotificationEvent): boolean {
   if (!channel.enabled) return false;
   if (!channel.events[event.kind]) return false;
-  if (event.kind === "milestone" || event.kind === "mention") return true;
+  if (event.kind === "milestone" || event.kind === "mention" || event.kind === "import") return true;
   return SEVERITY_RANK[event.severity] >= SEVERITY_RANK[channel.minSeverity];
 }
 
@@ -331,6 +332,7 @@ const eventsInputSchema = z
     playbook_update: strictBoolean.optional(),
     milestone: strictBoolean.optional(),
     mention: strictBoolean.optional(),
+    import: strictBoolean.optional(),
   })
   .optional();
 
@@ -382,6 +384,7 @@ const defaultEvents = (): Record<NotificationEventKind, boolean> => ({
   playbook_update: true,
   milestone: true,
   mention: true,
+  import: true, // #2978
 });
 
 // Validate + normalize a create/update payload into a full channel draft. Webhook channels require
