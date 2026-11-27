@@ -70,6 +70,8 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     ["dc:fd00:1:2:3:4:5:6:7 up", "dc:ANON_IP_1 up", "fd00:1:2:3:4:5:6:7"],
     ["x 0:fe80:1:2:3:4:5:6:7 y", "x 0:ANON_IP_1 y", "fe80:1:2:3:4:5:6:7"],
     ["node12:fd00:1:2:3:4:5:6:7", "node12:ANON_IP_1", "fd00:1:2:3:4:5:6:7"],
+    ["x 2019:fd00:1:2:3:4:5:6:7 y", "x 2019:ANON_IP_1 y", "fd00:1:2:3:4:5:6:7"],
+    ["x 2019:fe80:1:2:3:4:5:6:7 y", "x 2019:ANON_IP_1 y", "fe80:1:2:3:4:5:6:7"],
     // Recorded tradeoff: an internal-looking address followed by a word fails CLOSED, as the
     // unglued "fd00::Bar" -> "ANON_IP_1r" already does.
     ["node12:fd00::Bar", "node12:ANON_IP_1r", "fd00::Ba"],
@@ -165,6 +167,7 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     "x fd00::1:2:3:4:5:6:7:8 y",
     "x node12:fd00::1xyz y",
     "x dc:fd00:1:2:3:4:5:6:7 y",
+    "x 2019:fd00:1:2:3:4:5:6:7 y",
   ])("never hides the front of a longer token: %s", (input) => {
     expect(run(input, true, range, false).out).toBe(input);
   });

@@ -105,7 +105,8 @@ function retryRules(
 ): (RetryRules & { keepOnly: boolean }) | null {
   const unknown = opts.splitUnknown && g === null;
   const hasGap = text.slice(m.start, m.end).includes("::");
-  const runGoesOn = unknown && text[m.end] === ":";
+  // Nine or more groups are never one address, so a "weak" first eight ("2019:fd00:…") is retried too.
+  const runGoesOn = opts.splitUnknown && text[m.end] === ":";
   if (!glued && !(unknown && hasGap) && !runGoesOn) return null;
   const onlyRun = !glued && !(unknown && hasGap);
   return { wideOnly: onlyRun, wordAfter: !opts.wholeToken, keepOnly: onlyRun };
