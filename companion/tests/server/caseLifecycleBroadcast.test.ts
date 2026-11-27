@@ -16,8 +16,12 @@ import type { SocketLike } from "../../src/live/hub.js";
 
 const PASSWORD = "correct horse battery staple";
 const roots: string[] = [];
+// Retries as a backstop (#2964): a fire-and-forget startup write the test cannot await (the
+// capacity sample, the rule-pack sweep) may still land while the tree is being removed.
 afterAll(async () => {
-  await Promise.all(roots.map((r) => rm(r, { recursive: true, force: true })));
+  await Promise.all(
+    roots.map((r) => rm(r, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })),
+  );
 });
 
 async function harness() {
@@ -122,5 +126,8 @@ describe("the real wiring sends one bare frame to every dashboard (#2443)", () =
       expect(s.sent).toEqual([JSON.stringify({ type: "case_lifecycle_changed" })]);
       expect(s.sent[0]).not.toContain("CASE-A");
     }
+    // #2964: the job manager restores its ledger in the background and creates
+    // cases/.dfir-companion-jobs.sqlite after the body ends — wait for it, or afterAll's rm races it.
+    await rt.jobManager.ready();
   });
 });

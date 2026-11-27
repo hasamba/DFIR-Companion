@@ -269,6 +269,13 @@ describe("previewDiff — possible leaks are guesses on the masked side (#2531)"
       expect(ipv6Warnings("x fd00::1 y", mask)).toEqual([["fd00::1", "ip"]]);
       expect(ipv6Warnings("x fd:fd00::1Method y", mask)).toEqual([["fd00::1", "ip"]]);
     });
+
+    // #2971: the hint agrees with masking on a public address after a short label that runs into a word.
+    it("flags a public address after a short label that runs into a word only when public IPs are masked", () => {
+      expect(ipv6Warnings("x dc:2001:db8::1Method y", true)).toEqual([["2001:db8::1", "ip"]]);
+      expect(ipv6Warnings("x dc:2001:db8::1Method y", false)).toEqual([]);
+      expect(ipv6Warnings("os Server2016::Foo up", true)).toEqual([]);
+    });
   });
 
   it("warnings survive the fallback", () => {

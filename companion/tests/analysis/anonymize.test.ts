@@ -1312,6 +1312,16 @@ describe("isInternalIpv6", () => {
     }
   });
 
+  // #2966: fe80::/10 is a 16-bit first group of fe80-febf, so it is always four hex digits too.
+  it("judges link-local by the whole first group, not its first characters", () => {
+    for (const ip of ["fe80::1", "febf::1", "FE80::1", "[fe80::1]", "fe80::"]) {
+      expect(isInternalIpv6(ip)).toBe(true);
+    }
+    for (const ip of ["fe8::1", "fe9:1::5", "fea:3a:11:22:33:44:55:66", "feb::"]) {
+      expect(isInternalIpv6(ip)).toBe(false);
+    }
+  });
+
   it("preserves public IPv6", () => {
     expect(isInternalIpv6("2001:4860:4860::8888")).toBe(false);
     expect(isInternalIpv6("2606:4700:4700::1111")).toBe(false);

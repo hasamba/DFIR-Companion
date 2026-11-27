@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -16,6 +16,7 @@ let cases: CaseStore;
 let stateStore: StateStore;
 let hunts: VeloHuntStore;
 let prompts: string[];
+let root: string;
 let reply: Record<string, unknown>;
 
 function ev(id: string, over: Partial<ForensicEvent> = {}): ForensicEvent {
@@ -71,7 +72,7 @@ const JOB: VeloHuntJob = {
 };
 
 beforeEach(async () => {
-  const root = await mkdtemp(join(tmpdir(), "dfir-inventory-"));
+  root = await mkdtemp(join(tmpdir(), "dfir-inventory-"));
   cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   stateStore = new StateStore(cases);
@@ -81,6 +82,11 @@ beforeEach(async () => {
   const s = emptyState("c1");
   s.forensicTimeline.push(ev("e1"), ev("e2", { timestamp: "2026-08-28T09:05:00Z" }));
   await stateStore.save(s);
+});
+
+// #2964: remove the temp case root, retrying in case a late state write is still landing.
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe("the collection inventory in the synthesis prompt (#1588)", () => {

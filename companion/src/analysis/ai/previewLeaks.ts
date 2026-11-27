@@ -84,7 +84,7 @@ function collect(masked: string, policy: Pick<AnonPolicy, "maskPublicIps">): Can
   };
   add(EMAIL, "email", 0, () => true);
   // IPv6: the anonymizer's own scan (#2958), so the hint marks what the IP category would mask.
-  for (const { start, end } of findReservableIpv6Spans(masked))
+  for (const { start, end } of findReservableIpv6Spans(masked, policy.maskPublicIps))
     if (ipv6Leak(masked.slice(start, end), policy)) out.push({ m: [start, end], looksLike: "ip", rank: 1 });
   add(IPV4, "ip", 1, (h) => ipLeak(h[0], policy));
   add(DOMAIN, "domain", 2, (h) => domainLeak(h[1]));

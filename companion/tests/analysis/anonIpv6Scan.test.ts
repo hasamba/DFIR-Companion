@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createAnonymizer,
+  findReservableIpv6Spans,
   type AnonPolicy,
   type CustomEntity,
   type KnownEntities,
@@ -76,6 +77,9 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     // unglued "fd00::Bar" -> "ANON_IP_1r" already does.
     ["node12:fd00::Bar", "node12:ANON_IP_1r", "fd00::Ba"],
     ["dc:fe80::CafeFactory", "dc:ANON_IP_1Factory", "fe80::Cafe"],
+    // #2965: an address that opens with "::" after a label, followed by a word, fails CLOSED too.
+    ["node12:::1xyz", "node12:ANON_IP_1xyz", "::1"],
+    ["x node12:::ffff:10.0.0.5xyz y", "x node12:ANON_IP_1xyz y", "::ffff:10.0.0.5"],
   ])("%s -> %s", (input, expected, value) => {
     const { out, back, pairs } = run(input, mask);
     expect(out).toBe(expected);
@@ -156,6 +160,19 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     ["Windows.EventLogs.Evtx::fd00::1", "Windows.EventLogs.Evtx::ANON_IP_1"],
     ["x fd00:abcd:: y", "x ANON_IP_1 y"],
     ["x fd00::1 y", "x ANON_IP_1 y"],
+    // #2965: a label that is not glued to a word, in front of an in-range address. A short first
+    // group is a label, never the front of a real global address; nine groups are never one.
+    ["dc:fd00::1 up", "dc:ANON_IP_1 up"],
+    ["x dc:fd00::1 y", "x dc:ANON_IP_1 y"],
+    ["x dc:fd00:1:2:3:4:5:6:7 y", "x dc:ANON_IP_1 y"],
+    ["x 0:fd00:abcd:: y", "x 0:ANON_IP_1 y"],
+    ["x 2019:fd00:1:2:3:4:5:6:7 y", "x 2019:ANON_IP_1 y"],
+    // #2968: a single colon that closes a phrase ends the address.
+    ["x fd00::1: y", "x ANON_IP_1: y"],
+    ["x dc:fd00::1: y", "x dc:ANON_IP_1: y"],
+    ["peer fd00::1: connection reset", "peer ANON_IP_1: connection reset"],
+    ["x fd00::1:", "x ANON_IP_1:"],
+    ["(fd00:abcd::1:)", "(ANON_IP_1:)"],
   ])("%s -> %s", (input, expected) => {
     const { out, back } = run(input, true, range, false);
     expect(out).toBe(expected);
@@ -166,14 +183,43 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     "x fd00::beefMethod y",
     "x fd00::1:2:3:4:5:6:7:8 y",
     "x node12:fd00::1xyz y",
-    "x dc:fd00:1:2:3:4:5:6:7 y",
-    "x 2019:fd00:1:2:3:4:5:6:7 y",
+    "x dc:fd00::1xyz y",
+    "x fd:fd00::1xyz y",
+    "x fc:fd00::1Method y",
+    "x fd0:fd00::1_eth0 y",
+    "x dc:fd00:1:2:3:4:5:6:7:8 y",
+    "x fd00::1:: y",
+    "x dc:fd00::1:y",
   ])("never hides the front of a longer token: %s", (input) => {
     expect(run(input, true, range, false).out).toBe(input);
   });
 
   it("never hides part of an address outside the range", () => {
     expect(run("x 2001:fd00::1 y", true, range, false).out).toBe("x 2001:fd00::1 y");
+    expect(run("x 2001:fd00:1:2:3:4:5:6 y", true, range, false).out).toBe("x 2001:fd00:1:2:3:4:5:6 y");
+    // #2968: a closing colon is not a colon run that goes on.
+    expect(run("x 2001:fd00::1: y", true, range, false).out).toBe("x 2001:fd00::1: y");
+    expect(run("x 2001:fd00:1:2:3:4:5:6: y", true, range, false).out).toBe("x 2001:fd00:1:2:3:4:5:6: y");
+  });
+
+  it.each([
+    "mac 00:1a:2b:3c:4d:5e seen",
+    "at 12:34:56 local",
+    "2026-11-27T12:34:56Z logon",
+    "std::os::fd::AsRawFd",
+    "namespace fd:: {",
+    "fp 12:34:fd:00:11:22:33:44:55:66 x",
+    "SHA1 ab:cd:fd:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:01",
+    "fp fd:3a:11:22:33:44:55:66 seen",
+    "dc:fd00:1:2:3:4:5:6",
+    // #2968: the same shapes followed by a closing colon.
+    "mac 00:1a:2b:3c:4d:5e: seen",
+    "at 12:34:56: local",
+    "use std::os::fd:: x",
+    "fp 12:34:fd:00:11:22:33:44:55:66: x",
+    "fp fd:3a:11:22:33:44:55:66: seen",
+  ])("leaves %s byte-identical (#2965)", (input) => {
+    expect(run(input, true, range, false).out).toBe(input);
   });
 });
 
@@ -223,5 +269,171 @@ describe.each([true, false])("IPv6 false positives, maskPublicIps=%s (#2959)", (
   it("a public address between underscores is still masked when public IPs are masked", () => {
     const input = "dump_2001:db8::1_eth0";
     expect(run(input, mask).out).toBe(mask ? "dump_ANON_EXTIP_1_eth0" : input);
+  });
+});
+
+// #2966: link-local fe80::/10 is a first group of fe80-febf, always four hex digits. A byte run that
+// opens with "fe8:" (0x0fe8) is not one. A short fe8-feb label was hidden whole before, so an
+// internal address inside it must stay hidden whatever follows it.
+describe.each([true, false])("IPv6 link-local first group, maskPublicIps=%s (#2966)", (mask) => {
+  it.each([
+    "x fe8:3a:11:22:33:44:55:66 y",
+    "fe8:1:2:3:4:5:6:7",
+    "FEB:3A:11:22:33:44:55:66",
+    "x fe9::1 y",
+    "fp fea:11:22:33:44:55:66:77 x",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
+  });
+
+  it.each([
+    ["x fe80::1 y", "x ANON_IP_1 y", "fe80::1"],
+    ["fe80::1%eth0", "ANON_IP_1%eth0", "fe80::1"],
+    ["x febf:1:2:3:4:5:6:7 y", "x ANON_IP_1 y", "febf:1:2:3:4:5:6:7"],
+    ["fe8:fe80::1Method", "fe8:ANON_IP_1Method", "fe80::1"],
+    ["fea:fe80::1_eth0", "fea:ANON_IP_1_eth0", "fe80::1"],
+    ["fe8:fe80::1:x", "fe8:ANON_IP_1:x", "fe80::1"],
+    ["feb:fd00:1:2:3:4:5:6:7_eth0", "feb:ANON_IP_1_eth0", "fd00:1:2:3:4:5:6:7"],
+  ])("still tokenizes the internal address in %s", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+});
+
+// #2968: with the IP category on, an internal address after a label and before a closing colon
+// ("x dc:fd00::1: y") was sent in clear; a plain "x fd00::1: y" was already masked.
+describe.each([true, false])("IPv6 before a closing colon, maskPublicIps=%s (#2968)", (mask) => {
+  it.each([
+    ["x fd00::1: y", "x ANON_IP_1: y", "fd00::1"],
+    ["x dc:fd00::1: y", "x dc:ANON_IP_1: y", "fd00::1"],
+    ["peer node12:fe80::1: reset", "peer node12:ANON_IP_1: reset", "fe80::1"],
+    ["x dc:fd00::1:", "x dc:ANON_IP_1:", "fd00::1"],
+  ])("%s -> %s", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+
+  it("a public address before a closing colon is masked whole, never split", () => {
+    const input = "x 2001:fd00::1: y";
+    expect(run(input, mask).out).toBe(mask ? "x ANON_EXTIP_1: y" : input);
+  });
+
+  it.each([
+    "mac 00:1a:2b:3c:4d:5e: seen",
+    "at 12:34:56: local",
+    "use std::os::fd:: x",
+    "fp fd:3a:11:22:33:44:55:66: x",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
+  });
+});
+
+// #2969: an address that ends in "::" followed by a closing colon ("x fd00:abcd::: y") stayed in clear
+// on both paths — the terminal-"::" detector branches refused any following ":". ":::" before a space,
+// punctuation or the end reads as "::" plus a closing colon; before a word character it is not one.
+describe.each([true, false])("IPv6 ending in :: before a closing colon, maskPublicIps=%s (#2969)", (mask) => {
+  it.each([
+    ["x fd00:abcd::: y", "x ANON_IP_1: y", "fd00:abcd::"],
+    ["route fe80::: down", "route ANON_IP_1: down", "fe80::"],
+    ["x fd00::: y", "x ANON_IP_1: y", "fd00::"],
+    ["x dc:fd00:abcd::: y", "x dc:ANON_IP_1: y", "fd00:abcd::"],
+    ["peer node12:fd00:abcd::: down", "peer node12:ANON_IP_1: down", "fd00:abcd::"],
+    ["x fd00:abcd:::", "x ANON_IP_1:", "fd00:abcd::"],
+    ["(fd00:abcd:::)", "(ANON_IP_1:)", "fd00:abcd::"],
+  ])("%s -> %s", (input, expected, value) => {
+    const { out, back, pairs } = run(input, mask);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs).toEqual([expect.objectContaining({ token: "ANON_IP_1", value, category: "IP" })]);
+  });
+
+  it("a public address ending in :: before a closing colon is masked like one before a space", () => {
+    expect(run("x 2001:db8::: y", mask).out).toBe(mask ? "x ANON_EXTIP_1: y" : "x 2001:db8::: y");
+  });
+
+  it.each([
+    "x fd00:abcd:::y",
+    "x fd00:abcd:::: y",
+    "use std::: x",
+    "use std::os::fd::: x",
+    "fd::: x",
+    "C::: x",
+    "Win2019::: x",
+    "Server2016::: x",
+    "mac 00:1a:2b:3c:4d:5e::: seen",
+    "at 12:34:56::: local",
+    "fp fd:3a:11:22:33:44:55:66::: x",
+  ])("leaves %s byte-identical", (input) => {
+    expect(run(input, mask).out).toBe(input);
+  });
+});
+
+describe("custom IPv6 range ending in :: before a closing colon, IP category off (#2969)", () => {
+  const ranges: CustomEntity[] = [
+    { value: "fd00::/16", category: "IP", match: "pattern" },
+    { value: "fe80::/16", category: "IP", match: "pattern" },
+  ];
+  it.each([
+    ["x fd00:abcd::: y", "x ANON_IP_1: y"],
+    ["route fe80::: down", "route ANON_IP_1: down"],
+    ["x dc:fd00:abcd::: y", "x dc:ANON_IP_1: y"],
+    ["x fd00:abcd:::", "x ANON_IP_1:"],
+  ])("%s -> %s", (input, expected) => {
+    const { out, back } = run(input, true, ranges, false);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+  });
+
+  it.each(["x fd00:abcd:::y", "x fd00:abcd:::: y", "use std::os::fd::: x", "x 2001:fd00::: y"])(
+    "leaves %s byte-identical",
+    (input) => {
+      expect(run(input, true, ranges, false).out).toBe(input);
+    },
+  );
+});
+
+// #2971: with public masking on, a public address after a short label that runs into a word
+// ("dc:2001:db8::1Method") stayed in clear, though the same address at token start is masked
+// ("x 2001:db8::1Method"). A match GLUED to a word ("Server2016::Foo", #2959) still never qualifies.
+describe("public IPv6 after a short label that runs into a word (#2971)", () => {
+  it.each([
+    ["dc:2001:db8::1Method", "dc:ANON_EXTIP_1Method", "2001:db8::1"],
+    ["fd:2001:db8::1Method", "fd:ANON_EXTIP_1Method", "2001:db8::1"],
+    ["fe8:2001:db8::1Method", "fe8:ANON_EXTIP_1Method", "2001:db8::1"],
+    ["x dc:2001:db8::1_eth0 y", "x dc:ANON_EXTIP_1_eth0 y", "2001:db8::1"],
+    ["x dc:2001:db8::1Method y", "x dc:ANON_EXTIP_1Method y", "2001:db8::1"],
+  ])("masks %s when public IPs are masked", (input, expected, value) => {
+    const { out, back, pairs } = run(input, true);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual([["ANON_EXTIP_1", value, "EXTIP"]]);
+  });
+
+  it.each(["dc:2001:db8::1Method", "fd:2001:db8::1Method", "fe8:2001:db8::1Method"])(
+    "leaves %s alone when public IPs are kept, with identical set-aside spans",
+    (input) => {
+      expect(run(input, false).out).toBe(input);
+      expect(findReservableIpv6Spans(input, false)).toEqual([]);
+      const start = input.indexOf("2001");
+      expect(findReservableIpv6Spans(input, true)).toEqual([{ start, end: start + "2001:db8::1".length }]);
+    },
+  );
+
+  it.each([
+    "Server2016::Foo",
+    "Server2016::Foo()",
+    "Win2019:: x",
+    "x dc:2001:db8::1:y",
+    "x dc:2001:db8::1::y",
+    "fp dc:20:11:22:33:44:55:66Method",
+    "mac 00:1a:2b:3c:4d:5e seen",
+    "at 12:34:56 local",
+    "fp fd:3a:11:22:33:44:55:66 seen",
+  ])("leaves %s byte-identical with public IPs masked", (input) => {
+    expect(run(input, true).out).toBe(input);
   });
 });

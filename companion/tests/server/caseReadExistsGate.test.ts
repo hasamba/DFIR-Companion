@@ -37,6 +37,7 @@ const ADDED_LATER = ["/host-duplicates"];
 const GATED_READS = [...LISTED_IN_ISSUE, ...ADDED_LATER];
 
 const roots: string[] = [];
+const jobManagers: Array<{ ready(): Promise<void> }> = [];
 
 async function harness(): Promise<{ root: string; app: Express }> {
   const base = await mkdtemp(join(tmpdir(), "dfir-case-read-gate-"));
@@ -44,6 +45,7 @@ async function harness(): Promise<{ root: string; app: Express }> {
   const root = join(base, "cases");
   await mkdir(root);
   const rt = createRuntimeStores({ casesRoot: root, host: "127.0.0.1", port: 0, logDir: join(base, "logs") });
+  jobManagers.push(rt.jobManager);
   await rt.store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const app = createApp(rt.store, buildAppOptions(rt, {} as Parameters<typeof buildAppOptions>[1]));
   return { root, app };
@@ -71,7 +73,10 @@ const ghostsIn = async (root: string) => (await readdir(root)).filter((name) => 
 const concrete = (path: string, caseId: string) => path.replace(":id", caseId).replace(/:[A-Za-z]+/g, "p1");
 
 afterAll(async () => {
-  for (const root of roots) await rm(root, { recursive: true, force: true });
+  // #2964: the job manager restores its ledger in the background and creates
+  // cases/.dfir-companion-jobs.sqlite on its own schedule — wait for it, then remove with retries.
+  await Promise.allSettled(jobManagers.map((jobs) => jobs.ready()));
+  for (const root of roots) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe("reads of a case that does not exist (#1901)", () => {

@@ -174,6 +174,9 @@ async function sweep(a: ReturnType<typeof createApp>, paths: readonly string[]) 
 describe("#2930 — the production wiring serves no grade mark on a parameterised route", () => {
   it("sweeps every GET route with real ids", { timeout: 120_000 }, async () => {
     const base = await mkdtemp(join(tmpdir(), "dfir-mark-json-rt-"));
+    // #2964: the job manager creates cases/.dfir-companion-jobs.sqlite in the background; cleanup
+    // waits for it. Its own initialization error is reported by the manager, not by this teardown.
+    let jobsReady: Promise<void> = Promise.resolve();
     try {
       const rt = createRuntimeStores({
         casesRoot: join(base, "cases"),
@@ -181,6 +184,7 @@ describe("#2930 — the production wiring serves no grade mark on a parameterise
         port: 0,
         logDir: join(base, "logs"),
       });
+      jobsReady = rt.jobManager.ready().catch(() => undefined);
       const options = buildAppOptions(rt, {} as Parameters<typeof buildAppOptions>[1]);
       const full = createApp(rt.store, options);
       await rt.store.createCase({ caseId: CASE, name: "n", investigator: "i", aiProvider: null });
@@ -214,7 +218,8 @@ describe("#2930 — the production wiring serves no grade mark on a parameterise
       for (const path of rowServing) expect(status.get(path), path).toBe(200);
       expect(offenders).toEqual([]);
     } finally {
-      await rm(base, { recursive: true, force: true });
+      await jobsReady;
+      await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 });
