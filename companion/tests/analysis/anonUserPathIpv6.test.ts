@@ -106,15 +106,7 @@ describe("profile path next to a public IPv6 address with public masking off (#3
 });
 
 describe("unchanged neighbours (#3000)", () => {
-  // The secret placeholder inside a profile name is a separate issue (#3002); this fix leaves it as is.
-  it("leaves a redacted secret inside a profile name as it was", () => {
-    const key = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
-    const r = run(`${WIN}${BOB} ${key} x`, true, true);
-    expect(r.out).toBe(`${WIN}${U1}`);
-    expect(r.out).not.toContain(key);
-    expect(r.pairs).toEqual([[U1, `${BOB} ${SECRET_SENTINEL} x`]]);
-  });
-
+  // A secret inside a profile name (#3002) is covered in anonUserPathSecret.test.ts.
   it("a profile path with IP masking on but no address is unchanged", () => {
     expect(run(`${WIN}${ALICE}${BS}x`, true).out).toBe(`${WIN}${U1}${BS}x`);
   });

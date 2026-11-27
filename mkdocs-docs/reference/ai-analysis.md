@@ -202,7 +202,7 @@ By default, the Companion **tokenizes identifying information** before sending a
 | Bare usernames in prose (`the account jdoe ran scp`) | the same `ANON_USER_n` the qualified form got. A username found in any qualified form (account, UPN, profile path) is replaced wherever it appears as a whole word. Common words used as account names (`admin`, `test`, `user`, `guest`, `system`, `root`, …) are replaced only in their qualified forms |
 | Email addresses | `ANON_EMAIL_1`, … — **ASCII local parts only**, see below |
 | Domain names | `ANON_DOMAIN_1`, … |
-| User profile paths (`C:\Users\<name>`, `/home/<name>`) | the username segment becomes `ANON_USER_n` (the same token as `CORP\<name>`); the rest of the path is left readable |
+| User profile paths (`C:\Users\<name>`, `/home/<name>`) | the username segment becomes `ANON_USER_n` (the same token as `CORP\<name>`); the rest of the path is left readable. A secret written after the username shows as `[REDACTED_SECRET]`, and the text after the secret gets its own `ANON_USER_n` token |
 | Credit card numbers | `ANON_CARD_1`, … |
 | Phone numbers | `ANON_PHONE_1`, … |
 | National ID numbers (currently: Israeli Teudat Zehut) | `ANON_NATID_1`, … |

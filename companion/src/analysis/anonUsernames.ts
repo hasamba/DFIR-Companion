@@ -40,6 +40,10 @@ export const USER_PATH_RE =
 export const WELL_KNOWN_PROFILE =
   /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
 const IPV6_PLACEHOLDER_START = "";
+// The anonymizer's one-way secret sentinel (SECRET_SENTINEL in anonymize.ts). It stays in the name
+// class on purpose: stopping the name there put the text after the secret in clear (#3002).
+const SECRET_MARK = "\uE001";
+const EDGE_SPACE = /^(\s*)([\s\S]*?)(\s*)$/;
 
 /** How a profile name is minted: a `saved` name is learned and saved as a discovery, others never. */
 export type ProfileNameMint = (name: string, saved: boolean) => string;
@@ -51,12 +55,27 @@ export type ProfileNameMint = (name: string, saved: boolean) => string;
  * profile (Public, Default, …), and it is never learned or saved: a saved fragment such as "5" came
  * back as a custom value on a later call and cut a SID or an address apart. A built-in profile name
  * the path ends normally stays in clear.
+ *
+ * A secret inside the name ends the username there (#3002), and each part around a secret gets
+ * its own USER token. No part is learned or saved: before the fix the value held the secret
+ * sentinel and never matched, and a saved part could cut other text on a later call (a "5" cut a
+ * SID, a ",end" masked ",end" everywhere). The sentinel stays between the parts and shows as
+ * [REDACTED_SECRET]. The built-in-name check is skipped for the parts, so "Public" stays masked.
  */
 export function replaceUserPaths(text: string, mint: ProfileNameMint): string {
   return text.replace(USER_PATH_RE, (m, prefix: string, name: string, at: number, w: string) => {
+    if (name.includes(SECRET_MARK)) {
+      const parts = name.split(SECRET_MARK).map((p) => mintTrimmed(p, (v) => mint(v, false)));
+      return prefix + parts.join(SECRET_MARK);
+    }
     const cut = w[at + m.length] === IPV6_PLACEHOLDER_START;
     return !cut && WELL_KNOWN_PROFILE.test(name) ? m : prefix + mint(name, !cut);
   });
+}
+/** Mint a part of a split profile name, keeping its edge spaces outside the token. */
+function mintTrimmed(part: string, mint: (value: string) => string): string {
+  const [, lead = "", core = "", trail = ""] = EDGE_SPACE.exec(part) ?? [];
+  return core ? lead + mint(core) + trail : part;
 }
 
 /** Shorter names are never replaced as bare words: "al" or "jo" would shred ordinary prose. */
