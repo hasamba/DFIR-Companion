@@ -267,8 +267,14 @@ function ipv6Grade(ip: string): Ipv6Grade {
 
 // Shared by the set-aside, the secret/custom pass (#2952) and the preview's leak hint (#2958), so all
 // agree on what an address is; false positives stay put, a glued or "::"-ended one is found (#2953).
-export function findReservableIpv6Spans(text: string): Ipv6Span[] {
-  return findIpv6Literals(text, ipv6Grade, { splitUnknown: true, wholeToken: false });
+// `maskPublicIps` lets a public address after a short label run into a word (#2971); every caller
+// passes its policy's value, so the passes still agree.
+export function findReservableIpv6Spans(text: string, maskPublicIps = false): Ipv6Span[] {
+  return findIpv6Literals(text, ipv6Grade, {
+    splitUnknown: true,
+    wholeToken: false,
+    publicRunsOn: maskPublicIps,
+  });
 }
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
@@ -514,7 +520,7 @@ export function createAnonymizer(
     // a forged placeholder must never index the literals table and make restore() invent an
     // address in text that never contained one.
     const text = t.replace(IPV6_SENTINEL_RE, "");
-    const found = findReservableIpv6Spans(text);
+    const found = findReservableIpv6Spans(text, policy.maskPublicIps);
     if (found.length === 0) return { text, literals: [] };
     const literals: Reserved[] = [];
     let out = "";
@@ -627,7 +633,7 @@ export function createAnonymizer(
     // custom pass skips a match beside one.
     t = t.replace(IPV6_SENTINEL_RE, "");
     if (policy.redactSecrets) {
-      const spans = () => (policy.categories.IP ? findReservableIpv6Spans(t) : []);
+      const spans = () => (policy.categories.IP ? findReservableIpv6Spans(t, policy.maskPublicIps) : []);
       t = redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans);
     }
     // Then reserve IPv6 literals — before anonCustom or any other pass — so nothing can substitute

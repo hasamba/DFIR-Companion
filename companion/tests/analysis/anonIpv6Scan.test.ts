@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createAnonymizer,
+  findReservableIpv6Spans,
   type AnonPolicy,
   type CustomEntity,
   type KnownEntities,
@@ -393,4 +394,46 @@ describe("custom IPv6 range ending in :: before a closing colon, IP category off
       expect(run(input, true, ranges, false).out).toBe(input);
     },
   );
+});
+
+// #2971: with public masking on, a public address after a short label that runs into a word
+// ("dc:2001:db8::1Method") stayed in clear, though the same address at token start is masked
+// ("x 2001:db8::1Method"). A match GLUED to a word ("Server2016::Foo", #2959) still never qualifies.
+describe("public IPv6 after a short label that runs into a word (#2971)", () => {
+  it.each([
+    ["dc:2001:db8::1Method", "dc:ANON_EXTIP_1Method", "2001:db8::1"],
+    ["fd:2001:db8::1Method", "fd:ANON_EXTIP_1Method", "2001:db8::1"],
+    ["fe8:2001:db8::1Method", "fe8:ANON_EXTIP_1Method", "2001:db8::1"],
+    ["x dc:2001:db8::1_eth0 y", "x dc:ANON_EXTIP_1_eth0 y", "2001:db8::1"],
+    ["x dc:2001:db8::1Method y", "x dc:ANON_EXTIP_1Method y", "2001:db8::1"],
+  ])("masks %s when public IPs are masked", (input, expected, value) => {
+    const { out, back, pairs } = run(input, true);
+    expect(out).toBe(expected);
+    expect(back).toBe(input);
+    expect(pairs.map((p) => [p.token, p.value, p.category])).toEqual([["ANON_EXTIP_1", value, "EXTIP"]]);
+  });
+
+  it.each(["dc:2001:db8::1Method", "fd:2001:db8::1Method", "fe8:2001:db8::1Method"])(
+    "leaves %s alone when public IPs are kept, with identical set-aside spans",
+    (input) => {
+      expect(run(input, false).out).toBe(input);
+      expect(findReservableIpv6Spans(input, false)).toEqual([]);
+      const start = input.indexOf("2001");
+      expect(findReservableIpv6Spans(input, true)).toEqual([{ start, end: start + "2001:db8::1".length }]);
+    },
+  );
+
+  it.each([
+    "Server2016::Foo",
+    "Server2016::Foo()",
+    "Win2019:: x",
+    "x dc:2001:db8::1:y",
+    "x dc:2001:db8::1::y",
+    "fp dc:20:11:22:33:44:55:66Method",
+    "mac 00:1a:2b:3c:4d:5e seen",
+    "at 12:34:56 local",
+    "fp fd:3a:11:22:33:44:55:66 seen",
+  ])("leaves %s byte-identical with public IPs masked", (input) => {
+    expect(run(input, true).out).toBe(input);
+  });
 });

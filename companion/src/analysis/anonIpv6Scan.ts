@@ -73,6 +73,13 @@ const INTERNAL_OPENING = /^(?:[0-9a-f]{4}:|::)/i;
 // The short first groups the old loose unique-local / link-local checks graded internal (#2959, #2966).
 const SHORT_INTERNAL_LEAD = /^(?:f[cd][0-9a-f]?|fe[89ab]):/i;
 
+/** How findIpv6Literals scans; see its doc comment. */
+export interface ScanOptions {
+  splitUnknown: boolean;
+  wholeToken: boolean;
+  publicRunsOn?: boolean;
+}
+
 interface RetryRules {
   // Only a hit that opens with a four-digit group counts (a "weak" match whose colon run goes on).
   wideOnly: boolean;
@@ -81,11 +88,18 @@ interface RetryRules {
   // A "keep" hit that opens with a four-digit group may be followed by a word character, as an
   // unglued "fd00::1xyz" already is: "node12:fd00::1xyz" fails CLOSED too. Never by ":".
   wordAfter: boolean;
+  // A public ("weak") hit may be followed by a word character, as the same address at token start
+  // already is ("x 2001:db8::1Method"): only after a short label ("dc:2001:db8::1Method"), never
+  // inside a match glued to a word ("Server2016::Foo", #2959), and only with public masking on (#2971).
+  publicRunsOn: boolean;
 }
 
-function hitEndsWell(text: string, end: number, hit: string, keep: boolean, rules: RetryRules): boolean {
+function hitEndsWell(text: string, end: number, hit: string, g: Ipv6Grade, rules: RetryRules): boolean {
+  const keep = g === "keep";
   if (endsToken(text, end) || (keep && rules.keepRunsOn)) return true;
-  return rules.wordAfter && keep && INTERNAL_OPENING.test(hit) && WORD_CHAR.test(text.slice(end, end + 1));
+  if (!WORD_CHAR.test(text.slice(end, end + 1))) return false;
+  if (g === "weak" && rules.publicRunsOn) return true;
+  return rules.wordAfter && keep && INTERNAL_OPENING.test(hit);
 }
 
 // Re-run the detector at every group start inside the rejected match, on the FULL text (the real
@@ -103,7 +117,7 @@ function retryInside(
     if (!hit || (rules.wideOnly && !WIDE_START.test(hit[0]))) continue;
     const end = p + hit[0].length;
     const g = grade(hit[0]);
-    if (accept(g) && hitEndsWell(text, end, hit[0], g === "keep", rules)) return { start: p, end };
+    if (accept(g) && hitEndsWell(text, end, hit[0], g, rules)) return { start: p, end };
   }
   return null;
 }
@@ -120,7 +134,7 @@ function retryRules(
   m: RegExpExecArray,
   g: Ipv6Grade,
   glued: boolean,
-  opts: { splitUnknown: boolean; wholeToken: boolean },
+  opts: ScanOptions,
 ): RetryRules | null {
   const unknown = opts.splitUnknown && g === null;
   // A range caller's grade is "keep" or null, never "weak", so a null run that goes on qualifies.
@@ -134,7 +148,10 @@ function retryRules(
   // ("fd:fd00::1Method", "fe8:fe80::1:x") must stay hidden even where it runs into a word.
   // The range path's unglued retry (#2965) is new and keeps its whole-token rule.
   const shortUla = g === null && SHORT_INTERNAL_LEAD.test(m[0]) && (glued || opts.splitUnknown);
-  return { wideOnly: !glued && !unknown, keepRunsOn: shortUla, wordAfter: !opts.wholeToken };
+  // The unglued, ungraded, compressed match whose public hit the caller already accepts when it ends
+  // the token (#2971); a full-form one ("dc:20:11:22:33:44:55:66") still never mints a public token.
+  const publicRunsOn = opts.publicRunsOn === true && unknown && !glued && m[0].includes("::");
+  return { wideOnly: !glued && !unknown, keepRunsOn: shortUla, wordAfter: !opts.wholeToken, publicRunsOn };
 }
 
 /**
@@ -149,11 +166,13 @@ function retryRules(
  * can be the front of (#2965).
  * `wholeToken`: a match that does not end the token ("fd00::beef" out of "fd00::beefMethod") is
  * rejected. The IP category passes false so an internal address keeps failing CLOSED.
+ * `publicRunsOn`: the IP category with public masking on — a public address after a short label may
+ * run into a word ("dc:2001:db8::1Method"), as it already may at token start (#2971). Off by default.
  */
 export function findIpv6Literals(
   text: string,
   grade: (ip: string) => Ipv6Grade,
-  opts: { splitUnknown: boolean; wholeToken: boolean },
+  opts: ScanOptions,
 ): Ipv6Span[] {
   const out: Ipv6Span[] = [];
   const re = new RegExp(IPV6_RE.source, "giu"); // local: no lastIndex shared with other callers
