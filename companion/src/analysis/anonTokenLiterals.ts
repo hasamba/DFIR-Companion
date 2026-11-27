@@ -88,8 +88,8 @@ function absentChar(text: string): string {
 }
 
 export interface TokenEnds {
-  /** A new apply() call on `text`. */
-  start(text: string): void;
+  /** A new apply() call on `text`, with the anonymizer's token -> value map. */
+  start(text: string, toReal: ReadonlyMap<string, string>): void;
   /** A site's splice of text[at, end) as `result` (`value` when nothing was minted). */
   ended(result: string, value: string, at: number, end: number, text: string): string;
   /** The final text; a value a later pass swallowed an alias into gets the token's real text. */
@@ -108,22 +108,31 @@ export interface TokenEnds {
 export function tokenEnds(tokenSource: string, categories: readonly string[]): TokenEnds {
   let mark = "";
   let aliases = new Map<string, string>(); // alias -> token
+  let input = "";
+  let known: ReadonlyMap<string, string> = new Map();
+  let before = 0; // toReal entries older than this call: never rewritten
   const taken = new Set(categories);
+  // An alias spelling found nowhere: not in the text, this call's input, or any stored value.
+  const free = (code: string, text: string) =>
+    !taken.has(code) && ![text, input, ...known.values()].some((t) => t.includes(`ANON_${code}_`));
   function alias(token: string, letters: number, text: string): string | null {
     for (let k = aliases.size; k < aliases.size + 4096; k++) {
       let code = "";
       for (let n = k, i = 0; i < letters; i++, n = Math.floor(n / 26)) code = LETTERS[n % 26] + code;
       const a = token.replace(LAST_TOKEN, `ANON_${code}_$2`);
-      if (taken.has(code) || aliases.has(a) || text.includes(`ANON_${code}_`)) continue;
+      if (aliases.has(a) || !free(code, text)) continue;
       aliases.set(a, token);
       return a;
     }
     return null;
   }
   return {
-    start: (text) => {
+    start: (text, toReal) => {
       mark = absentChar(text);
       aliases = new Map();
+      input = text;
+      known = toReal;
+      before = toReal.size;
     },
     ended: (result, value, at, end, text) => {
       const after = /^[0-9]/.test(result) && LAST_TOKEN.test(text.slice(Math.max(0, at - 64), at));
@@ -145,7 +154,7 @@ export function tokenEnds(tokenSource: string, categories: readonly string[]): T
           return NEEDS_DELIMITER.test(w) ? token + TOKEN_DELIMITER : token;
         },
       );
-      for (const [tok, value] of toReal)
+      for (const [tok, value] of [...toReal].slice(before))
         for (const [a, t] of aliases)
           if (value.includes(a)) toReal.set(tok, value.replaceAll(a, toReal.get(t) ?? t)); // #2991
       return mark ? out.replaceAll(mark, "") : out;

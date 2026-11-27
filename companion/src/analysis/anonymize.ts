@@ -622,7 +622,7 @@ export function createAnonymizer(
   function apply(text: string): string {
     // A forged sentinel in attacker-influenced text must not turn into a placeholder at the end.
     let t = text.replace(SECRET_SENTINEL_RE, "");
-    ends.start(t);
+    ends.start(t, toReal);
     // A literal token in the input is never minted later, and one minted already is escaped (#2569).
     // A literal equal to a SAVED token is escaped too (#2657), or the saved value could adopt it.
     const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok));

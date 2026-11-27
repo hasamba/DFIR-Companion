@@ -102,6 +102,15 @@ describe.each([true, false])("a digit right after a token (maskPublicIps=%s) (#2
     expect(a.apply("2019:fd00::1")).toBe(mask ? "ANON_EXTIP_1" : "2019:fd00::1");
   });
 
+  it("an alias never takes a spelling a stored value holds (Codex review)", () => {
+    const a = make(mask, { custom: [{ value: "ANON_AA_1", category: "HOST" }] });
+    const first = a.apply("x ANON_AA_1 y");
+    const second = a.apply("fd00::1fd00::2");
+    expect(a.restore(first)).toBe("x ANON_AA_1 y");
+    expect(a.restore(second)).toBe("fd00::1fd00::2");
+    expect(a.pairs().find((p) => p.category === "HOST")?.value).toBe("ANON_AA_1");
+  });
+
   it("a set-aside custom group before a digit", () => {
     const custom: CustomEntity[] = [{ value: "fd00::1fd0", category: "HOST" }];
     const a = make(mask, { custom });
@@ -140,7 +149,7 @@ describe("the internal marks never change what is masked (#2992)", () => {
   it("a site's token is spliced as an alias of the same shape and put back at the end", () => {
     const ends = tokenEnds("ANON_(?:IP|HOST)_\\d+", ["IP", "HOST"]);
     const text = "fd00::1fd00::2";
-    ends.start(text);
+    ends.start(text, new Map());
     const spliced = ends.ended("ANON_IP_1", "fd00::1fd0", 0, 10, text);
     expect(spliced).toMatch(/^ANON_[A-Z]{2}_1$/);
     expect(spliced).not.toBe("ANON_IP_1");
