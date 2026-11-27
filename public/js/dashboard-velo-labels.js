@@ -60,30 +60,69 @@ function veloLabelSummaryText(kind, picked) {
 //
 // THE EMPTY STATE TEACHES. A picker-only filter over an empty cache offers nothing and, without a
 // reason, reads as a broken control rather than a snapshot nobody has taken yet — so it names the
-// button that fills it. It is a plain note, not an empty dropdown.
-function veloLabelPickerHtml(kind, labels) {
+// button that fills it. It is a plain note, not an empty dropdown. After a refresh that DID succeed
+// (`refreshed`), that advice is wrong: the fleet simply carries no labels, and the note says so.
+//
+// RE-RENDERED IN PLACE (#2970). The run form refreshes the client list when it opens and redraws the
+// pickers from it, so `picked` and `open` carry over what the analyst had already done. A picked
+// label the fresh list no longer carries stays offered and ticked: dropping it would silently change
+// the hunt they set up, and a truncated list makes "missing" a poor signal of "removed" anyway.
+function veloLabelPickerHtml(kind, labels, opts) {
+  const o = opts || {};
+  const picked = o.picked || [];
   const verb = kind === "exc" ? "exclude labels" : "include labels";
   const cls = "velo-lbl velo-lbl-" + kind;
-  if (!(labels || []).length)
+  const offered = veloFleetLabels([{ labels: (labels || []).concat(picked) }]);
+  if (!offered.length)
     return (
       `<span class="${cls}" title="The label picker is filled from the cached client inventory." ` +
-      `data-safe-style="font-size:11px;color:var(--text-dim);padding:4px">${verb}: no labels cached — ` +
-      `use ↻ Refresh client list on Settings → Velociraptor</span>`
+      `data-safe-style="font-size:11px;color:var(--text-dim);padding:4px">${verb}: ` +
+      (o.refreshed
+        ? "no client carries a label"
+        : "no labels cached — use ↻ Refresh client list on Settings → Velociraptor") +
+      `</span>`
     );
-  const boxes = labels
+  const ticked = new Set(picked);
+  const boxes = offered
     .map(
       (l) =>
         `<label data-safe-style="display:block;font-size:12px;padding:2px 0;white-space:nowrap;cursor:pointer">` +
-        `<input type="checkbox" class="velo-lbl-box" value="${escAttr(l)}" /> ${esc(l)}</label>`,
+        `<input type="checkbox" class="velo-lbl-box" value="${escAttr(l)}"${ticked.has(l) ? " checked" : ""} /> ${esc(l)}</label>`,
     )
     .join("");
   return (
-    `<details class="${cls}" data-safe-style="position:relative;flex:0 1 auto;min-width:120px">` +
+    `<details class="${cls}"${o.open ? " open" : ""} data-safe-style="position:relative;flex:0 1 auto;min-width:120px">` +
     `<summary data-safe-style="cursor:pointer;font-size:12px;padding:4px;border:1px solid var(--border-color);border-radius:4px;white-space:nowrap">` +
-    `${veloLabelSummaryText(kind, [])}</summary>` +
+    `${esc(veloLabelSummaryText(kind, picked))}</summary>` +
     `<div data-safe-style="position:absolute;z-index:5;max-height:220px;overflow:auto;padding:6px 8px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:4px">` +
     `${boxes}</div></details>`
   );
+}
+
+// The note beside the pickers saying how fresh their labels are (#2970). A refresh that failed leaves
+// the cached list usable, so the note says it may be stale and why, rather than emptying the control.
+function veloLabelFreshnessText(state) {
+  const st = state || {};
+  if (st.pending) return "refreshing labels…";
+  if (!st.ok)
+    return "labels may be out of date — refresh failed" + (st.error ? ` (${st.error})` : "");
+  const at = new Date(st.updatedAt || "");
+  const pad = (n) => String(n).padStart(2, "0");
+  const when = Number.isNaN(at.getTime())
+    ? "labels refreshed"
+    : `labels as of ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  const cut = veloClientsCutNotice(st);
+  return cut ? `${when} · ${cut}` : when;
+}
+
+// What each picker carries right now — ticked labels and whether it is open — so a re-render keeps it.
+function veloLabelPickerState(form) {
+  const one = (kind) => {
+    const root =
+      form && form.querySelector ? form.querySelector(".velo-lbl-" + kind) : null;
+    return { picked: veloPickedLabels(form, kind), open: !!(root && root.open) };
+  };
+  return { inc: one("inc"), exc: one("exc") };
 }
 
 // The labels checked in one picker. An empty-state note has no boxes, so a run over a fleet whose
@@ -124,3 +163,5 @@ window.veloLabelSummaryText = veloLabelSummaryText;
 window.veloLabelPickerHtml = veloLabelPickerHtml;
 window.veloPickedLabels = veloPickedLabels;
 window.veloWireLabelPickers = veloWireLabelPickers;
+window.veloLabelFreshnessText = veloLabelFreshnessText;
+window.veloLabelPickerState = veloLabelPickerState;
