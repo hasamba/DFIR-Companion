@@ -63,6 +63,19 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     ["fd00:abcd::\u200f", "ANON_IP_1\u200f", "fd00:abcd::"],
     ["fd00:abcd::\uff0c x", "ANON_IP_1\uff0c x", "fd00:abcd::"],
     ["node12:fd00:abcd::\u201d", "node12:ANON_IP_1\u201d", "fd00:abcd::"],
+    // #2956: a retried internal address followed by a word character fails CLOSED, as an unglued
+    // "fd00::1xyz" already does; label + full 8-group address, the colon run running on.
+    ["node12:fd00::1xyz", "node12:ANON_IP_1xyz", "fd00::1"],
+    ["dc:fd00::1xyz up", "dc:ANON_IP_1xyz up", "fd00::1"],
+    ["dc:fd00:1:2:3:4:5:6:7 up", "dc:ANON_IP_1 up", "fd00:1:2:3:4:5:6:7"],
+    ["x 0:fe80:1:2:3:4:5:6:7 y", "x 0:ANON_IP_1 y", "fe80:1:2:3:4:5:6:7"],
+    ["node12:fd00:1:2:3:4:5:6:7", "node12:ANON_IP_1", "fd00:1:2:3:4:5:6:7"],
+    ["x 2019:fd00:1:2:3:4:5:6:7 y", "x 2019:ANON_IP_1 y", "fd00:1:2:3:4:5:6:7"],
+    ["x 2019:fe80:1:2:3:4:5:6:7 y", "x 2019:ANON_IP_1 y", "fe80:1:2:3:4:5:6:7"],
+    // Recorded tradeoff: an internal-looking address followed by a word fails CLOSED, as the
+    // unglued "fd00::Bar" -> "ANON_IP_1r" already does.
+    ["node12:fd00::Bar", "node12:ANON_IP_1r", "fd00::Ba"],
+    ["dc:fe80::CafeFactory", "dc:ANON_IP_1Factory", "fe80::Cafe"],
   ])("%s -> %s", (input, expected, value) => {
     const { out, back, pairs } = run(input, mask);
     expect(out).toBe(expected);
@@ -79,6 +92,14 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
   it("a real global address that contains an fd00 group is never split", () => {
     const { out } = run("x 2001:fd00::1 y", mask);
     expect(out).toBe(mask ? "x ANON_EXTIP_1 y" : "x 2001:fd00::1 y");
+  });
+
+  // #2956 records why this stays: "2019:fd00::1" and the real global "2001:fd00::1" cannot be told
+  // apart. Masked whole with public masking on; left as written, like any public address, with it off.
+  it("a digit label that forms a global address with an internal one is read as one address", () => {
+    const { out, back } = run("x 2019:fd00::1 y", mask);
+    expect(out).toBe(mask ? "x ANON_EXTIP_1 y" : "x 2019:fd00::1 y");
+    expect(back).toBe("x 2019:fd00::1 y");
   });
 
   it("a public prefix ending in :: is masked when public IPs are masked", () => {
@@ -111,7 +132,18 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     "SHA1 ab:cd:fd:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:01",
     "MD5:16:27:ac:fd:00:11:22:33:44:55:66:77:88:99:aa:bb",
     "eui 02:1a:2b:fd:fe:3c:4d:5e",
-    "node12:fd00::1xyz",
+    // #2956: byte runs longer than eight groups, with an fd byte where the retry would look.
+    "x 12:fd:00:11:22:33:44:55:66 y",
+    "x 12:34:fd:00:11:22:33:44:55:66 y",
+    "fp 12:34:56:78:9a:bc:de:f0:fd:00:11",
+    "1:2:3:4:5:6:7:8:9",
+    "std::os::fd::AsRawFdx",
+    "Foo::fd::Bar",
+    "node12:fe8::Bar",
+    "x node12:fd00::1:y",
+    // #2956 records why this stays: after the label, "fd00:1:2:3:4:5:6" is seven groups with no
+    // "::", so it is not an address; the whole run is a literal in unallocated space.
+    "dc:fd00:1:2:3:4:5:6",
   ])("leaves %s byte-identical", (input) => {
     expect(run(input, mask).out).toBe(input);
   });
@@ -130,12 +162,15 @@ describe("custom IPv6 range with the IP category off (#2953)", () => {
     expect(back).toBe(input);
   });
 
-  it.each(["x fd00::beefMethod y", "x fd00::1:2:3:4:5:6:7:8 y", "x node12:fd00::1xyz y"])(
-    "never hides the front of a longer token: %s",
-    (input) => {
-      expect(run(input, true, range, false).out).toBe(input);
-    },
-  );
+  it.each([
+    "x fd00::beefMethod y",
+    "x fd00::1:2:3:4:5:6:7:8 y",
+    "x node12:fd00::1xyz y",
+    "x dc:fd00:1:2:3:4:5:6:7 y",
+    "x 2019:fd00:1:2:3:4:5:6:7 y",
+  ])("never hides the front of a longer token: %s", (input) => {
+    expect(run(input, true, range, false).out).toBe(input);
+  });
 
   it("never hides part of an address outside the range", () => {
     expect(run("x 2001:fd00::1 y", true, range, false).out).toBe("x 2001:fd00::1 y");

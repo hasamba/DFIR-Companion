@@ -55,34 +55,75 @@ function stickyAt(text: string, at: number): RegExpExecArray | null {
 
 const endsToken = (text: string, end: number) => ENDS_TOKEN.test(text.slice(end, end + 1));
 
+// A real unique-local (fc00::/7) or link-local (fe80::/10) address opens with a FOUR-digit group;
+// a fingerprint or MAC byte run has two-digit groups, a code namespace like "fd::" too (#2956).
+const WIDE_START = /^[0-9a-f]{4}:/i;
+
+interface RetryRules {
+  // Only a hit that opens with a four-digit group counts (a "weak" match whose colon run goes on).
+  wideOnly: boolean;
+  // An internal address found inside need not end the token at all: it fails closed (#2959).
+  keepRunsOn: boolean;
+  // A "keep" hit that opens with a four-digit group may be followed by a word character, as an
+  // unglued "fd00::1xyz" already is: "node12:fd00::1xyz" fails CLOSED too. Never by ":".
+  wordAfter: boolean;
+}
+
+function hitEndsWell(text: string, end: number, hit: string, keep: boolean, rules: RetryRules): boolean {
+  if (endsToken(text, end) || (keep && rules.keepRunsOn)) return true;
+  return rules.wordAfter && keep && WIDE_START.test(hit) && WORD_CHAR.test(text.slice(end, end + 1));
+}
+
 // Re-run the detector at every group start inside the rejected match, on the FULL text (the real
 // address can run past the rejected match's end). The first acceptable one is the longest.
-// `keepRunsOn`: an internal address found inside need not end the token (it fails closed).
 function retryInside(
   text: string,
   m: Ipv6Span,
   accept: (g: Ipv6Grade) => boolean,
   grade: (ip: string) => Ipv6Grade,
-  keepRunsOn = false,
+  rules: RetryRules,
 ): Ipv6Span | null {
   for (let p = m.start + 1; p < m.end; p++) {
     if (text[p - 1] !== ":") continue; // a group start, or the "::" of "node12:::1"
     const hit = stickyAt(text, p);
-    if (!hit) continue;
+    if (!hit || (rules.wideOnly && !WIDE_START.test(hit[0]))) continue;
     const end = p + hit[0].length;
     const g = grade(hit[0]);
-    if ((endsToken(text, end) || (keepRunsOn && g === "keep")) && accept(g)) return { start: p, end };
+    if (accept(g) && hitEndsWell(text, end, hit[0], g === "keep", rules)) return { start: p, end };
   }
   return null;
+}
+
+// Why a rejected match is worth retrying, or null: it is glued to a word, or it is not an address
+// the caller would hide (#2959's full-form retry covers "dc:fd00:1:2:3:4:5:6:7"), or its colon run
+// goes on past it. Nine or more groups are never one address, so a "weak" first eight
+// ("2019:fd00:1:2:3:4:5:6" out of "2019:fd00:1:2:3:4:5:6:7") is retried too, for a four-digit-opening
+// internal address only (#2956).
+function retryRules(
+  text: string,
+  m: RegExpExecArray,
+  g: Ipv6Grade,
+  glued: boolean,
+  opts: { splitUnknown: boolean; wholeToken: boolean },
+): RetryRules | null {
+  const unknown = opts.splitUnknown && g === null;
+  const runGoesOn = opts.splitUnknown && text[m.index + m[0].length] === ":";
+  if (!glued && !unknown && !runGoesOn) return null;
+  // A match that opens with a 2-3 digit "fd"/"fc" group was hidden whole before #2959; an internal
+  // address inside it ("fd:fd00::1Method") must stay hidden even where it runs into a word.
+  const shortUla = g === null && /^f[cd][0-9a-f]?:/i.test(m[0]);
+  return { wideOnly: !glued && !unknown, keepRunsOn: shortUla, wordAfter: !opts.wholeToken };
 }
 
 /**
  * The IPv6 spans to set aside, in text order, never overlapping.
  *
- * `splitUnknown`: also retry inside a rejected match that is not glued to a word but contains
- * "::" — "dc:fd00::1" is a valid literal in unallocated space, and the internal address after the
- * label must fail closed. A custom-range caller passes false: a complete address outside the
- * range ("2001:fd00::1") must never have part of it hidden.
+ * `splitUnknown`: also retry inside a rejected match that is not glued to a word — "dc:fd00::1" is
+ * a valid literal in unallocated space, and the internal address after the label must fail closed;
+ * likewise a "weak" eight-group match whose colon run goes on ("2019:fd00:1:2:3:4:5:6:7"), for a
+ * four-digit-opening internal address only. A custom-range
+ * caller passes false: a complete address outside the range ("2001:fd00::1") must never have part
+ * of it hidden.
  * `wholeToken`: a match that does not end the token ("fd00::beef" out of "fd00::beefMethod") is
  * rejected. The IP category passes false so an internal address keeps failing CLOSED.
  */
@@ -102,16 +143,14 @@ export function findIpv6Literals(
       continue;
     }
     const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
-    const compressed = m[0].includes("::");
-    if (glued || (opts.splitUnknown && g === null)) {
+    const rules = retryRules(text, m, g, glued, opts);
+    if (rules) {
       // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
       // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
       // only an internal address, so a fingerprint never mints a public token (#2959).
+      const compressed = m[0].includes("::");
       const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
-      // A match that opens with a 2-3 digit "fd"/"fc" group was hidden whole before #2959; an internal
-      // address inside it ("fd:fd00::1Method") must stay hidden even where it runs into a word.
-      const shortUla = g === null && /^f[cd][0-9a-f]?:/i.test(m[0]);
-      const inner = retryInside(text, span, ok, grade, shortUla);
+      const inner = retryInside(text, span, ok, grade, rules);
       if (inner) {
         out.push(inner);
         re.lastIndex = inner.end; // the real address can run past the rejected match
