@@ -62,6 +62,24 @@ function normalizeLabels(cell: unknown): string[] {
   return out;
 }
 
+// Pure: every distinct client id a host name could mean — exact hostname/FQDN matches, else every
+// first-label match (the same two passes as matchClient). More than one id means the name is ambiguous.
+export function hostClientIds(records: readonly VeloClientRecord[], host: string): string[] {
+  const target = String(host || "")
+    .trim()
+    .toLowerCase();
+  if (!target) return [];
+  const short = target.split(".")[0];
+  const valid = (records ?? []).filter((r) => r && CLIENT_RE.test(r.clientId));
+  const lc = (s: string) => String(s ?? "").toLowerCase();
+  const label = (s: string) => lc(s).split(".")[0];
+  const exact = valid.filter((r) => lc(r.hostname) === target || lc(r.fqdn) === target);
+  const hits = exact.length
+    ? exact
+    : valid.filter((r) => (r.hostname && label(r.hostname) === short) || (r.fqdn && label(r.fqdn) === short));
+  return [...new Set(hits.map((r) => r.clientId))];
+}
+
 // Pure: the best client record for a target host, from the inventory. Robust to the two real-world
 // mismatches that make a naive `clients(search='host:<fqdn>')` miss: the client enrolled with its
 // SHORT name while the case asset is an FQDN (or vice-versa). Exact full match (hostname or FQDN) wins

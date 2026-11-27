@@ -2,6 +2,8 @@ import { logActivityWithWarning, type NewActivityEntry } from "../analysis/activ
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { matchClient, normalizeHuntExpirySeconds } from "../integrations/velociraptor/velociraptorApi.js";
 import { hostMissMessage } from "../integrations/velociraptor/clientSnapshot.js";
+import { hostClientIds, type VeloClientRecord } from "../integrations/velociraptor/clientInventory.js";
+import { VeloClientNotKnownError } from "../integrations/velociraptor/vqlDiagnostics.js";
 import type { RouteContext } from "./context.js";
 import { deployHuntBodyProblem, parseDeployHuntBody, type DeployHuntBody } from "./huntDeployBody.js";
 import { resolveCaseVelo, type VeloTarget } from "./veloServers.js";
@@ -73,10 +75,44 @@ export async function collectHostResolved(
         );
     }
     beforeLaunch();
-    return await vc.client.collectOnClient(rec.clientId, vql, description, hostname);
+    try {
+      return await vc.client.collectOnClient(rec.clientId, vql, description, hostname);
+    } catch (err) {
+      if (!(err instanceof VeloClientNotKnownError)) throw err;
+      const fresh = await refreshedClientId(ctx, vc.setId, store, hostname, err);
+      return await vc.client.collectOnClient(fresh, vql, description, hostname);
+    }
   }
   beforeLaunch();
   return await vc.client.collectFromHost(hostname, vql, description);
+}
+
+/**
+ * #2986: Velociraptor refused the saved client id (endpoint re-enrolled, or another org). Refresh the
+ * inventory once and return the host's NEW id — only when the refreshed list names exactly one client
+ * for the host and it differs. Anything else throws the refusal (still definite: nothing ran) with a
+ * note saying what the refresh found; a refresh failure never turns the refusal into "maybe it ran".
+ */
+async function refreshedClientId(
+  ctx: RouteContext,
+  setId: string,
+  store: { load(): Promise<{ clients: VeloClientRecord[] }> },
+  hostname: string,
+  refused: VeloClientNotKnownError,
+): Promise<string> {
+  let ids: string[];
+  try {
+    await ctx.refreshVeloClients(setId);
+    ids = hostClientIds((await store.load()).clients, hostname);
+  } catch (err) {
+    throw refused.withNote(`Refreshing the client list failed: ${(err as Error).message}.`);
+  }
+  if (ids.length === 1 && ids[0] !== refused.clientId) return ids[0];
+  if (ids.length === 0)
+    throw refused.withNote(`After a refresh, ${hostname} is no longer in the client list.`);
+  if (ids.length > 1)
+    throw refused.withNote(`After a refresh, ${hostname} matches more than one client, so none was picked.`);
+  throw refused.withNote("A refresh of the client list still gives the same client id.");
 }
 
 function waitMinutesOf(raw: unknown): number {
@@ -191,6 +227,7 @@ export async function deployCaseHunt(
     return { status: 200, body: { mode, waitMinutes, ...launch, ...warn }, phase, launched };
   } catch (err) {
     const message = (err as Error).message;
+    if (err instanceof VeloClientNotKnownError) phase = "before-launch"; // refused: nothing scheduled (#2986)
     logLine(`[velociraptor] deploy-hunt ERROR: ${message}`);
     const warn = await audit({
       category: "hunt",
