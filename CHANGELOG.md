@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI Agent Forensics report section** — the case report lists each run launched in or filed into the case, with inventory, matched text, both hashes, Sigma coverage and the rules not run (closes #2721)
 
 ### Fixed
+- **IPv6 after a glued label or a `::` separator kept whole** — with public masking on `node12:2001:db8::1Method` is masked, and `Evtx::2001:db8::1Method` is one address instead of two tokens (closes #2974)
 - **Internal IPv6 after a label masked in two more spellings** — `node12:::1xyz` and, with a custom range, `dc:fd00::1` no longer reach the AI in clear (closes #2965)
 - **Link-local means a four-digit fe80–febf group** — `fe8:` byte runs keep their spelling; real link-local addresses stay masked (closes #2966)
 - **IPv6 before a closing colon masked** — `peer fd00::1: reset` and `dc:fd00::1:` are masked on the IP and custom-range paths (closes #2968)

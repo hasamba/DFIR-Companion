@@ -37,6 +37,7 @@ export const IPV6_RE =
  * - null: not an address the caller would hide.
  */
 export type Ipv6Grade = "keep" | "weak" | null;
+type Grade = (ip: string) => Ipv6Grade;
 
 export interface Ipv6Span {
   start: number;
@@ -89,8 +90,9 @@ interface RetryRules {
   // unglued "fd00::1xyz" already is: "node12:fd00::1xyz" fails CLOSED too. Never by ":".
   wordAfter: boolean;
   // A public ("weak") hit may be followed by a word character, as the same address at token start
-  // already is ("x 2001:db8::1Method"): only after a short label ("dc:2001:db8::1Method"), never
-  // inside a match glued to a word ("Server2016::Foo", #2959), and only with public masking on (#2971).
+  // already is ("x 2001:db8::1Method"): only after a label ("dc:2001:db8::1Method", #2971; glued to a
+  // word, "node12:2001:db8::1Method", #2974), never when the glued match is itself public
+  // ("Server2016::Foo", #2959), and only with public masking on.
   publicRunsOn: boolean;
 }
 
@@ -148,10 +150,28 @@ function retryRules(
   // ("fd:fd00::1Method", "fe8:fe80::1:x") must stay hidden even where it runs into a word.
   // The range path's unglued retry (#2965) is new and keeps its whole-token rule.
   const shortUla = g === null && SHORT_INTERNAL_LEAD.test(m[0]) && (glued || opts.splitUnknown);
-  // The unglued, ungraded, compressed match whose public hit the caller already accepts when it ends
-  // the token (#2971); a full-form one ("dc:20:11:22:33:44:55:66") still never mints a public token.
-  const publicRunsOn = opts.publicRunsOn === true && unknown && !glued && m[0].includes("::");
+  // The ungraded, compressed match whose public hit the caller already accepts when it ends the token
+  // (#2971); a full-form one ("dc:20:11:22:33:44:55:66") still never mints a public token.
+  // Glued or not (#2974: "node12:2001:db8::1Method"): this outer match is ungraded, never the glued
+  // PUBLIC match #2959 leaves alone ("2016::F" out of "Server2016::Foo").
+  const publicRunsOn = opts.publicRunsOn === true && unknown && m[0].includes("::");
   return { wideOnly: !glued && !unknown, keepRunsOn: shortUla, wordAfter: !opts.wholeToken, publicRunsOn };
+}
+
+// A "::" glued to a word on its left is a separator ("Evtx::2001:db8::1", Velociraptor's
+// artifact::field), not part of an address, when the address right after it runs PAST the match and
+// the caller would take it. The detector otherwise cut it in two: "::2001:db8" (an IPv4-compatible
+// spelling of a public IPv4) and "::1" (loopback) (#2974). Returns where to resume the scan, or null.
+function separatorRestart(text: string, m: RegExpExecArray, grade: Grade, opts: ScanOptions): number | null {
+  const k = m[0].indexOf("::");
+  if (k < 0) return null;
+  const at = m.index + k + 2;
+  const next = stickyAt(text, at);
+  if (!next) return null;
+  const end = at + next[0].length;
+  if (end <= m.index + m[0].length) return null;
+  const g = opts.wholeToken && !endsToken(text, end) ? null : grade(next[0]);
+  return g === null ? null : at;
 }
 
 /**
@@ -166,8 +186,9 @@ function retryRules(
  * can be the front of (#2965).
  * `wholeToken`: a match that does not end the token ("fd00::beef" out of "fd00::beefMethod") is
  * rejected. The IP category passes false so an internal address keeps failing CLOSED.
- * `publicRunsOn`: the IP category with public masking on — a public address after a short label may
- * run into a word ("dc:2001:db8::1Method"), as it already may at token start (#2971). Off by default.
+ * `publicRunsOn`: the IP category with public masking on — a public address after a label may run
+ * into a word ("dc:2001:db8::1Method", "node12:2001:db8::1Method"), as it already may at token start
+ * (#2971, #2974). Off by default.
  */
 export function findIpv6Literals(
   text: string,
@@ -186,18 +207,28 @@ export function findIpv6Literals(
     }
     const glued = start > 0 && WORD_CHAR.test(text[start - 1]);
     const rules = retryRules(text, m, g, glued, opts);
-    if (rules) {
-      // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
-      // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
-      // only an internal address, so a fingerprint never mints a public token (#2959).
-      const compressed = m[0].includes("::");
-      const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
-      const inner = retryInside(text, span, ok, grade, rules);
-      if (inner) {
-        out.push(inner);
-        re.lastIndex = inner.end; // the real address can run past the rejected match
-        continue;
-      }
+    // Glued "weak" match ("2019:fd00::1" out of "win2019:fd00::1"): only a "keep" address wins.
+    // A full-form unknown match ("fd:fd00:1:2:3:4:5:6" out of "fd:fd00:1:2:3:4:5:6:7") yields
+    // only an internal address, so a fingerprint never mints a public token (#2959).
+    const compressed = m[0].includes("::");
+    const ok = (x: Ipv6Grade) => x === "keep" || (g === null && (glued || compressed) && x !== null);
+    const inner = rules ? retryInside(text, span, ok, grade, rules) : null;
+    const restart = glued ? separatorRestart(text, m, grade, opts) : null;
+    // An internal address found BEFORE the separator ("fd00::2001:db8" out of "xfd:fd00::2001:db8::1")
+    // still wins: it fails closed (#2974 review). One found after it is the restart's to take whole.
+    const innerFirst =
+      inner &&
+      restart !== null &&
+      inner.start < restart &&
+      grade(text.slice(inner.start, inner.end)) === "keep";
+    if (restart !== null && !innerFirst) {
+      re.lastIndex = restart; // the address after the separator starts a token of its own
+      continue;
+    }
+    if (inner) {
+      out.push(inner);
+      re.lastIndex = inner.end; // the real address can run past the rejected match
+      continue;
     }
     // "2019::" out of "Win2019:: x", and "2016::F" out of "Server2016::Foo" (#2959), are words.
     const inWord = glued && (m[0].endsWith("::") || /^\p{L}/u.test(text.slice(span.end, span.end + 1)));

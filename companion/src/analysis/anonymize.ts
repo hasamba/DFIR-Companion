@@ -267,7 +267,7 @@ function ipv6Grade(ip: string): Ipv6Grade {
 
 // Shared by the set-aside, the secret/custom pass (#2952) and the preview's leak hint (#2958), so all
 // agree on what an address is; false positives stay put, a glued or "::"-ended one is found (#2953).
-// `maskPublicIps` lets a public address after a short label run into a word (#2971); every caller
+// `maskPublicIps` lets a public address after a label run into a word (#2971, #2974); every caller
 // passes its policy's value, so the passes still agree.
 export function findReservableIpv6Spans(text: string, maskPublicIps = false): Ipv6Span[] {
   return findIpv6Literals(text, ipv6Grade, {
