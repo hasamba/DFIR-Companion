@@ -58,6 +58,11 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     ["x node12:::ffff:a00:5 y", "x node12:ANON_IP_1 y", "::ffff:a00:5"],
     ["win2019:::ffff:a00:5", "win2019:ANON_IP_1", "::ffff:a00:5"],
     ["x node12:::1 y", "x node12:ANON_IP_1 y", "::1"],
+    ["said \u201cfd00:abcd::\u201d", "said \u201cANON_IP_1\u201d", "fd00:abcd::"],
+    ["fd00:abcd::\u00a0up", "ANON_IP_1\u00a0up", "fd00:abcd::"],
+    ["fd00:abcd::\u200f", "ANON_IP_1\u200f", "fd00:abcd::"],
+    ["fd00:abcd::\uff0c x", "ANON_IP_1\uff0c x", "fd00:abcd::"],
+    ["node12:fd00:abcd::\u201d", "node12:ANON_IP_1\u201d", "fd00:abcd::"],
   ])("%s -> %s", (input, expected, value) => {
     const { out, back, pairs } = run(input, mask);
     expect(out).toBe(expected);
@@ -98,6 +103,9 @@ describe.each([true, false])("IPv6 set-aside, maskPublicIps=%s (#2953)", (mask) 
     "namespace fd:: {",
     "fd:: x",
     "fc::é",
+    "fd00:abcd::é",
+    "Win2019:: x",
+    "Server2022:: x",
     "Interface:: x",
     "fp 12:34:fd:56:78:9a:bc:de:f0:11:22:33",
     "SHA1 ab:cd:fd:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:01",

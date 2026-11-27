@@ -22,9 +22,10 @@
 // The two terminal-"::" branches are LAST for the same first-match reason: placed earlier they
 // would cut "fd00:abcd::1" down to "fd00:abcd::". They need two groups, or one group of three or
 // four hex digits, so a code namespace such as "fd::" or "fc::" never reads as an address, and
-// they must not be followed by a letter, digit, "_" or ":" ("fd00::Method" is not an address).
+// they must not be followed by a letter or digit in any script, "_" or ":" ("fd00::Method" is
+// not an address; a closing quote, a no-break space or a direction mark after one is fine).
 export const IPV6_RE =
-  /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){2,7}:(?![0-9a-z_:\u0080-￿])|[0-9a-f]{3,4}::(?![0-9a-z_:\u0080-￿])/gi;
+  /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){2,7}:(?![\p{L}\p{N}_:])|[0-9a-f]{3,4}::(?![\p{L}\p{N}_:])/giu;
 
 /**
  * How the caller judges one detector match.
@@ -47,7 +48,7 @@ const WORD_CHAR = /[\p{L}\p{N}_]/u;
 const ENDS_TOKEN = /^(?![\p{L}\p{N}_:])/u;
 
 function stickyAt(text: string, at: number): RegExpExecArray | null {
-  const re = new RegExp(IPV6_RE.source, "iy");
+  const re = new RegExp(IPV6_RE.source, "iuy");
   re.lastIndex = at;
   return re.exec(text);
 }
@@ -88,7 +89,7 @@ export function findIpv6Literals(
   opts: { splitUnknown: boolean; wholeToken: boolean },
 ): Ipv6Span[] {
   const out: Ipv6Span[] = [];
-  const re = new RegExp(IPV6_RE.source, "gi"); // local: no lastIndex shared with other callers
+  const re = new RegExp(IPV6_RE.source, "giu"); // local: no lastIndex shared with other callers
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const start = m.index;
     const span = { start, end: start + m[0].length };
@@ -107,7 +108,9 @@ export function findIpv6Literals(
         continue;
       }
     }
-    if (g === "weak") out.push(span);
+    // "2019::" out of "Win2019:: x" is a word, not a routable prefix.
+    const gluedPrefix = glued && m[0].endsWith("::");
+    if (g === "weak" && !gluedPrefix) out.push(span);
   }
   return out;
 }
