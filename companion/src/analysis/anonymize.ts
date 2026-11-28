@@ -16,7 +16,7 @@ import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
 import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
-import { NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP, replaceCards } from "./anonPiiPatterns.js";
+import { NATID_RE, E164, PHONE_IL, PHONE_NANP, replaceCards } from "./anonPiiPatterns.js";
 import { replaceEncodedCommands } from "./anonEncodedCmd.js";
 import { replaceGluedIpv4Runs } from "./anonGluedPairs.js"; // + the card reading master had (#3068)
 import { replaceCardOnlyPairs, replaceGluedPairs, type PairRules } from "./anonGluedPairs.js";
@@ -456,7 +456,7 @@ export function createAnonymizer(
   }
   const valuesIn = valuePasses(policy.categories, {
     ...{ CMD: anonEncodedCmd, REG: anonSids, IP: (t: string) => anonIpv4(t, false) },
-    ...{ CARD: anonCards, PHONE: anonPhones, NATID: anonNatIds },
+    ...{ CARD: anonCards, PHONE: (t: string) => anonPhones(t, E164.plain), NATID: anonNatIds },
   });
   function anonEncodedCmd(t: string): string {
     const cmd = (blob: string) => assign("CMD", blob);
@@ -567,8 +567,8 @@ export function createAnonymizer(
 
   // E.164 runs first: it is the most specific, and an international number has no leading zero
   // for the Israeli pattern to latch onto.
-  function anonPhones(t: string): string {
-    let out = t.replace(PHONE_E164, (m) => assign("PHONE", m));
+  function anonPhones(t: string, e164 = E164.glued): string {
+    let out = t.replace(e164, (m) => assign("PHONE", m));
     out = out.replace(PHONE_IL, (m) => assign("PHONE", m));
     out = out.replace(PHONE_NANP, (m) => assign("PHONE", m));
     return out;

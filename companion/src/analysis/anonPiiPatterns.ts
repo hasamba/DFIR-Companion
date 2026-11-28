@@ -32,6 +32,17 @@ export const CARD_RE =
 // preceded by a letter, digit, dot, underscore or dash — it follows whitespace, line start, or
 // punctuation such as a label colon ("Tel:+972...") — so those are the only characters excluded.
 export const PHONE_E164 = /(?<![A-Za-z0-9._-])\+\d{7,15}\b/g;
+// The phone pass runs last, when an address, account or host before a glued "+<number>" is already a
+// token ending in a digit, which the guard above refuses (#3075). After an identity or custom token,
+// or an address left in clear (its category off), the "+" starts a phone number. Only the phone pass
+// uses `glued`; raw-text readers, and the value passes over a profile name (the name's user token
+// already hides such a number, and carving it would show the separators), keep PHONE_E164. The "+"
+// is checked first and the lookbehinds are bounded, so a long run is never rescanned at every index.
+export const E164 = {
+  glued:
+    /(?=\+\d)(?:(?<![A-Za-z0-9._-])|(?<=ANON_(?:EMAIL|USER|DOMAIN|HOST|PERSON|OTHER)_\d{1,9}|@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,8}))\+\d{7,15}\b/g,
+  plain: PHONE_E164,
+};
 export const PHONE_IL = /\b0(?:5\d|[2-46-9])-?\d{7}\b/g;
 export const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
 
