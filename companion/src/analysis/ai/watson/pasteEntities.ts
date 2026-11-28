@@ -1,6 +1,6 @@
 import { INTERNAL_TLDS } from "../../anonymize.js";
 import { collectUsernames, shortHostLabels } from "../../anonUsernames.js";
-import { extractAccounts } from "../../assetGraph.js";
+import { learnableAccounts } from "../../assetGraph.js";
 import { extractDomains } from "../../textDomains.js";
 import type { PromptEntities } from "../maskRequest.js";
 import { IP_LIKE } from "./hostLabel.js";
@@ -76,7 +76,7 @@ export function promptEntities(
     hosts: [...new Set([...fqdns, ...shortLabels(fqdns), ...roster, ...rosterLabels])],
     usernames: [
       ...new Set([
-        ...collectUsernames({ texts: [text], accountsOf: extractAccounts, internalDomains: [] }),
+        ...collectUsernames({ texts: [text], accountsOf: learnableAccounts, internalDomains: [] }),
         ...clean(knownUsers),
       ]),
     ],

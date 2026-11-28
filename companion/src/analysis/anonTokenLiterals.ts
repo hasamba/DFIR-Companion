@@ -229,3 +229,49 @@ export function expandMintedTokens(
   if (!value.includes("ANON_")) return value;
   return value.replace(new RegExp(tokenSource, "g"), (m) => lookup(m) ?? m);
 }
+
+/**
+ * #3058 — the spelling of an expanded value as the call's input wrote it. A token stands for one
+ * spelling of a case-folded value, so a value built around it (`LAB\<user>-<token>`) expanded to
+ * the saved spelling, not the text it replaced, and restore() changed the case. `spell` keeps the
+ * expansion when the input holds it verbatim, else takes the one spelling of it the input holds;
+ * with none, or more than one, the expansion stays. Set the input with `start` once per call.
+ * `expand` is expandMintedTokens, then `spell`.
+ */
+export interface InputSpelling {
+  start: (input: string) => string;
+  spell: (raw: string, real: string) => string;
+  expand: (raw: string, lookup: (token: string) => string | undefined) => string;
+}
+export function createInputSpelling(tokenSource: string): InputSpelling {
+  let input = "";
+  let lower: string | null = null;
+  const seen = new Map<string, string>(); // per call: one value is spelled once
+  function start(text: string): string {
+    input = text;
+    lower = null;
+    seen.clear();
+    return text;
+  }
+  function spell(raw: string, real: string): string {
+    if (raw === real || real.length === 0) return real;
+    const known = seen.get(real);
+    if (known !== undefined) return known;
+    const out = spelled(real);
+    seen.set(real, out);
+    return out;
+  }
+  function spelled(real: string): string {
+    if (input.includes(real)) return real;
+    lower ??= input.toLowerCase();
+    const want = real.toLowerCase();
+    if (lower.length !== input.length || want.length !== real.length) return real; // folding moved offsets
+    const found = new Set<string>();
+    for (let at = lower.indexOf(want); at >= 0 && found.size < 2; at = lower.indexOf(want, at + 1))
+      found.add(input.slice(at, at + want.length));
+    return found.size === 1 ? [...found][0] : real;
+  }
+  const expand = (raw: string, lookup: (token: string) => string | undefined): string =>
+    spell(raw, expandMintedTokens(raw, tokenSource, lookup));
+  return { start, spell, expand };
+}

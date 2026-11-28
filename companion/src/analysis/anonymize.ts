@@ -1,10 +1,10 @@
-import { israeliIdValid, luhnValid } from "./anonChecksums.js";
+import { israeliIdValid } from "./anonChecksums.js";
 import { isIP } from "node:net";
 import type { InvestigationState } from "./stateTypes.js";
-import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
+import { learnableAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 import { anonPairKey } from "./anonPatterns.js";
-import { replaceKnownValues, type KnownValue } from "./anonKnownValues.js";
+import { growSpansToKnown, replaceKnownValues, type KnownValue } from "./anonKnownValues.js";
 import {
   compileCustomEntities,
   findCustomSpans,
@@ -16,9 +16,10 @@ import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
 import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
-import { CARD_RE, NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
-import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
-import { literalEscapes } from "./anonTokenLiterals.js";
+import { NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
+import { replaceCards, replaceGluedIpv4 } from "./anonPiiPatterns.js";
+import { scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
+import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
 import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
 import { carveProfileName, valuePasses } from "./anonProfileTail.js";
@@ -309,8 +310,9 @@ export function createAnonymizer(
   const compiled = compileCustomEntities(known.custom ?? [], policy.maskPublicIps);
   let forceCustom = false; // true while a custom match mints: the explicit "hide this" beats a veto
   const ends = tokenEnds(TOKEN_RE.source, ALL_TOKEN_CATEGORIES); // a token a digit may follow gets a delimiter (#2992)
+  const spelling = createInputSpelling(TOKEN_RE.source); // a composite keeps the input's spelling (#3058)
   function assign(category: AnonTokenCategory, raw: string): string {
-    const real = expandMintedTokens(raw, TOKEN_RE.source, (tok) => toReal.get(tok)); // #2991: no nesting
+    const real = spelling.expand(raw, (tok) => toReal.get(tok)); // #2991: no nesting
     if (!forceCustom && real === raw && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
     const key = anonPairKey(category, real);
     const existing = toToken.get(key);
@@ -478,6 +480,7 @@ export function createAnonymizer(
     ...knownOf(policy.categories.HOST, known.hosts, "HOST"),
     ...knownOf(policy.categories.DOMAIN, known.internalDomains, "DOMAIN"),
   ];
+  const kept = (v: string) => suppressed.has(v.toLowerCase());
   function joinKnown(span: KnownValue, parts: KnownValue[]): string {
     for (const p of parts) assign(p.category, p.value); // the values it joined are saved, the run is not
     const lower = span.value.toLowerCase(); // ...unless the run is itself a known or already-minted value
@@ -549,22 +552,13 @@ export function createAnonymizer(
   }
 
   function anonIpv4(t: string): string {
-    return tails.gluedRaw(t).replace(IPV4_RE, (ip) => {
-      const cat = ipv4Category(ip);
-      return cat ? assign(cat, ip) : ip;
-    });
+    const mask = (ip: string, m: string, cat = ipv4Category(ip)) => (cat ? assign(cat, m) : m);
+    const plain = tails.gluedRaw(t).replace(IPV4_RE, (ip) => mask(ip, ip));
+    return replaceGluedIpv4(plain, isInternalIp, mask); // an address with digits glued on (#3058)
   }
 
-  // Two independent filters — a plausible issuer prefix AND Luhn — keep this out of trouble in
-  // forensic text (hashes are hexadecimal). No length check: every CARD_RE alternative already
-  // guarantees 13–19 digits once separators are stripped, so one could never fail.
   function anonCards(t: string): string {
-    return t.replace(CARD_RE, (m) => {
-      const digits = m.replace(/[ -]/g, "");
-      if (!/^[3-6]/.test(digits)) return m; // Amex 3, Visa 4, Mastercard 5, Discover 6
-      if (!luhnValid(digits)) return m;
-      return assign("CARD", m);
-    });
+    return replaceCards(t, (m) => assign("CARD", m)); // prefix + Luhn; a glued digit too (#3058)
   }
 
   // E.164 runs first: it is the most specific, and an international number has no leading zero
@@ -590,7 +584,7 @@ export function createAnonymizer(
   // infrastructure visible, so a screenshot-discovered public IP must not be re-hidden by value.
   // A custom group set aside with an IPv6 address (#2950) is minted here too: the custom pass's place.
   function anonCustom(t: string, literals: readonly Reserved[]): string {
-    const spans = findCustomSpans(t, compiled);
+    const spans = growSpansToKnown(t, findCustomSpans(t, compiled), knownValues, kept); // #3058
     const mark = (c: AnonTokenCategory, m: string) => tails.mark(mintRaw(c, m), m); // #2995: joins late
     const out = spans.length === 0 ? t : forcing(() => spliceSpans(t, spans, mark));
     return out.replace(IPV6_PLACEHOLDER_RE, (m, i: string, at: number, w: string) => {
@@ -616,7 +610,7 @@ export function createAnonymizer(
 
   function apply(text: string): string {
     // A forged sentinel in attacker-influenced text must not turn into a placeholder at the end.
-    let t = text.replace(SECRET_SENTINEL_RE, "");
+    let t = spelling.start(text.replace(SECRET_SENTINEL_RE, ""));
     ends.start(t, toReal);
     // A literal token in the input is never minted later, and one minted already is escaped (#2569).
     // A literal equal to a SAVED token is escaped too (#2657), or the saved value could adopt it.
@@ -658,7 +652,6 @@ export function createAnonymizer(
     if (policy.categories.PATH) t = anonUserPaths(t);
     if (policy.categories.CMD) t = anonEncodedCmd(t);
     if (policy.categories.REG) t = anonSids(t);
-    const kept = (v: string) => suppressed.has(v.toLowerCase());
     t = replaceKnownValues(t, knownValues, (v) => assign(v.category, v.value), joinKnown, kept);
     if (policy.categories.USER) t = anonBareUsernames(t);
     t = tails.joinMarked(t); // a custom value that ends in an address head takes its intact tail (#2995)
@@ -736,7 +729,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   const internalDomains = new Set<string>();
   for (const e of state.forensicTimeline) {
     if (e.asset && e.asset.trim()) hosts.add(e.asset.trim());
-    for (const acct of extractAccounts(e.description)) {
+    for (const acct of learnableAccounts(e.description)) {
       if (isNoiseAccount(acct)) continue; // registry hive / Windows principal / tactic folder, not a victim account
       accounts.add(acct);
       if (acct.includes("\\")) internalDomains.add(acct.split("\\")[0]);
@@ -790,7 +783,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     ...state.findings.flatMap((f) => [f.title, f.description]),
     ...state.iocs.map((i) => i.value),
   ];
-  const usernames = collectUsernames({ texts, accountsOf: extractAccounts, internalDomains: domains });
+  const usernames = collectUsernames({ texts, accountsOf: learnableAccounts, internalDomains: domains });
   const allHosts = [...new Set([...hosts, ...shortHostLabels(hosts, domains)])];
   return { hosts: allHosts.sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
 }

@@ -63,9 +63,15 @@ export function createOneWayCheck(
 // The scan walks out from each placeholder, so a long run of name characters is read once.
 const NAME_CHAR = /[A-Za-z0-9._%+$-]/;
 const MAX_NAME = 1024;
-const QUALIFIER = /(?<![\\/:.\w-])[A-Za-z][A-Za-z0-9.-]{0,14}$/; // NETBIOS_ACCT's domain
-const TAIL_QUALIFIER = /(?<![\\/:.\w\uE001-])[A-Za-z][A-Za-z0-9.-]{1,14}$/;
-const NEXT_USER = /^\\[A-Za-z0-9._$-]{2,20}(?![\\/\w])/;
+// NETBIOS_ACCT's qualifier and user half, read the #3049 way: Unicode letters, a qualifier from the
+// start of its word, no cap on the user half (#3058). Where only the old ASCII reading (LEGACY_*)
+// finds one, as before #3058, that one is used, so nothing it took is left behind.
+const QUALIFIER = /(?<![\\/:.\p{L}\p{N}_-])\p{L}[\p{L}\p{N}.-]{0,14}$/u;
+const TAIL_QUALIFIER = /(?<![\\/:.\p{L}\p{N}_\uE001-])\p{L}[\p{L}\p{N}.-]{1,14}$/u;
+const NEXT_USER = /^\\[\p{L}\p{N}._$-]{2,}(?![\\/\p{L}\p{N}_])/u;
+const LEGACY_QUALIFIER = /(?<![\\/:.\w-])[A-Za-z][A-Za-z0-9.-]{0,14}$/;
+const LEGACY_TAIL_QUALIFIER = /(?<![\\/:.\w\uE001-])[A-Za-z][A-Za-z0-9.-]{1,14}$/;
+const LEGACY_NEXT_USER = /^\\[A-Za-z0-9._$-]{2,20}(?![\\/\w])/;
 const ADDRESS =
   /(?<![\w:])(?:[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){1,7}:\d{1,3}(?:\.\d{1,3}){3}|\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,8})/g;
 
@@ -111,12 +117,17 @@ function gluedRun(r: string, p: number, s: string, stop: Uint8Array): Run {
   if (r[to] === "@" && !userinfo && NAME_CHAR.test(r[to + 1] ?? "") && !stop[to + 1]) {
     to = walk(r, to + 1, 1, s, stop);
     while (r[to - 1] === ".") to -= 1;
-  } else if (r[to] === "\\" && TAIL_QUALIFIER.test(r.slice(p, to))) {
-    to += NEXT_USER.exec(r.slice(to))?.[0].length ?? 0;
+  } else if (
+    r[to] === "\\" &&
+    [TAIL_QUALIFIER, LEGACY_TAIL_QUALIFIER].some((re) => re.test(r.slice(p, to)))
+  ) {
+    const next = r.slice(to);
+    to += (NEXT_USER.exec(next) ?? LEGACY_NEXT_USER.exec(next))?.[0].length ?? 0;
   }
   if (r[from - 1] === "@" && NAME_CHAR.test(r[from - 2] ?? "") && !stop[from - 2])
     from = walk(r, from - 1, -1, s, stop);
-  const q = r[from - 1] === "\\" ? QUALIFIER.exec(r.slice(Math.max(0, from - 17), from - 1)) : null;
+  const before = r[from - 1] === "\\" ? r.slice(Math.max(0, from - 17), from - 1) : null;
+  const q = before === null ? null : (QUALIFIER.exec(before) ?? LEGACY_QUALIFIER.exec(before));
   return { from, to, name, qual: q ? q[0] : "" };
 }
 

@@ -170,3 +170,71 @@ function splice(text: string, claims: Claims): string {
   }
   return out + text.slice(at);
 }
+
+/** A custom or saved value's span, as anonCustom replaces it. */
+export interface ValueSpan {
+  start: number;
+  end: number;
+  category: AnonTokenCategory;
+}
+
+/**
+ * Grow each custom or saved span that cuts a known value to cover that value (#3058). The custom pass
+ * runs first, so a saved qualifier claimed the head of a longer known domain and the known pass could
+ * no longer match it: the rest of the domain went out in clear. A known value that overlaps the spans
+ * and would leave a letter, digit or "_" of itself uncovered joins them into one span, which keeps the
+ * known value's category when it is exactly that value. A value `kept` says the analyst suppressed
+ * never grows anything. The spans only ever grow, so nothing they covered goes out in clear.
+ */
+export function growSpansToKnown(
+  text: string,
+  spans: readonly ValueSpan[],
+  values: readonly KnownValue[],
+  kept: (value: string) => boolean,
+): readonly ValueSpan[] {
+  if (spans.length === 0 || values.length === 0) return spans;
+  const list = [...spans]; // sorted by start and never overlapping, as findCustomSpans returns them
+  const matchers = compiled(values);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [k, v] of values.entries()) {
+      const re = matchers[k];
+      for (let m = nextSpan(re, text, 0); m; m = nextSpan(re, text, m[0] + 1)) {
+        const [s, e] = m;
+        const i = firstEndingAfter(list, s);
+        let j = i;
+        while (j < list.length && list[j].start < e) j++;
+        const hit = list.slice(i, j);
+        if (hit.length === 0 || !leavesClear(text, s, e, hit) || kept(text.slice(s, e))) continue;
+        const start = Math.min(s, hit[0].start);
+        const end = Math.max(e, hit[hit.length - 1].end);
+        const category = start === s && end === e ? v.category : hit[0].category;
+        list.splice(i, j - i, { start, end, category }); // [start, end) overlaps no span outside [i, j)
+        changed = true;
+      }
+    }
+  }
+  return list;
+}
+
+/** The index of the first span of the sorted, non-overlapping `list` that ends after `at`. */
+function firstEndingAfter(list: readonly ValueSpan[], at: number): number {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].end <= at) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** True when [s, e) holds a letter, digit or "_" that none of the sorted `spans` covers. */
+function leavesClear(text: string, s: number, e: number, spans: readonly ValueSpan[]): boolean {
+  let pos = s;
+  for (const c of spans) {
+    if (c.start > pos && WORD_CHAR.test(text.slice(pos, c.start))) return true;
+    pos = Math.max(pos, c.end);
+  }
+  return pos < e && WORD_CHAR.test(text.slice(pos, e));
+}
