@@ -5,8 +5,13 @@ import { watsonDiagnosticsLine } from "../../src/analysis/watsonDiagnostics.js";
 // U2: Watson may run on its own provider. The Diagnostics AI view must name it, and "local" must not
 // claim that nothing leaves the machine while Watson talks to a cloud provider.
 
-// Local by provider name, with no base URL: a vision base URL would also become Watson's fallback.
-const LOCAL = { DFIR_VISION_PROVIDER: "ollama", DFIR_VISION_MODEL: "llava" };
+// Local Ollama via its provider-scoped base URL: a generic vision base URL would also become
+// Watson's fallback for another provider.
+const LOCAL = {
+  DFIR_VISION_PROVIDER: "ollama",
+  DFIR_VISION_MODEL: "llava",
+  DFIR_AI_BASE_URL_OLLAMA: "http://localhost:11434/v1",
+};
 
 describe("Diagnostics AI view with Watson's own provider", () => {
   it("is not local when Watson uses a cloud provider while the rest is local", () => {

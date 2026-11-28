@@ -4,7 +4,7 @@
 // classify, and REDACT them into a shareable report. Keeping the transforms pure makes the
 // whole surface unit-testable without spinning up a server or touching the filesystem.
 import type { ImportDebugSummary } from "./importDebugTypes.js";
-import { isLocalAiProvider } from "./anonymize.js";
+import { visionAiIsLocal } from "./anonymize.js";
 import { visionEnv } from "../config/aiEnv.js";
 import type { DiskStats, DiskWarningLevel, DiskWarnThresholds } from "./diskWarn.js";
 import type { ImporterLoadError } from "./importerStore.js";
@@ -116,7 +116,7 @@ export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
     contextTokens: num(env.DFIR_AI_CONTEXT_TOKENS, 128_000),
     anonymizeDefault: (env.DFIR_ANONYMIZE ?? "on").toLowerCase() !== "off",
     watson,
-    local: isLocalAiProvider(provider ?? undefined, baseUrl ?? undefined) && (watson?.local ?? true),
+    local: visionAiIsLocal(env) && (watson?.local ?? true),
   };
 }
 

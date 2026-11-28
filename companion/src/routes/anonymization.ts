@@ -8,7 +8,7 @@ import { describeCustomPatterns, firstInvalidPattern } from "../analysis/anonPat
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
 import { AiAuthoredTextStore } from "../analysis/aiAuthoredText.js";
 import { PresidioDecisions, forgetAround } from "../analysis/presidioDecisions.js";
-import { isLocalAiProvider, deriveKnownEntities, type AnonTokenCategory } from "../analysis/anonymize.js";
+import { visionAiIsLocal, deriveKnownEntities, type AnonTokenCategory } from "../analysis/anonymize.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "../analysis/redactedExport.js";
 import { buildRedactedExport } from "../reports/redactedExportBuilder.js";
@@ -17,7 +17,6 @@ import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
 import { WATSON_ROSTER_EXPORT_TEXT, WatsonRosterUnreadable } from "../analysis/ai/watson/rosterRead.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { resolveTranslatePlatforms } from "./aiActionArgs.js";
-import { visionEnv } from "../config/aiEnv.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import { PRESIDIO_CLEARED_REASON, presidioHeldSynthesis } from "../analysis/aiState.js";
 import type { RouteContext } from "./context.js";
@@ -101,10 +100,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     const keys = Object.keys(a.categories) as (keyof AnonControl["categories"])[];
     return keys.some((k) => a.categories[k] !== b.categories[k]);
   }
-  const visionIsLocal = isLocalAiProvider(
-    visionEnv(process.env, "PROVIDER"),
-    visionEnv(process.env, "BASE_URL"),
-  );
+  const visionIsLocal = visionAiIsLocal(process.env);
   // Whether the optional Presidio layer is wired. Reported to the dashboard because the anonymization
   // panel otherwise overstates its coverage: PERSON is minted ONLY from Presidio findings, so with
   // Presidio off nothing detects people's names. Derived from the SAME variable startServer reads to

@@ -119,6 +119,42 @@ describe("/cases/:id/anon-control", () => {
       delete process.env.DFIR_PRESIDIO_URL;
     }
   });
+
+  // #3106: the warning is captured at route registration from the vision provider's resolved URL.
+  describe("screenshotWarning follows where the vision provider actually sends", () => {
+    const KEYS = [
+      "DFIR_VISION_PROVIDER",
+      "DFIR_AI_PROVIDER",
+      "DFIR_VISION_BASE_URL",
+      "DFIR_AI_BASE_URL",
+      "DFIR_AI_BASE_URL_OLLAMA",
+    ];
+    async function warningWith(env: Record<string, string>): Promise<boolean> {
+      const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+      for (const k of KEYS) delete process.env[k];
+      Object.assign(process.env, env);
+      try {
+        const built = createApp(cases, { stateStore: new StateStore(cases) });
+        return (await request(built).get("/cases/c1/anon-control")).body.screenshotWarning;
+      } finally {
+        for (const k of KEYS) {
+          if (saved[k] === undefined) delete process.env[k];
+          else process.env[k] = saved[k];
+        }
+      }
+    }
+    it("warns for ollama with no base URL (hosted Ollama Cloud)", async () => {
+      expect(await warningWith({ DFIR_VISION_PROVIDER: "ollama" })).toBe(true);
+    });
+    it("does not warn for ollama on a saved loopback base URL", async () => {
+      expect(
+        await warningWith({
+          DFIR_VISION_PROVIDER: "ollama",
+          DFIR_AI_BASE_URL_OLLAMA: "http://localhost:11434/v1",
+        }),
+      ).toBe(false);
+    });
+  });
 });
 
 describe("/cases/:id/anon-entities", () => {

@@ -37,7 +37,7 @@ import {
 } from "../analysis/presidio.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
 import { safetyStopCaptureFromEnv } from "../analysis/ai/safetyStopCapture.js";
-import { isLocalAiProvider } from "../analysis/anonymize.js";
+import { visionAiIsLocal } from "../analysis/anonymize.js";
 import { visionEnv } from "../config/aiEnv.js";
 import { findingEventsFromDiff } from "../analysis/notifications.js";
 import {
@@ -118,10 +118,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
   // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
   // provider — if the model is local, screenshots never leave the machine so redaction is
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
-  const visionIsLocalForPipeline = isLocalAiProvider(
-    visionEnv(process.env, "PROVIDER"),
-    visionEnv(process.env, "BASE_URL"),
-  );
+  const visionIsLocalForPipeline = visionAiIsLocal(process.env);
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
   // Optional Presidio layer (Task 7): a locally-run container that scans the ALREADY-MASKED
   // prompt for PII our own regex/exact-match anonymizer missed (principally names). Empty/unset
