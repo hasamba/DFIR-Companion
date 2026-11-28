@@ -164,9 +164,10 @@ export function isSecretKey(key: string): boolean {
 // puts newlines around the separator, so whitespace there is unbounded; nothing after it can
 // backtrack, so each key start still scans its own blank run once.
 // A run of digits glued in front (007password=) still lets a key start, when the run itself starts at
-// that boundary (#3029); a digit inside a longer word does not.
+// that boundary (#3029); a digit inside a longer word does not. A JSON-escaped newline or tab
+// (`…\npassword=…` inside a JSON string) ends the word before it, so a key may start after one (#3053).
 const KEY_RE =
-  /(?:(?<![\w.-])|(?<=(?<![\w.-])\d{1,16}))(?:(?<!\\)|(?=[A-Za-z][\w-]{0,127}[ \t]*=))(\\"|"|')?([A-Za-z][\w.-]{0,127})\1(\s*)[:=](\s*)/g;
+  /(?:(?<![\w.-])|(?<=(?<![\w.-])\d{1,16})|(?<=(?<!\\)(?:\\\\)*\\[nrt]))(?:(?<!\\)|(?=[A-Za-z][\w-]{0,127}[ \t]*=))(\\"|"|')?([A-Za-z][\w.-]{0,127})\1(\s*)[:=](\s*)/g;
 
 const CLI_FLAG_RE =
   /(?<![\w-])--(?:password|secret|token|api-key|apikey|access-token|client-secret)(?:[ \t]{1,16}|=)/gi;
@@ -240,16 +241,28 @@ function splice(text: string, spans: Span[], placeholder: string): string {
 }
 
 /** Redact the value of every secret-named key. A non-secret key's value is rescanned, so
- *  `message="password=…"` still loses the password. */
-export function redactKeyedSecrets(text: string, placeholder: string): string {
+ *  `message="password=…"` still loses the password. `escaped` reads only the keys after a JSON-escaped
+ *  newline or tab (#3053), in a pass of their own after the registry pairs, so their value never cuts
+ *  a registry record or command those passes read; the first pass leaves those keys alone. */
+export function redactKeyedSecrets(text: string, placeholder: string, escaped = false): string {
   const re = new RegExp(KEY_RE.source, "g");
   const spans: Span[] = [];
   for (let m = re.exec(text); m; m = re.exec(text)) {
+    const afterEscape = /[nrt]/.test(text[m.index - 1] ?? "") && text[m.index - 2] === "\\";
+    if (afterEscape !== escaped) {
+      re.lastIndex = m.index + 1;
+      continue;
+    }
     // After a "\\" (CONTOSO\\password=, a registry value) only an exact key counts (#3005): a
     // fragment there is a value NAME (Run\\PasswordManager=<exe>, WDigest\\UseLogonCredential=1).
+    // The same holds after a JSON-escaped \n (C:\\src\\reset-password.ts reads `\\r` + a file name).
     const digits = /\d*$/.exec(text.slice(Math.max(0, m.index - 16), m.index))?.[0].length ?? 0;
     const afterBackslash = !m[1] && text[m.index - 1 - digits] === "\\";
-    if (afterBackslash ? !isExactKey(normalizeKey(m[2])) : !isSecretKey(m[2])) continue;
+    if (afterBackslash || escaped ? !isExactKey(normalizeKey(m[2])) : !isSecretKey(m[2])) {
+      // `\npassword=` is a JSON-escaped newline before `password=`, not the key `npassword` (#3053).
+      if (afterBackslash && /^[nrt]/.test(m[2])) re.lastIndex = m.index + 1;
+      continue;
+    }
     // A newline around the separator belongs to JSON only. After a bare `Enter password:` it is the
     // end of a prompt, and the next line's first word is not the password.
     if (!m[1] && /\n/.test(m[3] + m[4])) continue;

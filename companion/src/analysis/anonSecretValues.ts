@@ -65,7 +65,7 @@ export function readQuoted(text: string, i: number): { span: Span; after: number
 // hide the cue with the password, and the blob after it would go out in clear instead of as a CMD
 // token. The value still runs up to the cue, so a separator before it is redacted with the secret.
 const ENC_CUE_RE = /-(?:e|ec|enc|encodedcommand)\s{1,64}[A-Za-z0-9+/_-]{16}/iy;
-const FROM_B64_CUE_RE = /FromBase64String\(\s{0,64}["']/iy;
+const FROM_B64_CUE_RE = /FromBase64String\(\s{0,64}\\?["']/iy; // \" in JSON (#3053)
 
 export function isEncodedCue(text: string, j: number): boolean {
   const ch = text[j];

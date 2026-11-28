@@ -217,6 +217,7 @@ export function redactSecretText(text: string): string {
   out = redactCliFlagSecrets(out, SECRET_PLACEHOLDER);
   out = redactKeyedSecrets(out, SECRET_PLACEHOLDER);
   out = redactRegistryCredentialPairs(out, SECRET_PLACEHOLDER); // name and data apart (#3021)
+  out = redactKeyedSecrets(out, SECRET_PLACEHOLDER, true); // a key after a JSON-escaped newline (#3053)
   // Vendor shapes last (#3005): a keyed or flag value that holds a vendor shape plus a glued tail
   // is hidden whole first; the vendor pass then catches shapes outside any key.
   for (const re of VENDOR_SECRETS_GLUED_V6) out = out.replace(re, SECRET_PLACEHOLDER);

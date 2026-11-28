@@ -78,7 +78,7 @@ const ADDRESS =
 // An encoded command, as anonymize.ts finds the blob it masks (ENC_CMD_RE, FROM_B64_RE): eating its
 // cue or the end of its blob would leave the blob in clear instead of a CMD token (#3005).
 const ENC_CMD =
-  /(?<![A-Za-z0-9])-(?:e|ec|enc|encodedcommand)\s+[A-Za-z0-9+/_-]{16,}={0,2}|FromBase64String\(\s*["'][A-Za-z0-9+/_-]{16,}={0,2}/gi;
+  /(?<![A-Za-z0-9])-(?:e|ec|enc|encodedcommand)\s+[A-Za-z0-9+/_-]{16,}={0,2}|FromBase64String\(\s*(?:''|""|\\"|["'])[A-Za-z0-9+/_-]{16,}={0,2}/gi;
 const UNITS = [ADDRESS, ENC_CMD, CARD_RE, PHONE_E164, PHONE_IL, PHONE_NANP, NATID_RE];
 
 /** Where `r` holds a value a later pass masks as one unit: a walk stops at it, so it is never cut. */

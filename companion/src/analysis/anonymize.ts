@@ -451,10 +451,11 @@ export function createAnonymizer(
     ...{ CARD: anonCards, PHONE: anonPhones, NATID: anonNatIds },
   });
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
-  // FromBase64String('…'). Tokenize ONLY the blob — the verb + flag stay visible as tradecraft signal,
-  // and victim data in the payload never reaches the wire. `=` padding is matched outside the class.
+  // FromBase64String('…') in one, doubled or JSON-escaped quotes (#3053). Tokenize ONLY the blob: the verb
+  // and flag stay visible as tradecraft signal, the payload never reaches the wire. `=` padding is outside.
   const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/_-]{16,}={0,2})/gi;
-  const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/_-]{16,}={0,2})(["'])/gi;
+  const FROM_B64_RE =
+    /(FromBase64String\(\s*(?:''|""|\\"|["']))([A-Za-z0-9+\/_-]{16,}={0,2})(''|""|\\"|["'])/gi;
   function anonEncodedCmd(t: string): string {
     let out = t.replace(ENC_CMD_RE, (m, flag: string, blob: string, at: number, w: string) =>
       ends.ended(flag + assign("CMD", blob), flag + blob, at, at + m.length, w),

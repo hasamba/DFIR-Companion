@@ -206,7 +206,7 @@ By default, the Companion **tokenizes identifying information** before sending a
 | Credit card numbers | `ANON_CARD_1`, … — also a grouped number (`4-4-4-4`) with one to three digits glued to either end. A bare run of digits with a digit glued on is not read as a card |
 | Phone numbers | `ANON_PHONE_1`, … |
 | National ID numbers (currently: Israeli Teudat Zehut) | `ANON_NATID_1`, … |
-| PowerShell encoded commands | the base64 blob becomes `ANON_CMD_1`, …; the verb and flag stay visible as tradecraft signal. Base64 is case-sensitive, so two blobs that differ only in letter case get two tokens. Every other value shares one token across letter case (`WS-01` and `ws-01` are one host) |
+| PowerShell encoded commands | the base64 blob becomes `ANON_CMD_1`, …; the verb and flag stay visible as tradecraft signal. A `FromBase64String(…)` blob is found in single, double, doubled (`''`, `""`) or JSON-escaped (`\"`) quotes. Base64 is case-sensitive, so two blobs that differ only in letter case get two tokens. Every other value shares one token across letter case (`WS-01` and `ws-01` are one host) |
 | Windows SIDs | tokenized (well-known SIDs like SYSTEM are preserved) |
 
 **Hashes are deliberately NOT tokenized.** They are IOCs — a hash is what makes a finding actionable for the recipient, and it identifies a file, not a victim. The anonymizer has no generic high-entropy rule for exactly this reason: it would clobber them.
