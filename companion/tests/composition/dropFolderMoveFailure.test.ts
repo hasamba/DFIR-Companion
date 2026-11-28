@@ -54,7 +54,7 @@ async function seed(kind = "csv", overrides: Partial<DropFolderDeps> = {}) {
     analyzed: true,
   }));
   const dispatchNotify = vi.fn();
-  const runDropToolAndIngest = vi.fn(async () => false);
+  const runDropToolAndIngest = vi.fn(async () => ({ submitted: false }));
   const refuse = (): never => {
     throw new Error("not expected to be called");
   };

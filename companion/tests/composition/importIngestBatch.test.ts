@@ -241,6 +241,8 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     expect(a.weaknesses?.accounts.length).toBeGreaterThan(0);
     expect(b.weaknesses).toEqual(a.weaknesses);
     expect(b.principalNames).toEqual(a.principalNames);
+    // #2982: the batch's one settle is counted once, as the rows it left in the forensic timeline.
+    expect(r.counts?.added).toBe(b.forensic.length);
 
     // Notes: a file that added rows keeps its own; the files that added nothing share one.
     const emptyOne = a.notes.filter((n) => /no events from/.test(n));
@@ -418,6 +420,7 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     const ok = r.results.filter((x) => x.ok);
     expect(ok.length).toBe(h.files.length - 1); // still imported: a tail failure never fails a file
     expect(ok.every((x) => /settle step failed/.test(x.warning ?? ""))).toBe(true);
+    expect(r.counts).toBeUndefined(); // #2982: an unsettled batch's counts are unknown, not zero
     const marker = createDropBatchMarker(h.store);
     expect((await marker.read("c1"))?.length).toBe(h.files.length); // every file that reached its import
     // #2891: graded IN the section, before any other import's demote could run — not only at the

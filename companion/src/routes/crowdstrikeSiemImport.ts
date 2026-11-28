@@ -134,6 +134,7 @@ async function importAndSettle(
         source: `${NGSIEM_SOURCE_LABEL} search (${spec.repository})`,
         diff,
         superTimelineAddedCount: settled.superTimelineAddedCount,
+        superTimelineAvailable: settled.superTimelineAvailable, // #3045
         superTimelineEvicted: settled.superTimelineEvicted,
         iocsDiff,
         linesIn: forImport.events,

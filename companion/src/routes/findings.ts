@@ -361,7 +361,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const state = await options.stateStore.load(req.params.id);
       const similar = similarCandidates(state, kind, ref);
       if (!similar) return res.status(404).json({ error: `${kind} ${ref} not found` });
-      const { deterministic, anchorLabel, rest } = similar;
+      const { anchorId, deterministic, anchorLabel, rest } = similar;
 
       if (!req.body?.ai) return res.status(200).json({ candidates: deterministic });
       if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) {
@@ -370,7 +370,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
 
       const aiIds = await options.pipeline.suggestFalsePositiveSimilarAi(
         req.params.id,
-        ref,
+        anchorId,
         anchorLabel,
         rest.map((r) => r.id),
         rest.map((r) => similarLabel(kind, r)),

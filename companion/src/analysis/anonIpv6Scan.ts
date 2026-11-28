@@ -339,44 +339,6 @@ export function ipv6Mask<C>(
   return cat !== null && !rules.suppressed.has(ip.toLowerCase()) ? { cat, forced: false } : null;
 }
 
-// A set-aside value whose last group can open a dotted IPv4 ("fd00::192" of "fd00::192.168.1.5").
-const CUT_OCTET = /:\d{1,3}$/;
-
-/**
- * The value to mint for a masked address and the text left after its token (#2990). IPV6_RE cannot
- * read ".", so the detector stops at the first octet of a dotted IPv4 tail; `cut` is the rest of that
- * IPv4 (".168.1.5"), still intact after every earlier pass, and it joins the token. It does not when a
- * later pass would read part of it with what follows (`next`): a fifth octet (the IPv4 pass takes the
- * last four), or a `crossers` match such as a phone number ("100 555-0100"). Nor when the joined value
- * is suppressed and the mask is not forced: the head keeps its token as before.
- */
-export function ipv4TailJoin(
-  value: string,
-  cut: string,
-  next: string,
-  forced: boolean,
-  rules: { suppressed: ReadonlySet<string>; crossers: readonly RegExp[] },
-): { value: string; rest: string } {
-  const whole = value + cut;
-  const joins =
-    cut !== "" &&
-    CUT_OCTET.test(value) &&
-    !FIFTH_OCTET.test(next) &&
-    !rules.crossers.some((re) => crosses(re, cut + next, cut.length)) &&
-    (forced || !rules.suppressed.has(whole.toLowerCase()));
-  return joins ? { value: whole, rest: "" } : { value, rest: cut };
-}
-
-const FIFTH_OCTET = /^\.\d/;
-// Whether a match of `re` in `text` starts before `at` and ends after it.
-function crosses(re: RegExp, text: string, at: number): boolean {
-  for (const m of text.matchAll(new RegExp(re.source, "g" + re.flags.replace("g", "")))) {
-    if (m.index >= at) return false;
-    if (m.index + m[0].length > at) return true;
-  }
-  return false;
-}
-
 /**
  * The original detector pieces behind a fail-closed span (#2979): the match that opened with the "::"
  * separator and, for a joined span, the match after it. The preview's leak hint judges these, as it

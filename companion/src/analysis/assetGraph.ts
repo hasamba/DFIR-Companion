@@ -152,7 +152,14 @@ function worstVerdict(i: IOC): string | undefined {
 }
 
 // DOMAIN\user — guarded so it doesn't match file-path segments (C:\Users\srv). UPN/email accounts.
-const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+// Read the #3049 way (anonUsernames.ts NETBIOS_ACCT): Unicode letters, no cap on the user half, and a
+// qualifier that starts right after a non-ASCII letter is read back to the start of its word (#3058).
+const NETBIOS_ACCT =
+  /(?<![\\/:.\w])(\p{L}[\p{L}\p{N}.-]{1,14})\\([\p{L}\p{N}._$-]{2,})(?![\\/\p{L}\p{N}_])/gu;
+// The reading before #3058: ASCII only, the user half capped at 20 characters.
+const LEGACY_NETBIOS_ACCT =
+  /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+const WORD_BEFORE = /[\p{L}\p{N}]+$/u;
 const UPN_ACCT = /([A-Za-z0-9._-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
 // Registry hive roots are included for the same reason as filesystem roots: "HKU\S-1-5-21-…" is a
 // path, not a logon — and because the user half is length-capped, the SID's RID gets truncated, so
@@ -193,17 +200,37 @@ function insidePathSegment(text: string, at: number): boolean {
 
 export function extractAccounts(text: string): string[] {
   const out = new Set<string>();
+  netbiosAccounts(text, NETBIOS_ACCT, true, out);
   let m: RegExpExecArray | null;
-  NETBIOS_ACCT.lastIndex = 0;
-  while ((m = NETBIOS_ACCT.exec(text))) {
-    if (PATH_DOMAINS.test(m[1])) continue; // skip path segments masquerading as DOMAIN\user
-    if (FILE_EXT_USER.test(m[2])) continue; // skip Folder\file.ext (e.g. Zip\7z.exe) — a file, not a user
-    if (insidePathSegment(text, m.index)) continue; // skip "Shell Folders\Common" — a spaced path segment, not a user
-    out.add(`${m[1]}\\${m[2]}`);
-  }
   UPN_ACCT.lastIndex = 0;
   while ((m = UPN_ACCT.exec(text))) out.add(m[1]);
   return [...out];
+}
+
+/**
+ * The accounts the anonymizer learns from: extractAccounts plus the DOMAIN\user readings of the
+ * pattern before #3058, so a name or internal domain learned before is still learned (an `é` in a
+ * profile path read a different qualifier, and a user half over 20 characters a shorter one).
+ */
+export function learnableAccounts(text: string): string[] {
+  const out = new Set(extractAccounts(text));
+  netbiosAccounts(text, LEGACY_NETBIOS_ACCT, false, out);
+  return [...out];
+}
+
+function netbiosAccounts(text: string, re: RegExp, readBack: boolean, out: Set<string>): void {
+  re.lastIndex = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const back = readBack
+      ? (WORD_BEFORE.exec(text.slice(Math.max(0, m.index - 256), m.index))?.[0] ?? "")
+      : "";
+    const at = m.index - back.length;
+    const qualifier = back + m[1];
+    if (PATH_DOMAINS.test(qualifier)) continue; // skip path segments masquerading as DOMAIN\user
+    if (FILE_EXT_USER.test(m[2])) continue; // skip Folder\file.ext (e.g. Zip\7z.exe) — a file, not a user
+    if (insidePathSegment(text, at)) continue; // skip "Shell Folders\Common" — a spaced path segment, not a user
+    out.add(`${qualifier}\\${m[2]}`);
+  }
 }
 
 export function buildAssetGraph(

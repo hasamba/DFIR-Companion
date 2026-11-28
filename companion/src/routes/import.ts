@@ -163,7 +163,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           // Dispatch by transport: a spawn tool runs and imports inline; SO-CRATES hands off to its
           // background poller and the verdicts land when the analysis finishes.
           processed = await fingerprintDropFile(dropDir, p.relpath); // the version the tool runs on (#2283)
-          const async_ = await ctx.runDropToolAndIngest(caseId, toolId, join(dropDir, p.relpath), {
+          const run = await ctx.runDropToolAndIngest(caseId, toolId, join(dropDir, p.relpath), {
             name: basename(p.relpath),
             dropRelpath: p.relpath,
             cache: runCache,
@@ -172,7 +172,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           // SO-CRATES has only been HANDED the file at this point; the job appends the outcome when
           // its analysis resolves, so do not claim an import that has not happened.
           resolvedEntries.push(
-            async_
+            run.submitted
               ? {
                   status: "SUBMITTED",
                   relpath: p.relpath,
@@ -382,6 +382,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   file: storedName,
                   diff: tDiff,
                   superTimelineAddedCount,
+                  superTimelineAvailable: settled.superTimelineAvailable, // #3045
                   superTimelineEvicted: evictedInImport(base, superTimelineEvicted),
                   iocsDiff: iDiff,
                   linesIn: text.split(/\r?\n/).length,

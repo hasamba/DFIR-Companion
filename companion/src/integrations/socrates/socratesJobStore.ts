@@ -25,6 +25,8 @@ export interface SocratesJob {
   error?: string;
   /** The drop-folder path the file came from, so a resumed job can still close its drop-log line. */
   dropRelpath?: string;
+  /** The submission this job belongs to: every entry of one archive shares it (#3008). */
+  submissionId?: string;
 }
 
 /** imported and error are final: nothing moves a job out of them. */

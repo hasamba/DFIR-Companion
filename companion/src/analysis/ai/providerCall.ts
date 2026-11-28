@@ -552,6 +552,8 @@ async function sendPrepared(
   await recordAiCost(ctx, caseId, label, provider, result);
   const anon = prepared.anon;
   if (!anon) return parseAnswer(result.rawText, (t) => t);
+  // Restore exactly once (#3001): restored text may hold a planted literal equal to a minted token, and
+  // a second restore would turn it into the real value. parseAnswer restores only when it throws.
   const masked = parseAnswer(result.rawText, (t) => anon.restore(t));
   reportAnswer(masked); // the model's own words, placeholders kept (presidioAuthoredText.ts)
   return anon.restoreDeep(masked);

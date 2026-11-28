@@ -4,7 +4,8 @@
 // anonymizer mints, or restore() turns the planted string into a real victim value and the AI
 // reads two different things as one entity. Every literal found is either:
 //   - escaped to "ANON-LITERAL_…" when that exact token was already minted by an earlier apply()
-//     call (the same spelling supportLogRedact uses), so it can never read as ours; or
+//     call (the same spelling supportLogRedact uses), so it can never read as ours (restore()
+//     puts the literal back, #3001); or
 //   - returned for the caller to reserve, so assign() skips that number from now on.
 // The text is otherwise unchanged.
 
@@ -26,15 +27,67 @@ export function scanTokenLiterals(
   text: string,
   tokenSource: string,
   isMinted: (upperToken: string) => boolean,
+  escapes?: LiteralEscapes,
 ): TokenLiteralScan {
   const literals: string[] = [];
+  escapes?.seen(text);
   const out = text.replace(new RegExp(tokenSource, "gi"), (m) => {
     const upper = m.toUpperCase();
-    if (isMinted(upper)) return ANON_LITERAL_PREFIX + m.slice("ANON_".length);
-    literals.push(upper);
-    return m;
+    if (!isMinted(upper)) return (literals.push(upper), m);
+    const escaped = ANON_LITERAL_PREFIX + m.slice("ANON_".length);
+    escapes?.record(escaped, m);
+    return escaped;
   });
   return { text: out, literals };
+}
+
+// #3001 — restore() undoes the escapes above, so a planted literal comes back as itself. Only the
+// exact spellings this anonymizer produced, each mapped to its original literal (case kept: the
+// escape drops the "anon_" prefix's case). Never undone: a spelling that was already in an input
+// (it may be a real string), or one two different literals escaped to (ambiguous). Both stay marked.
+// Restore is then NOT idempotent: restored text holds the literal while its token is minted, so a
+// second restore would turn it into the real value (#2569). Callers restore once.
+export interface LiteralEscapes {
+  /** Every escaped spelling already in an apply() input: never undone. */
+  seen(input: string): void;
+  /** `escaped` is the spelling `original` took on the way out. */
+  record(escaped: string, original: string): void;
+  /** `text` with tokens replaced by `real(token)` and this anonymizer's escapes undone, in one pass. */
+  restore(text: string, readers: TokenReaders, real: (upperToken: string) => string | undefined): string;
+}
+
+/** The per-anonymizer escape log. `tokenSource` starts with "ANON_", as the token regex does. */
+export function literalEscapes(tokenSource: string): LiteralEscapes {
+  if (!tokenSource.startsWith("ANON_")) throw new Error("token source must start with ANON_");
+  const source = ANON_LITERAL_PREFIX + tokenSource.slice("ANON_".length);
+  const undo = new Map<string, string | null>(); // escaped spelling -> original; null: never undone
+  const unescape = (s: string) => s.replace(new RegExp(source, "gi"), (m) => undo.get(m) ?? m);
+  return {
+    seen: (input) => {
+      for (const m of input.match(new RegExp(source, "gi")) ?? []) undo.set(m, null);
+    },
+    record: (escaped, original) => {
+      const was = undo.get(escaped);
+      undo.set(escaped, was === undefined || was === original ? original : null);
+    },
+    restore: (text, readers, real) => {
+      if (undo.size === 0) return readers.replace(text, real);
+      // A later pass can swallow an escape into a value (an email around it): undo it there too.
+      const tokens = (s: string) =>
+        readers.replace(s, (tok) => {
+          const value = real(tok);
+          return value === undefined ? undefined : unescape(value);
+        });
+      // Split on escaped spellings first, so an undone literal is never read again as a token.
+      let out = "";
+      let at = 0;
+      for (const m of text.matchAll(new RegExp(source, "gi"))) {
+        out += tokens(text.slice(at, m.index)) + (undo.get(m[0]) ?? m[0]);
+        at = m.index + m[0].length;
+      }
+      return out + tokens(text.slice(at));
+    },
+  };
 }
 
 // #2992 — a token glued to a digit read back as another token: "ANON_IP_1" + "0" is "ANON_IP_10".
@@ -94,6 +147,8 @@ export interface TokenEnds {
   ended(result: string, value: string, at: number, end: number, text: string): string;
   /** The final text; a value a later pass swallowed an alias into gets the token's real text. */
   finish(text: string, toReal: Map<string, string>): string;
+  /** The end of the alias this call spliced at text[at], or -1: its number is no part of what follows (#3071). */
+  aliasEnd(text: string, at: number): number;
 }
 
 /**
@@ -159,6 +214,10 @@ export function tokenEnds(tokenSource: string, categories: readonly string[]): T
           if (value.includes(a)) toReal.set(tok, value.replaceAll(a, toReal.get(t) ?? t)); // #2991
       return mark ? out.replaceAll(mark, "") : out;
     },
+    aliasEnd: (text, at) => {
+      const hit = [...aliases.keys()].filter((a) => text.startsWith(a, at)); // longest first, as finish() reads
+      return hit.length ? at + Math.max(...hit.map((a) => a.length)) : -1;
+    },
   };
 }
 
@@ -175,4 +234,50 @@ export function expandMintedTokens(
 ): string {
   if (!value.includes("ANON_")) return value;
   return value.replace(new RegExp(tokenSource, "g"), (m) => lookup(m) ?? m);
+}
+
+/**
+ * #3058 — the spelling of an expanded value as the call's input wrote it. A token stands for one
+ * spelling of a case-folded value, so a value built around it (`LAB\<user>-<token>`) expanded to
+ * the saved spelling, not the text it replaced, and restore() changed the case. `spell` keeps the
+ * expansion when the input holds it verbatim, else takes the one spelling of it the input holds;
+ * with none, or more than one, the expansion stays. Set the input with `start` once per call.
+ * `expand` is expandMintedTokens, then `spell`.
+ */
+export interface InputSpelling {
+  start: (input: string) => string;
+  spell: (raw: string, real: string) => string;
+  expand: (raw: string, lookup: (token: string) => string | undefined) => string;
+}
+export function createInputSpelling(tokenSource: string): InputSpelling {
+  let input = "";
+  let lower: string | null = null;
+  const seen = new Map<string, string>(); // per call: one value is spelled once
+  function start(text: string): string {
+    input = text;
+    lower = null;
+    seen.clear();
+    return text;
+  }
+  function spell(raw: string, real: string): string {
+    if (raw === real || real.length === 0) return real;
+    const known = seen.get(real);
+    if (known !== undefined) return known;
+    const out = spelled(real);
+    seen.set(real, out);
+    return out;
+  }
+  function spelled(real: string): string {
+    if (input.includes(real)) return real;
+    lower ??= input.toLowerCase();
+    const want = real.toLowerCase();
+    if (lower.length !== input.length || want.length !== real.length) return real; // folding moved offsets
+    const found = new Set<string>();
+    for (let at = lower.indexOf(want); at >= 0 && found.size < 2; at = lower.indexOf(want, at + 1))
+      found.add(input.slice(at, at + want.length));
+    return found.size === 1 ? [...found][0] : real;
+  }
+  const expand = (raw: string, lookup: (token: string) => string | undefined): string =>
+    spell(raw, expandMintedTokens(raw, tokenSource, lookup));
+  return { start, spell, expand };
 }

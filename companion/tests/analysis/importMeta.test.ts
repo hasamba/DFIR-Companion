@@ -114,6 +114,20 @@ describe("ImportMetaStore", () => {
     expect((await store.load("c1")).superTimelineEvicted).toBeNull();
   });
 
+  // #3045 — with no super-timeline store there is no count, so the record leaves it out and the
+  // cockpit says "count unavailable" instead of a real-looking 0. A case with a store keeps a real 0.
+  it("leaves the super-timeline count out when the case has no store, keeps a real 0 otherwise", async () => {
+    const base = { kind: "thor", file: "f.txt", diff: DIFF, iocsDiff: NO_IOCS };
+    await store.record("c1", { ...base, superTimelineAddedCount: 0, superTimelineAvailable: false });
+    expect((await store.load("c1")).superTimelineAddedCount).toBeUndefined();
+
+    await store.record("c1", { ...base, superTimelineAddedCount: 0, superTimelineAvailable: true });
+    expect((await store.load("c1")).superTimelineAddedCount).toBe(0);
+
+    await store.record("c1", { ...base, superTimelineAddedCount: 3 });
+    expect((await store.load("c1")).superTimelineAddedCount).toBe(3);
+  });
+
   it("loads legacy metadata that predates the eviction record as 'not recorded'", () => {
     expect(
       importMetaSchema.parse({ lastImportedAt: "2026-06-01T00:00:00.000Z" }).superTimelineEvicted,

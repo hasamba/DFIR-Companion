@@ -90,6 +90,7 @@ async function makeApp(
   sourcesUnknown: string[] = [], // artifacts whose source list the catalog could not give (#1645)
   truncated: string[] = [], // artifacts whose read hits the row cap (#2700)
   withUndo = false, // give the app an import undo store (#2700: Undo forgets the re-import ledger)
+  withSuperTimeline = true, // false: a case with no super-timeline store (#3046)
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-velo-ext-"));
   const store = new CaseStore(root);
@@ -161,7 +162,7 @@ async function makeApp(
   const app = createApp(store, {
     pipeline,
     stateStore,
-    superTimelineStore,
+    ...(withSuperTimeline ? { superTimelineStore } : {}),
     importMetaStore,
     jobManager,
     serverClients: veloServerClients(client),
@@ -335,6 +336,30 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     expect(res.body.kind).toBe("flow");
     expect(res.body.hostname).toBe("DESKTOP-01");
     expect((await stateStore.load("c1")).forensicTimeline.some((e) => e.asset === "DESKTOP-01")).toBe(true);
+  });
+
+  // #3046: the last-import record carries the real super-timeline count, or none at all when the
+  // case has no store — never a made-up 0 for the cockpit to show as "0 super-timeline events".
+  it("records the real super-timeline count of an external hunt import", async () => {
+    const { app, importMetaStore } = await makeApp();
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.status).toBe(200);
+    const superTotal = (await request(app).get("/cases/c1/super-timeline")).body.total;
+    expect(superTotal).toBeGreaterThan(0);
+    expect((await importMetaStore.load("c1")).superTimelineAddedCount).toBe(superTotal);
+  });
+
+  it("records no super-timeline count when the case has no store (#3046)", async () => {
+    for (const superTimelineOnly of [false, true]) {
+      const { app, importMetaStore } = await makeApp(undefined, [], [], [], false, false);
+      const res = await request(app)
+        .post("/cases/c1/velociraptor/import-external")
+        .send({ ref: "H.ABC", superTimelineOnly });
+      expect(res.status).toBe(200);
+      const meta = await importMetaStore.load("c1");
+      expect(meta.lastImportedAt).toBeTruthy();
+      expect(meta.superTimelineAddedCount).toBeUndefined();
+    }
   });
 
   it("routes a super-timeline-only external hunt to the super-timeline, not forensic", async () => {

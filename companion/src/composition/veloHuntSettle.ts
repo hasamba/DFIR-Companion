@@ -140,7 +140,11 @@ export async function settleHuntCollect(
     seamDone = true;
     const { timelineDiff: diff, iocsDiff } = settled;
     const superTotal = input.superTimelineAddedCount + settled.superTimelineAddedCount;
-    const counts = countsFromSettled({ timelineDiff: diff, superTimelineAddedCount: superTotal }); // #2978
+    const counts = countsFromSettled({
+      timelineDiff: diff,
+      superTimelineAddedCount: superTotal,
+      superTimelineAvailable: settled.superTimelineAvailable,
+    }); // #2978, #3042
     counted = { ...result, addedEvents: diff.added.length, addedIocs: iocsDiff.added.length, counts };
     if (options.importMetaStore) {
       await options.importMetaStore.record(caseId, {
@@ -155,6 +159,7 @@ export async function settleHuntCollect(
         }),
         diff,
         superTimelineAddedCount: input.superTimelineAddedCount + settled.superTimelineAddedCount,
+        superTimelineAvailable: settled.superTimelineAvailable, // #3045
         superTimelineEvicted: mergeEvictions(beforeSettle, settled.superTimelineEvicted),
         iocsDiff,
       });

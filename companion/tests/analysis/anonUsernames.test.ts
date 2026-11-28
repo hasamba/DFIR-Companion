@@ -5,7 +5,7 @@ import {
   type AnonPolicy,
   type KnownEntities,
 } from "../../src/analysis/anonymize.js";
-import { collectUsernames, isGuardedUsername, usernameRegExp } from "../../src/analysis/anonUsernames.js";
+import { collectUsernames, isGuardedUsername, usernameMatcher } from "../../src/analysis/anonUsernames.js";
 import { extractAccounts } from "../../src/analysis/assetGraph.js";
 import { redactedExportPolicy } from "../../src/analysis/redactedExport.js";
 import { createSupportRedactor } from "../../src/analysis/supportLogRedact.js";
@@ -170,9 +170,9 @@ describe("username vocabulary", () => {
     expect(names.sort()).toEqual(["jdoe", "kpatel", "msmith"]);
   });
 
-  it("builds no regex for an empty or all-guarded list", () => {
-    expect(usernameRegExp([])).toBeNull();
-    expect(usernameRegExp(["admin", "root"])).toBeNull();
+  it("builds no matcher for an empty or all-guarded list", () => {
+    expect(usernameMatcher([])).toBeNull();
+    expect(usernameMatcher(["admin", "root"])).toBeNull();
   });
 
   it("deriveKnownEntities lists usernames from the timeline, findings and IOCs", () => {

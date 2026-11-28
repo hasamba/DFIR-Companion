@@ -1,9 +1,7 @@
-import { extname } from "node:path";
 import { notifyImport } from "../analysis/importNotification.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
-import { IMAGE_EXTS } from "../analysis/dropScan.js";
 import { logLine } from "../logging/serverLogger.js";
-import type { SweepTally } from "./dropBatch.js";
+import { isDropImage, sweepCounts, type SweepTally } from "./dropBatch.js";
 
 // A drop-folder sweep's "import finished" message (#2978). It replaces the failure-only milestone the
 // sweep used to send, and moves it under the channel's imports toggle.
@@ -13,19 +11,22 @@ import type { SweepTally } from "./dropBatch.js";
 // pending or deferred file runs again on a later sweep. None of those finished an import, so a sweep
 // that holds only them sends nothing.
 //
-// The sweep imports each file through its own settle and keeps no per-file diff, so a drop message
-// says its event counts are not available rather than reporting zero.
+// EVENT COUNTS ARE THE SUM OF EVERY FINISHED FILE'S SETTLE (#2982): each file's, or a batch's once.
+// One finished evidence file that returned no counts (a recovered settle, an old hunt-zip progress
+// line) makes the total unknown, so the message says the counts are not available rather than
+// stating a silently low sum.
 
 const SOURCE = "drop folder";
-
-const isImage = (relpath: string): boolean => IMAGE_EXTS.has(extname(relpath).toLowerCase());
 
 export function notifyDropSweep(
   dispatch: ((event: NotificationEvent) => void) | undefined,
   caseId: string,
-  tally: Pick<SweepTally, "imported" | "failed">,
+  tally: Pick<SweepTally, "imported" | "failed" | "counts"> & Partial<Pick<SweepTally, "submitted">>,
 ): void {
-  const evidence = tally.imported.filter((relpath) => !isImage(relpath));
+  // The sweep lists a submitted file as imported for the dashboard's drop banner; here it is not (#3004).
+  const submitted = new Set((tally.submitted ?? []).map((s) => s.relpath));
+  const evidence = tally.imported.filter((relpath) => !isDropImage(relpath) && !submitted.has(relpath));
+  const counts = sweepCounts(tally.counts);
   const failed = tally.failed.map((f) => ({ name: f.relpath, reason: f.reason }));
   if (!evidence.length && !failed.length) return;
   const ok = evidence.length > 0;
@@ -35,6 +36,7 @@ export function notifyDropSweep(
       caseId,
       source: `${SOURCE} (${evidence.length + failed.length} file${evidence.length + failed.length === 1 ? "" : "s"})`,
       ok,
+      ...(ok && counts ? { counts } : {}),
       files: evidence.length + failed.length,
       ...(failed.length ? { failed } : {}),
       ...(ok ? {} : { reason: "no dropped file could be imported" }),

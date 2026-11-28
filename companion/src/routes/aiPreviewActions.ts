@@ -162,11 +162,11 @@ export const AI_PREVIEW_ACTIONS: Readonly<Record<string, AiPreviewAction>> = {
       if (!options.stateStore) return "state store not configured";
       const similar = similarCandidates(await options.stateStore.load(caseId), kind, ref);
       if (!similar) return `${kind} ${ref} not found`;
-      const { anchorLabel, rest } = similar;
+      const { anchorId, anchorLabel, rest } = similar;
       return () =>
         pipeline.suggestFalsePositiveSimilarAi(
           caseId,
-          ref,
+          anchorId,
           anchorLabel,
           rest.map((r) => r.id),
           rest.map((r) => similarLabel(kind, r)),

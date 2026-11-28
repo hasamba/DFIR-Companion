@@ -12,6 +12,28 @@ export function trackRouteImport(
   return trackImportOutcome(ctx.dispatchNotify, caseId, source, (line) => ctx.serverLogger.info(line));
 }
 
+/**
+ * A dashboard run of a local tool (#3036): one message per run, sent at most once. The counts are the
+ * settled diff's; a run whose import returned none says they are not available, never zero. The drop
+ * sweep runs the same tool path and reports its files itself, so only the routes call this.
+ */
+export function trackToolRun(
+  ctx: Pick<RouteContext, "dispatchNotify" | "serverLogger">,
+  caseId: string,
+  source: string,
+): { finished(counts?: ImportCounts): void; failed(err: unknown): void } {
+  let sent = false;
+  const send = (o: { ok: boolean; counts?: ImportCounts; reason?: string }): void => {
+    if (sent) return;
+    sent = true;
+    notifyImport(ctx.dispatchNotify, { caseId, source, ...o }, (line) => ctx.serverLogger.info(line));
+  };
+  return {
+    finished: (counts) => send({ ok: true, ...(counts ? { counts } : {}) }),
+    failed: (err) => send({ ok: false, reason: err instanceof Error ? err.message : String(err) }),
+  };
+}
+
 /** A cloud collection's gaps — windows it could not read and files it quarantined — as failed items. */
 export function collectionGaps(cp: {
   missing: readonly { source: string; reason: string }[];

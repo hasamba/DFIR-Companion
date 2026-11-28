@@ -45,7 +45,7 @@ import { FileTooLargeError } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "../routes/importFileHead.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
 import type { DiskBatchIngest } from "./importIngestBatch.js";
-import { runDropSweep } from "./dropBatch.js";
+import { runDropSweep, type DropOutcome } from "./dropBatch.js";
 import { createDropStreamer, isGzipMagic, streamGzipDropFile, WINLOG_MIN } from "./dropStreamed.js";
 import { prepareHuntDrops } from "./dropHuntFolder.js";
 import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
@@ -78,7 +78,6 @@ import {
 } from "../analysis/dropScan.js";
 import { createSweepRecorder } from "./dropIncremental.js";
 import { createDropLinkReporter, type DropLink } from "./dropLinkReport.js";
-import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import { notifyDropSweep, notifyDropSweepFailed } from "./dropImportNotify.js";
@@ -86,7 +85,7 @@ import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis
 import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import { siemFallbackWarning } from "../routes/importNotes.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
-import type { ModelCallHooks } from "./importIngest.js";
+import type { DropToolRun, ModelCallHooks, StreamedIngestResult } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
 import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
@@ -122,7 +121,7 @@ export interface DropFolderDeps {
     assetHost?: string, // the declared host of a file under drop/asset=<HOST>/ (#1496)
     modelCall?: ModelCallHooks, // names the sweep job's model when a CSV/log runs one (#1629)
     debug?: ImportDebugRecorder, // this attempt's import-debug recorder (#1736)
-  ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ) => Promise<StreamedIngestResult>;
   // A cloud export or Plaso file streamed from the sweep's own no-follow handle (#2336): a gzip, or
   // a file over DFIR_DROP_MAX_BYTES, imported as Import-from-path imports it instead of refused.
   ingestDiskFile: IngestDiskFile;
@@ -137,7 +136,7 @@ export interface DropFolderDeps {
     bytes: Buffer,
     originalName: string,
     debug?: ImportDebugRecorder,
-  ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ) => Promise<StreamedIngestResult>;
   // External-tool routing for raw (non-text) inputs.
   liveToolConfigs: () => Map<string, ToolConfig>;
   resolveToolForExt: (ext: string, configured: Map<string, ToolConfig>) => string | null;
@@ -147,7 +146,7 @@ export interface DropFolderDeps {
     toolId: string,
     fullPath: string,
     opts: { name: string; dropRelpath?: string; cache?: ToolRunCache; debug?: ImportDebugRecorder },
-  ) => Promise<boolean>;
+  ) => Promise<DropToolRun>;
   // A dropped image joins the SAME capture + vision path as POST /captures.
   indexCaptureText: (metadata: CaptureMetadata) => void;
   captureBuffers: PerCaseMap<CaptureMetadata[]>;
@@ -432,14 +431,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     cache: ToolRunCache,
     modelCall?: ModelCallHooks,
     onHuntProgress?: (p: HuntProgress) => void, // #2742: a hunt zip's result-file count
-  ): Promise<{
-    ok: boolean;
-    reason?: string;
-    pending?: PendingRawInput;
-    submitted?: string;
-    warning?: string;
-    deferred?: string; // a hunt zip interrupted mid-run stays for the next sweep (#2714)
-  }> {
+  ): Promise<DropOutcome> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     // One recorder per file attempt (#1736): detection, the importer's decisions, and the failure.
@@ -513,8 +505,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         // No analyzed-false branch here (unlike the text path below): this importer is fully
         // deterministic, with no AI-off gate to ever report through it (Ollama code review
         // finding — the ternary this replaced was dead code).
-        await ingestMacLoginItemBinary(caseId, bytes, name, debug);
-        return { ok: true };
+        return { ok: true, counts: (await ingestMacLoginItemBinary(caseId, bytes, name, debug)).counts };
       }
 
       // A raw file no text importer can read: a claimed extension, or anything the sniff says is binary.
@@ -540,7 +531,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
             },
           };
         }
-        const async_ = await runDropToolAndIngest(caseId, toolId, full, {
+        const run = await runDropToolAndIngest(caseId, toolId, full, {
           name,
           dropRelpath: file.relpath,
           cache,
@@ -548,9 +539,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         });
         // An HTTP tool has only been HANDED the file here; its verdicts land later (or the analysis
         // fails), so the sweep logs SUBMITTED and the job appends the outcome when it resolves.
-        return async_
+        return run.submitted
           ? { ok: true, submitted: `handed to ${toolId}; verdicts land when analysis finishes` }
-          : { ok: true };
+          : { ok: true, counts: run.counts };
       }
       if (isOversize(file.size, dropMaxBytes)) {
         // A cloud export or Plaso file streams from disk instead (#2336); anything else is refused.
@@ -600,7 +591,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         };
       // A guessed SIEM import still imports; the sweep names it in drop-log.txt and drop-status (#1824).
       logSiemFallback(caseId, file.relpath, kind, debug);
-      return { ok: true, ...siemFallbackWarning(kind, debug) };
+      return { ok: true, counts: r.counts, ...siemFallbackWarning(kind, debug) };
     } catch (err) {
       if (err instanceof LinkGuardError) {
         return { ok: false, reason: `${err.kind} detected in drop folder — refused to read (security)` };

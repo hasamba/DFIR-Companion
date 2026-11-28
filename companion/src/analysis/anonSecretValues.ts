@@ -60,11 +60,51 @@ export function readQuoted(text: string, i: number): { span: Span; after: number
   return { span: [start, end], after: end };
 }
 
+// An encoded-command cue, matched the way anonymize.ts finds the blob it masks (ENC_CMD_RE and
+// FROM_B64_RE). A bare value never swallows one (#3005): `password=X|-enc <blob>` would otherwise
+// hide the cue with the password, and the blob after it would go out in clear instead of as a CMD
+// token. The value still runs up to the cue, so a separator before it is redacted with the secret.
+const ENC_CUE_RE = /-(?:e|ec|enc|encodedcommand)\s{1,64}[A-Za-z0-9+/_-]{16}/iy;
+const FROM_B64_CUE_RE = /FromBase64String\(\s{0,64}\\?["']/iy; // \" in JSON (#3053)
+
+// `\n`, `\r` or `\t` (an odd run of backslashes before the letter): a JSON escape, not a word (#3060).
+function escapeLetterAt(text: string, k: number): boolean {
+  if (!/^[nrt]$/.test(text[k] ?? "")) return false;
+  let r = 0;
+  while (text[k - 1 - r] === "\\") r += 1;
+  return r % 2 === 1;
+}
+
+export function isEncodedCue(text: string, j: number): boolean {
+  const ch = text[j];
+  if (ch === "-") {
+    if (/[A-Za-z]/.test(text[j - 1] ?? "") && !escapeLetterAt(text, j - 1)) return false;
+    ENC_CUE_RE.lastIndex = j;
+    return ENC_CUE_RE.test(text);
+  }
+  if (ch !== "F" && ch !== "f") return false;
+  FROM_B64_CUE_RE.lastIndex = j;
+  return FROM_B64_CUE_RE.test(text);
+}
+
+// A registry write after `|`, `;` or `&` (`password=v|sp HKLM:\…`): a bare value never swallows it, or
+// the registry pass would miss the command and the value it writes (#3060).
+const REG_CMD_CUE_RE =
+  /(?:sp|Set-ItemProperty|New-ItemProperty|reg(?:\.exe)?\s+add)\s+(?:-Path\s+)?['"]?(?:HK(?:LM|CU|EY_)|Registry::)/iy;
+
+function isCommandCue(text: string, j: number): boolean {
+  if (isEncodedCue(text, j)) return true;
+  if (!/^[|;&]$/.test(text[j - 1] ?? "")) return false;
+  REG_CMD_CUE_RE.lastIndex = j;
+  return REG_CMD_CUE_RE.test(text);
+}
+
 /** A bare (unquoted) value starting at `i`, or null when it is empty. */
 export function readBare(text: string, i: number, shell = false): Span | null {
   const stop = shell ? SHELL_STOP : BARE_STOP;
   let j = i;
-  while (j < text.length && !isSpace(text[j]) && !stop.has(text[j])) j += 1;
+  while (j < text.length && !isSpace(text[j]) && !stop.has(text[j]) && !(j > i && isCommandCue(text, j)))
+    j += 1;
   return j > i ? [i, j] : null;
 }
 

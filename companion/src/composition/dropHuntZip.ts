@@ -34,6 +34,7 @@ import type { DropOutcome } from "./dropBatch.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import type { HuntProgress } from "./dropSweepProgress.js";
 import type { HuntHeldStore } from "../analysis/huntHeldStore.js";
+import { addCounts, type ImportCounts } from "../analysis/importNotification.js";
 import { holdZipMembers } from "./dropHuntHold.js";
 
 /** The most a hunt zip may inflate to across the members it imports (the zip-bomb bound). */
@@ -273,6 +274,7 @@ function outcome(
   if (ok === 0 && failed === 0 && (skipped > 0 || held > 0))
     return {
       ok: true,
+      counts: { added: 0, highCritical: 0 }, // nothing imported: a known zero (#2982)
       warning: heldNote ?? `all ${skipped} hunt result file(s) were over the size limit and skipped`,
     };
   if (ok === 0) {
@@ -287,5 +289,16 @@ function outcome(
     ? `${ok} of ${imports.length} hunt result file(s) imported, ${failed} failed — ${where}`
     : undefined;
   const warning = [summary, heldNote, caveat].filter(Boolean).join(" | ");
-  return warning ? { ok: true, warning } : { ok: true };
+  const counts = memberCounts(imports, done);
+  return { ok: true, ...(counts ? { counts } : {}), ...(warning ? { warning } : {}) };
+}
+
+/** The imported members' counts summed; unknown when any imported member has none (#2982). */
+function memberCounts(
+  imports: readonly string[],
+  done: ReadonlyMap<string, MemberOutcome>,
+): ImportCounts | undefined {
+  const imported = imports.map((n) => done.get(n)).filter((o) => o?.ok);
+  if (imported.some((o) => !o?.counts)) return undefined;
+  return imported.reduce<ImportCounts | undefined>((sum, o) => addCounts(sum, o?.counts), undefined);
 }

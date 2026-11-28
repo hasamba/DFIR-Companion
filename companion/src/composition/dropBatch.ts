@@ -7,11 +7,12 @@
  *
  * Lifted out of dropFolder.ts, which sits at the 800-line limit.
  */
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import type { DropFailure, PendingRawInput } from "../analysis/dropStatus.js";
 import type { DropFileStat } from "../analysis/dropScan.js";
-import { stuckMoveNote } from "../analysis/dropScan.js";
+import { IMAGE_EXTS, stuckMoveNote } from "../analysis/dropScan.js";
+import { addCounts, type ImportCounts } from "../analysis/importNotification.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { isGzipMagic } from "../analysis/cloudStreamReader.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
@@ -43,6 +44,8 @@ export interface DropOutcome {
   warning?: string;
   /** Not finished and safe to retry: the file stays in drop/ and the next sweep runs it again (#2714). */
   deferred?: string;
+  /** The import's settled counts (#2982); absent when the path could not see its settle. */
+  counts?: ImportCounts;
 }
 
 export interface SweepTally {
@@ -51,6 +54,30 @@ export interface SweepTally {
   failed: DropFailure[];
   warned: DropFailure[];
   pendingRawInputs: PendingRawInput[];
+  /** Each finished evidence import's settled counts, null when it returned none (#2982); a batch adds one. */
+  counts?: (ImportCounts | null)[];
+}
+
+/** A dropped screenshot: a capture, not an evidence import — it has no event counts. */
+export const isDropImage = (relpath: string): boolean => IMAGE_EXTS.has(extname(relpath).toLowerCase());
+
+/** One finished import's counts into the tally; an unknown one is kept as unknown, never read as zero (#2982). */
+export function tallyCounts(tally: Pick<SweepTally, "counts">, counts: ImportCounts | undefined): void {
+  tally.counts?.push(counts ?? null);
+}
+
+/** The sweep's total: the sum when every finished import returned counts, else unknown (#2982). */
+export function sweepCounts(entries: readonly (ImportCounts | null)[] = []): ImportCounts | undefined {
+  if (!entries.length || entries.includes(null)) return undefined;
+  return entries.reduce<ImportCounts | undefined>((sum, c) => addCounts(sum, c ?? undefined), undefined);
+}
+
+/** A batch settles once, so its counts are tallied once — and only when one of its files imported. */
+export function noteBatchCounts(
+  tally: Pick<SweepTally, "counts">,
+  r: Pick<DiskBatchResult, "results" | "counts">,
+): void {
+  if (r.results.some((res) => res.ok)) tallyCounts(tally, r.counts);
 }
 
 export interface DropSweepDeps {
@@ -79,7 +106,14 @@ export interface DropSweepDeps {
 
 /** Import `ready` in relpath order, batching what may batch; every file's outcome is recorded. */
 export async function runDropSweep(ready: readonly DropFileStat[], d: DropSweepDeps): Promise<SweepTally> {
-  const tally: SweepTally = { imported: [], submitted: [], failed: [], warned: [], pendingRawInputs: [] };
+  const tally: SweepTally = {
+    imported: [],
+    submitted: [],
+    failed: [],
+    warned: [],
+    pendingRawInputs: [],
+    counts: [],
+  };
   const ordered = sortByRelpath(ready);
   const sniffs = d.dropBatch ? await sniffAll(ordered, d) : new Map<string, DropSniff>();
   let work: DropWorkItem[] = planDropWork(ordered, sniffs);
@@ -119,6 +153,7 @@ export async function runDropSweep(ready: readonly DropFileStat[], d: DropSweepD
       break;
     }
     for (const res of r.results) await recordBatchResult(stats.get(res.relpath)!, res, d, tally);
+    noteBatchCounts(tally, r);
     const rest = r.rest.map((f) => stats.get(f.relpath)!);
     if (!rest.length) continue;
     if (r.stop === "mismatch") {
@@ -218,15 +253,19 @@ async function recordBatchResult(
 ): Promise<void> {
   if (!res.ok && res.error !== undefined)
     d.recordImportFailure(file.relpath.split(/[\\/]/).pop() ?? file.relpath, res.error, res.debug);
-  await recordOutcome(file, { ok: res.ok, reason: res.reason, warning: res.warning }, d, tally);
+  await recordOutcome(file, { ok: res.ok, reason: res.reason, warning: res.warning }, d, tally, true);
 }
 
-/** One file's move and its tally entry — the same for a single file and a batch member. True: moved. */
+/**
+ * One file's move and its tally entry — the same for a single file and a batch member. True: moved.
+ * A batch member's counts are its batch's, tallied once by `noteBatchCounts`, so `batched` skips them.
+ */
 async function recordOutcome(
   file: DropFileStat,
   res: DropOutcome,
   d: DropSweepDeps,
   tally: SweepTally,
+  batched = false,
 ): Promise<boolean> {
   if (res.pending) {
     // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
@@ -257,8 +296,11 @@ async function recordOutcome(
   if (res.ok && res.submitted) {
     tally.imported.push(file.relpath);
     tally.submitted.push({ relpath: file.relpath, reason: joinReasons(res.submitted, moveNote) });
-  } else if (res.ok) tally.imported.push(file.relpath);
-  else
+  } else if (res.ok) {
+    tally.imported.push(file.relpath);
+    // A finished evidence import: submitted files and screenshots have no counts to give (#2982).
+    if (!batched && !isDropImage(file.relpath)) tallyCounts(tally, res.counts);
+  } else
     tally.failed.push({
       relpath: file.relpath,
       reason: joinReasons(res.reason ?? "import failed", moveNote),

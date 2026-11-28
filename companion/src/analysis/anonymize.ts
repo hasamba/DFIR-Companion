@@ -1,9 +1,10 @@
-import { israeliIdValid, luhnValid } from "./anonChecksums.js";
+import { israeliIdValid } from "./anonChecksums.js";
 import { isIP } from "node:net";
 import type { InvestigationState } from "./stateTypes.js";
-import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
+import { learnableAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
-import { exactValueRegExp } from "./anonPatterns.js";
+import { anonPairKey } from "./anonPatterns.js";
+import { growSpansToKnown, replaceKnownValues, type KnownValue } from "./anonKnownValues.js";
 import {
   compileCustomEntities,
   findCustomSpans,
@@ -13,26 +14,36 @@ import {
 } from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
-import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
-import { findIpv6Literals, groupAsRead, ipv4TailJoin, ipv6Mask } from "./anonIpv6Scan.js";
-import type { Ipv6Grade, Ipv6Span, SeparatorFlags } from "./anonIpv6Scan.js";
+import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
+import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
+import { NATID_RE, E164, PHONE_IL, PHONE_NANP, BEFORE_PHONE, replaceCards } from "./anonPiiPatterns.js";
+import { replaceEncodedCommands } from "./anonEncodedCmd.js";
+import { replaceGluedIpv4Runs } from "./anonGluedPairs.js"; // + the card reading master had (#3068)
+import { replaceCardOnlyPairs, replaceGluedPairs, type PairRules } from "./anonGluedPairs.js";
+import { scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
+import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
+import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
+import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
+import { replaceDoubledAccounts } from "./anonDoubledAccounts.js";
+import { createProfileRemnants } from "./anonProfileRemnant.js";
+import { carveProfileName, valuePasses } from "./anonProfileTail.js";
+import { replaceEmails, replaceGluedAddresses, UPN_SCAN } from "./anonAtScan.js"; // linear on long runs (#3055)
+import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
+import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
 import {
-  NETBIOS_ACCT,
-  UPN_ACCT,
-  PATH_DOMAINS,
-  USER_PATH_RE,
-  WELL_KNOWN_PROFILE,
+  replaceUserPaths,
+  replaceNetbiosAccounts,
+  isLegacyNoiseAccount,
   bareUsername,
   collectUsernames,
-  insideSuppressedAccount,
+  isFragmentName,
   isGuardedUsername,
   shortHostLabels,
   isNoiseAccount,
   isNoiseDomain,
-  preservedSpans,
+  replaceBareNames,
   replaceUncServers,
-  strictlyInside,
-  usernameRegExp,
+  usernameMatcher,
 } from "./anonUsernames.js";
 
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
@@ -274,53 +285,13 @@ export function findReservableIpv6Spans(text: string, maskPublicIps = false): Ip
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 
-// A detector, not a validator: matches only real card GROUPINGS, plus a bare contiguous run.
-// Separators are permitted ONLY at genuine group boundaries — NOT between every digit (an
-// earlier version of this pattern allowed a separator after each digit, so two unrelated bare
-// numbers sitting next to each other in ordinary forensic text — a PID and a port, an offset
-// and a byte count — got silently concatenated into one candidate before the prefix/Luhn
-// filters ever ran, e.g. "30001 35174909" -> digits "3000135174909" -> passes both filters).
-// Requiring the separator to land on a real 4-4-4-4 / 4-6-5 / 4-4-4-4-3 boundary means two
-// adjacent-but-unrelated numbers essentially never happen to have exactly those group widths.
-//
-// Longest/most-specific alternative FIRST: JS regex alternation is first-match, not
-// longest-match, so the 19-digit 4-4-4-4-3 grouping must be tried before the 16-digit 4-4-4-4
-// grouping — otherwise a real 19-digit card would match only its first 16 digits (the engine
-// finds \b right after the 4th group, since the following char is a separator), leaving the
-// trailing "-123" unmasked in cleartext.
-const CARD_RE =
-  /\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{3}\b|\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}\b|\b\d{4}[ -]\d{6}[ -]\d{5}\b|\b\d{13,19}\b/g;
-
-// Three NARROW patterns. A bare run of ten digits is deliberately NOT matched — forensic text is
-// full of PIDs, ports, offsets and sequence numbers, and a generic rule would shred it. Every
-// pattern demands either a leading + or explicit separators.
-//
-// The negative lookbehind on PHONE_E164 keeps it off a "+" that CONTINUES a token rather than
-// starting a number: module+offset notation in crash dumps/stack traces (kernel32.dll+1245184)
-// and SemVer build metadata (1.0.0+20130313144700 — the SemVer spec's own example) both glue a
-// bare "+<digits>" suffix directly onto a preceding identifier. A genuine E.164 number is never
-// preceded by a letter, digit, dot, underscore or dash — it follows whitespace, line start, or
-// punctuation such as a label colon ("Tel:+972...") — so those are the only characters excluded.
-const PHONE_E164 = /(?<![A-Za-z0-9._-])\+\d{7,15}\b/g;
-const PHONE_IL = /\b0(?:5\d|[2-46-9])-?\d{7}\b/g;
-const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
-
-// Exactly nine digits, not adjacent to another digit, a dot, a dash, or an underscore. The
-// lookarounds keep this out of longer runs (byte counts, ten-digit unix seconds), dotted version
-// strings, AND snake_case identifiers — session_id_123456782, txn_123456782_archived and similar
-// underscore-glued session/request/ticket/backup IDs are routine in forensic text, so `_` is
-// excluded on BOTH sides for the same reason as `.`/`-`: a systematic false-positive source, not
-// a random one. The exclusion is symmetric because an identifier scheme that glues an ID onto a
-// preceding label with `_` is just as likely to glue a trailing qualifier on with `_` the same way.
-const NATID_RE = /(?<![\d._-])\d{9}(?![\d._-])/g;
-
 export function createAnonymizer(
   policy: AnonPolicy,
   known: KnownEntities,
   seed: readonly AnonPair[] = [], // Watson D6: earlier sends' pairs keep their tokens; new ones number above
   identity: readonly AnonPair[] = [], // #2657: the case's saved map — which token, never whether to mask
 ): Anonymizer {
-  const keyOf = (p: AnonPair) => `${p.category}:${p.value.toLowerCase()}`;
+  const keyOf = (p: AnonPair) => anonPairKey(p.category, p.value);
   const toToken = new Map(seed.map((p) => [keyOf(p), p.token])); // CAT:real
   const toReal = new Map(seed.map((p) => [p.token, p.value])); // token (UPPER) -> real value
   const savedByKey = new Map(identity.map((p) => [keyOf(p), p.token]));
@@ -342,10 +313,11 @@ export function createAnonymizer(
   const compiled = compileCustomEntities(known.custom ?? [], policy.maskPublicIps);
   let forceCustom = false; // true while a custom match mints: the explicit "hide this" beats a veto
   const ends = tokenEnds(TOKEN_RE.source, ALL_TOKEN_CATEGORIES); // a token a digit may follow gets a delimiter (#2992)
+  const spelling = createInputSpelling(TOKEN_RE.source); // a composite keeps the input's spelling (#3058)
   function assign(category: AnonTokenCategory, raw: string): string {
-    const real = expandMintedTokens(raw, TOKEN_RE.source, (tok) => toReal.get(tok)); // #2991: no nesting
+    const real = spelling.expand(raw, (tok) => toReal.get(tok)); // #2991: no nesting
     if (!forceCustom && real === raw && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
-    const key = `${category}:${real.toLowerCase()}`;
+    const key = anonPairKey(category, real);
     const existing = toToken.get(key);
     if (existing) return existing;
     const kept = savedByKey.get(key);
@@ -366,21 +338,19 @@ export function createAnonymizer(
     const out: CustomEntity[] = [];
     const seen = new Set<string>();
     for (const [token, real] of toReal) {
-      const cat = (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory;
-      const key = `${cat}:${real.toLowerCase()}`;
-      if (seen.has(key)) continue;
+      const cat = catOf(token);
+      const key = anonPairKey(cat, real);
+      if (seen.has(key) || tails.unsaved(key)) continue; // a cut phone number is never saved (#2995)
+      if (cutUsers.has(token) && !savedUsers.has(token)) continue; // a cut profile name or joined run (#3000)
       seen.add(key);
       out.push({ value: real, category: cat });
     }
     return out;
   }
 
+  const catOf = (token: string) => (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory;
   function pairs(): AnonPair[] {
-    return [...toReal].map(([token, value]) => ({
-      token,
-      value,
-      category: (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory,
-    }));
+    return [...toReal].map(([token, value]) => ({ token, value, category: catOf(token) }));
   }
 
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
@@ -395,7 +365,7 @@ export function createAnonymizer(
   // the USER pass always hid the whole account, and a visible "ANON_USER_1@corp.example" would be
   // swept up whole by the EMAIL pass — a token nested in a token, which restore() cannot undo.
   const learned = new Set<string>();
-  let bareRe: RegExp | null | undefined;
+  let bareRe: ReturnType<typeof usernameMatcher> | undefined;
   function learn(name: string): void {
     const k = name.toLowerCase();
     if (isGuardedUsername(k) || learned.has(k) || suppressed.has(k)) return;
@@ -403,84 +373,122 @@ export function createAnonymizer(
     bareRe = undefined;
   }
   for (const n of known.usernames ?? []) learn(n);
+  const oneWay = createOneWayCheck(policy.redactSecrets, learn); // holds a glued secret (#3003, #3006)
+  const entityRules = {
+    internal: isInternalDomain,
+    fileUser: FILE_EXT_USER,
+    addressAt: (v: string) =>
+      policy.categories.IP ? (findReservableIpv6Spans(v, policy.maskPublicIps)[0]?.start ?? -1) : -1,
+  }; // #3039
+  const guard = (cat: AnonTokenCategory, v: string) => (oneWay(v) ? SECRET_SENTINEL : assign(cat, v));
   const knownHosts = new Set(known.hosts.map((h) => h.toLowerCase()));
   const qualifier = (q: string) => assign(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q);
-  function userToken(user: string): string {
-    learn(user);
-    return assign("USER", user);
+  const savedUsers = new Set<string>(); // USER tokens, by how they were minted
+  const cutUsers = new Set<string>(); // masked in place, never saved: replaceUserPaths, joined runs (#3013)
+  function userToken(user: string, saved = true): string {
+    if (saved) learn(user);
+    if (oneWay(user)) return SECRET_SENTINEL; // the qualifier keeps its own token
+    const token = assign("USER", user);
+    (saved && !isFragmentName(user) ? savedUsers : cutUsers).add(token); // "12", "ab": never saved (#3014, #3030)
+    return token;
   }
   function accountToken(account: string): string {
     if (!forceCustom && suppressed.has(account.toLowerCase())) return account; // analyst veto
     // A registry hive, Windows principal, tactic folder or Folder\file.exe is not a person: it keeps
     // its old single whole-value token and teaches the bare pass nothing ("evil.exe", "Execution").
-    if (isNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account))) return assign("USER", account);
+    if (isLegacyNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account)))
+      return guard("USER", account);
     const slash = account.lastIndexOf("\\");
-    if (slash > 0) return `${qualifier(account.slice(0, slash))}\\${userToken(account.slice(slash + 1))}`;
+    if (slash > 0) return `${qualifier(account.slice(0, slash))}\\${userHalfToken(account.slice(slash + 1))}`;
     const at = account.indexOf("@");
     if (at > 0) return `${userToken(account.slice(0, at))}@${qualifier(account.slice(at + 1))}`;
     return userToken(account);
   }
+  const userHalfToken = (u: string) => sidUserToken(u, userToken, (sid) => assign("REG", sid));
+  const qualifierToken = (q: string) =>
+    toToken.get(anonPairKey(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q));
+  const remnants = createProfileRemnants(); // the rest of a profile name a secret cut short (#3067)
+  const deps = { userToken, qualifier, accountToken, qualifierToken, suppressed, savedUsers, cutUsers };
+  const netbiosToken = createNetbiosToken(deps);
   function anonAccounts(t: string): string {
-    let out = t.replace(NETBIOS_ACCT, (m, dom: string) => (PATH_DOMAINS.test(dom) ? m : accountToken(m)));
-    // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
-    out = out.replace(UPN_ACCT, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
-    return out;
+    // First an account whose qualifier or user a custom or saved value already tokenized (#3020).
+    const rules = { tokens: toReal, suppressed, internal: isInternalDomain, fileUser: FILE_EXT_USER };
+    const qualify = (real: string, raw: string) =>
+      assign(knownHosts.has(real.toLowerCase()) ? "HOST" : "DOMAIN", raw);
+    const user = (real: string, raw: string) =>
+      raw === real ? userToken(real) : (learn(real), guard("USER", raw));
+    const mint = { qualifier: qualify, user, whole: guard, ended: ends.ended };
+    let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
+    out = replaceDoubledAccounts(replaceNetbiosAccounts(out, netbiosToken), netbiosToken, rules.fileUser);
+    // Only UPNs on an internal domain are AD accounts → USER; others stay for the e-mail pass (#3060).
+    const upn = (m: string) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m);
+    out = out.replace(UPN_SCAN, upn);
+    return policy.categories.EMAIL ? out : replaceGluedAddresses(out, upn, ends.ended);
   }
   // Every learned username as a whole word, after HOST and DOMAIN have claimed their spans (so
   // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
   function anonBareUsernames(t: string): string {
-    if (bareRe === undefined) bareRe = usernameRegExp(learned);
-    if (!bareRe) return t;
-    let spans: Array<[number, number]> | undefined; // computed once, only when a name matches
-    return t.replace(bareRe, (m: string, offset: number, whole: string) => {
-      if (insideSuppressedAccount(whole, offset, m, suppressed)) return m;
-      spans ??= preservedSpans(whole);
-      return strictlyInside(spans, offset, m.length) ? m : assign("USER", m);
-    });
+    if (bareRe === undefined) bareRe = usernameMatcher(learned);
+    return bareRe ? replaceBareNames(t, bareRe, suppressed, mintBareName, ends.ended) : t;
   }
-  const EMAIL_RE =
-    /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
-  function anonEmails(t: string): string {
-    return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
+  function mintBareName(m: string, joined?: string[]): string {
+    for (const n of joined ?? []) userToken(n); // a run joining overlapping names is never saved; its names are (#3010)
+    return joined ? userToken(m, false) : guard("USER", m);
+  }
+  // A secret in the local part hides the whole address (or an external domain would go out in clear); an
+  // internal address the account pass read with a glued digit is still an account (#3050).
+  function mintEmail(m: string, glued: boolean): string {
+    const at = m.lastIndexOf("@");
+    if (oneWay(m.slice(0, at))) return SECRET_SENTINEL;
+    const account = glued && policy.categories.USER && isInternalDomain(m.slice(at + 1));
+    return account ? accountToken(m) : assign("EMAIL", m);
   }
   function anonUserPaths(t: string): string {
-    return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
-      WELL_KNOWN_PROFILE.test(name) ? m : prefix + userToken(name),
-    );
+    const carve = (name: string, saved: boolean) => {
+      const out = carveProfileName(name, valuesIn, {
+        real: (tok) => toReal.get(tok),
+        cut: (p) => userToken(p, false),
+      });
+      return (out !== null && saved && userToken(name), out); // the whole old name stays saved (#3047)
+    };
+    const rest = remnants.mint(t, (name) => carve(name, false) ?? userToken(name, false));
+    return replaceUserPaths(rest, userToken, carve);
   }
-  // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
-  // FromBase64String('…'). Tokenize ONLY the blob — the verb + flag stay visible as tradecraft signal,
-  // and victim data in the payload never reaches the wire. `=` padding is matched outside the class.
-  const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/_-]{16,}={0,2})/gi;
-  const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/_-]{16,}={0,2})(["'])/gi;
+  const valuesIn = valuePasses(policy.categories, {
+    ...{ CMD: anonEncodedCmd, REG: anonSids, IP: (t: string) => anonIpv4(t, false) },
+    ...{ CARD: anonCards, PHONE: (t: string) => anonPhones(t, false), NATID: anonNatIds },
+  });
   function anonEncodedCmd(t: string): string {
-    let out = t.replace(ENC_CMD_RE, (m, flag: string, blob: string, at: number, w: string) =>
-      ends.ended(flag + assign("CMD", blob), flag + blob, at, at + m.length, w),
-    );
-    out = out.replace(FROM_B64_RE, (_m, a: string, blob: string, c: string) => a + assign("CMD", blob) + c);
-    return out;
+    const cmd = (blob: string) => assign("CMD", blob);
+    return replaceEncodedCommands(t, { cmd, ip: policy.categories.IP, ended: ends.ended });
   }
   // Machine/domain-issued user SIDs (S-1-5-21-…-RID) are victim-identifying. Well-known SIDs
-  // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved.
-  const SID_RE = /\bS-1-5-21(?:-\d{1,10}){4}\b/gi;
+  // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved. A last number
+  // of 11-13 digits is a RID with an IPv4 glued after it only when three dotted numbers follow, or
+  // a saved address or phone value the custom pass masked already (#3048). Text glued after the RID
+  // (`…-1001bob`) does not stop it (#3049). A last number of 11-14 digits before an IPv6 colon holds
+  // an address's first group (#3052).
+  const SID_RE =
+    /\bS-1-5-21(?:-\d{1,10}){3}-(?:\d{1,10}|\d{11,13}(?=(?:\.\d{1,3}){3}|(?:\.\d{1,3}){0,2}\.ANON_(?:IP|EXTIP|PHONE)_\d)|\d{11,14}(?=[0-9a-f]{0,3}:[0-9a-f:]))(?!\d)/gi;
   function anonSids(t: string): string {
     return t.replace(SID_RE, (m) => assign("REG", m));
   }
-  function anonHosts(t: string): string {
-    let out = t;
-    for (const h of known.hosts) {
-      if (h.length < 2) continue;
-      out = out.replace(exactValueRegExp(h), (m) => assign("HOST", m));
-    }
-    return out;
-  }
-  function anonDomains(t: string): string {
-    let out = t;
-    for (const d of known.internalDomains) {
-      if (d.length < 2) continue;
-      out = out.replace(exactValueRegExp(d), (m) => assign("DOMAIN", m));
-    }
-    return out;
+  // Known hosts, then internal domains, longest first; overlapping values join one token (#3013).
+  const knownOf = (on: boolean, list: string[], category: AnonTokenCategory): KnownValue[] =>
+    on ? list.filter((v) => v.length >= 2).map((value) => ({ value, category })) : [];
+  const knownValues = [
+    ...knownOf(policy.categories.HOST, known.hosts, "HOST"),
+    ...knownOf(policy.categories.DOMAIN, known.internalDomains, "DOMAIN"),
+  ];
+  const kept = (v: string) => suppressed.has(v.toLowerCase());
+  function joinKnown(span: KnownValue, parts: KnownValue[]): string {
+    for (const p of parts) assign(p.category, p.value); // the values it joined are saved, the run is not
+    const lower = span.value.toLowerCase(); // ...unless the run is itself a known or already-minted value
+    const run =
+      !toToken.has(anonPairKey(span.category, span.value)) &&
+      knownValues.every((v) => v.value.toLowerCase() !== lower);
+    const token = assign(span.category, span.value);
+    return (run && cutUsers.add(token), token);
   }
   // An IPv6 literal (especially an IPv4-mapped one like ::ffff:10.0.0.5) is an atomic lexical
   // unit: whatever text is embedded inside it must be classified and tokenized as ONE address,
@@ -508,17 +516,12 @@ export function createAnonymizer(
   const IPV6_SENTINEL = "\uE000";
   const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
-  const IPV6_RESTORE_RE = /\uE000IPV6:(\d+)\uE000((?:\.\d{1,3}){3}\b)?/g; // + a dotted IPv4 tail (#2990)
-  // null: a plain address. failClosed / separated: an address after a word:: separator (#2976, #2979).
-  type Reserved = { value: string; category: AnonTokenCategory | null } & SeparatorFlags;
 
   // A custom value that extends past an address is set aside WITH it, as one span that carries
   // the custom category (#2950); anonCustom() mints it, so the custom value wins as one token.
   function reserveIpv6Literals(t: string): { text: string; literals: Reserved[] } {
-    // Case text is ATTACKER-INFLUENCED (logs, screenshots, imported evidence), so a hand-crafted
-    // "\uE000IPV6:0\uE000" can arrive in the input. Strip the sentinel before minting any of our own:
-    // a forged placeholder must never index the literals table and make restore() invent an
-    // address in text that never contained one.
+    // Case text is ATTACKER-INFLUENCED, so a forged "\uE000IPV6:0\uE000" can arrive in the input. It is
+    // stripped first: it must never index the literals table and make restore() invent an address.
     const text = t.replace(IPV6_SENTINEL_RE, "");
     const found = findReservableIpv6Spans(text, policy.maskPublicIps);
     if (found.length === 0) return { text, literals: [] };
@@ -533,55 +536,42 @@ export function createAnonymizer(
     return { text: out + text.slice(at), literals };
   }
 
-  // A dotted IPv4 tail the detector cut ("fd00::192" + ".168.1.5") joins the token (#2990).
-  function restoreIpv6Literals(t: string, literals: Reserved[]): string {
-    const base = (ip: string) => (isInternalIpv6(ip) ? "IP" : policy.maskPublicIps ? "EXTIP" : null);
-    const range = (read: string) => rangeCategory(compiled, read); // #2946: a custom range names it
-    const tail = { suppressed, crossers: policy.categories.PHONE ? [PHONE_IL, PHONE_NANP] : [] };
-    return t.replace(IPV6_RESTORE_RE, (m, idxStr: string, cut = "", at: number) => {
-      // A token right before a digit gets a delimiter at the end (#2992); a tail left after it cannot.
-      const out = (r: string, v: string, rest: string) =>
-        rest ? r + rest : ends.ended(r, v, at, at + m.length, t);
-      const entry = literals[Number(idxStr)];
-      if (entry === undefined) return m; // belt-and-braces with the strip above: never invent a value
-      if (entry.category) return out(mintCustom(entry.category, entry.value), entry.value, cut);
-      const d = ipv6Mask<AnonTokenCategory>(entry, { range, closed: "IP", base, suppressed });
-      if (!d) return out(entry.value + cut, entry.value + cut, ""); // in clear: the IPv4 pass masks the tail
-      const j = ipv4TailJoin(entry.value, cut, t.slice(at + m.length, at + m.length + 32), d.forced, tail);
-      return out(d.forced ? forcing(() => assign(d.cat, j.value)) : assign(d.cat, j.value), j.value, j.rest);
-    });
+  // The dotted IPv4 tail after an address, cut or glued, joins late (#2990, #2995): anonTailJoin.ts.
+  const tails = createTailJoiner({
+    ...{ assign, forcing, mintCustom, ended: ends.ended, real: (tok) => toReal.get(tok), ipv4Category },
+    ...{ suppressed, base: ipv6Base },
+    crossers: () => (policy.categories.PHONE ? [PHONE_IL, PHONE_NANP] : []),
+    range: (read) => rangeCategory(compiled, read), // #2946: a custom range names it
+  });
+  function ipv6Base(ip: string): AnonTokenCategory | null {
+    return isInternalIpv6(ip) ? "IP" : policy.maskPublicIps ? "EXTIP" : null;
+  }
+  function ipv4Category(ip: string): AnonTokenCategory | null {
+    if (isInternalIp(ip)) return "IP";
+    return policy.maskPublicIps && isMaskableIpv4(ip) ? "EXTIP" : null;
   }
 
-  function anonIpv4(t: string): string {
-    return t.replace(IPV4_RE, (ip) => {
-      if (isInternalIp(ip)) return assign("IP", ip);
-      if (!policy.maskPublicIps || !isMaskableIpv4(ip)) return ip;
-      return assign("EXTIP", ip);
-    });
+  function anonIpv4(t: string, word = true): string {
+    const mask = (ip: string, m: string, cat = ipv4Category(ip)) => (cat ? assign(cat, m) : m);
+    const plain = tails.gluedRaw(t).replace(IPV4_RE, (ip) => mask(ip, ip));
+    return tails.gluedRun(replaceGluedIpv4Runs(plain, { ...pairRules(), word })); // #3058, #3066, #3071
   }
 
-  // Two independent filters — a plausible issuer prefix AND Luhn — keep this out of trouble in
-  // forensic text. Hashes are hexadecimal, so long bare DECIMAL runs are already uncommon.
-  // No length check here: every CARD_RE alternative already guarantees 13–19 digits once
-  // separators are stripped — the three grouped alternatives have fixed digit counts (19, 16,
-  // 15) and the contiguous alternative is itself bounded by the {13,19} quantifier — so a
-  // post-hoc length check on `digits` can never fail and would be dead code.
   function anonCards(t: string): string {
-    return t.replace(CARD_RE, (m) => {
-      const digits = m.replace(/[ -]/g, "");
-      if (!/^[3-6]/.test(digits)) return m; // Amex 3, Visa 4, Mastercard 5, Discover 6
-      if (!luhnValid(digits)) return m;
-      return assign("CARD", m);
-    });
+    return replaceCards(replaceCardOnlyPairs(t, pairRules()), (m) => assign("CARD", m)); // + glued (#3058, #3062)
+  }
+  function pairRules(): PairRules {
+    const { IP: ip, CARD: card, PHONE: phone, REG: reg } = policy.categories;
+    return { ip, card, phone, reg, category: ipv4Category, internal: isInternalIp, assign, ends };
   }
 
   // E.164 runs first: it is the most specific, and an international number has no leading zero
   // for the Israeli pattern to latch onto.
-  function anonPhones(t: string): string {
-    let out = t.replace(PHONE_E164, (m) => assign("PHONE", m));
-    out = out.replace(PHONE_IL, (m) => assign("PHONE", m));
-    out = out.replace(PHONE_NANP, (m) => assign("PHONE", m));
-    return out;
+  function anonPhones(t: string, glued = true): string {
+    const mint = (m: string) => assign("PHONE", m);
+    if (!glued) return t.replace(E164.plain, mint).replace(PHONE_IL, mint).replace(PHONE_NANP, mint);
+    const out = t.replace(E164.glued, mint).replace(BEFORE_PHONE.il, mint).replace(BEFORE_PHONE.nanp, mint);
+    return out.replace(E164.glued, mint); // again: a number glued after a phone token (review)
   }
 
   // KNOWN LIMITATION: roughly one in ten arbitrary nine-digit numbers passes the check digit, and
@@ -598,15 +588,17 @@ export function createAnonymizer(
   // infrastructure visible, so a screenshot-discovered public IP must not be re-hidden by value.
   // A custom group set aside with an IPv6 address (#2950) is minted here too: the custom pass's place.
   function anonCustom(t: string, literals: readonly Reserved[]): string {
-    const spans = findCustomSpans(t, compiled);
-    const out = spans.length === 0 ? t : forcing(() => spliceSpans(t, spans, mintRaw));
+    const spans = growSpansToKnown(t, findCustomSpans(t, compiled), knownValues, kept); // #3058
+    const mark = (c: AnonTokenCategory, m: string) => tails.mark(mintRaw(c, m), m); // #2995: joins late
+    const out = spans.length === 0 ? t : forcing(() => spliceSpans(t, spans, mark));
     return out.replace(IPV6_PLACEHOLDER_RE, (m, i: string, at: number, w: string) => {
-      const e = literals[Number(i)];
-      return e?.category ? ends.ended(mintCustom(e.category, e.value), e.value, at, at + m.length, w) : m;
+      const e = literals[Number(i)]; // a group before a glued IPv4 is minted with it, late (#2995)
+      if (!e?.category || gluedIpv4At(w, at + m.length)) return m;
+      return ends.ended(tails.mark(mintCustom(e.category, e.value), e.value), e.value, at, at + m.length, w);
     });
   }
   function mintRaw(cat: AnonTokenCategory, m: string): string {
-    return cat === "USER" ? accountToken(m) : assign(cat, m);
+    return cat === "USER" ? accountToken(m) : guard(cat, m); // #2952: one way when it holds a secret
   }
   function mintCustom(cat: AnonTokenCategory, m: string): string {
     return forcing(() => mintRaw(cat, m));
@@ -622,11 +614,11 @@ export function createAnonymizer(
 
   function apply(text: string): string {
     // A forged sentinel in attacker-influenced text must not turn into a placeholder at the end.
-    let t = text.replace(SECRET_SENTINEL_RE, "");
+    let t = spelling.start(text.replace(SECRET_SENTINEL_RE, ""));
     ends.start(t, toReal);
     // A literal token in the input is never minted later, and one minted already is escaped (#2569).
     // A literal equal to a SAVED token is escaped too (#2657), or the saved value could adopt it.
-    const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok));
+    const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok), escapes);
     for (const lit of scan.literals) reserved.add(lit);
     t = scan.text;
     // One-way secrets go before anything is tokenized or set aside, so a secret that is also a
@@ -640,7 +632,11 @@ export function createAnonymizer(
     t = t.replace(IPV6_SENTINEL_RE, "");
     if (policy.redactSecrets) {
       const spans = () => (policy.categories.IP ? findReservableIpv6Spans(t, policy.maskPublicIps) : []);
-      t = redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans);
+      const red = redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans);
+      learnRedactedEntities(t, red, SECRET_SENTINEL, entityRules, (n) =>
+        oneWay(n) ? oneWay.claim(n) : learn(n),
+      );
+      t = remnants.mark(t, growGluedRemnants(t, red, { remember: oneWay.claim, compiled }), SECRET_SENTINEL);
     }
     // Then reserve IPv6 literals — before anonCustom or any other pass — so nothing can substitute
     // inside one. Only when IP masking is active: if the IP category is off, no later step ever
@@ -652,30 +648,34 @@ export function createAnonymizer(
       t = reserved.text;
       ipv6Literals = reserved.literals;
     }
+    // Values glued to each other (#3062): split first, since no saved value can cut a glued run.
+    if (policy.categories.IP || policy.categories.CARD) t = replaceGluedPairs(t, pairRules());
     t = anonCustom(t, ipv6Literals); // analyst-added entities win over every detector
+    // Encoded blobs first: an account, profile path or server read across a cue would hide it (#3060).
+    if (policy.categories.CMD) t = anonEncodedCmd(t);
     // UNC server names before accounts, or \\DC-QA-01\C$ reads as an account (#2073).
     if (policy.categories.HOST) t = replaceUncServers(t, (s) => assign("HOST", s));
     if (policy.categories.USER) t = anonAccounts(t);
-    if (policy.categories.EMAIL) t = anonEmails(t);
+    if (policy.categories.EMAIL) t = replaceEmails(t, mintEmail, ends.ended);
     if (policy.categories.PATH) t = anonUserPaths(t);
-    if (policy.categories.CMD) t = anonEncodedCmd(t);
     if (policy.categories.REG) t = anonSids(t);
-    if (policy.categories.HOST) t = anonHosts(t);
-    if (policy.categories.DOMAIN) t = anonDomains(t);
+    t = replaceKnownValues(t, knownValues, (v) => assign(v.category, v.value), joinKnown, kept);
     if (policy.categories.USER) t = anonBareUsernames(t);
+    t = tails.joinMarked(t); // a custom value that ends in an address head takes its intact tail (#2995)
     if (policy.categories.IP) {
-      t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
+      t = tails.restore(t, ipv6Literals); // classify + tokenize the reserved literals
       t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
-    }
+    } else t = tails.gluedRun(t); // a saved glued IPv4 inside a run (#3066)
     if (policy.categories.CARD) t = anonCards(t);
-    if (policy.categories.PHONE) t = anonPhones(t);
+    if (policy.categories.PHONE) t = anonPhones(tails.gluedPhone(t)); // + a glued address's (#3077)
     if (policy.categories.NATID) t = anonNatIds(t);
     t = ends.finish(t, toReal);
-    return t.replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
+    return remnants.finish(t).replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
   }
 
+  const escapes = literalEscapes(TOKEN_RE.source); // restore() undoes apply()'s escapes; restore ONCE (#3001)
   function restore(text: string): string {
-    return READERS.replace(text, (tok) => toReal.get(tok));
+    return escapes.restore(text, READERS, (tok) => toReal.get(tok));
   }
 
   function restoreDeep<T>(value: T): T {
@@ -736,7 +736,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   const internalDomains = new Set<string>();
   for (const e of state.forensicTimeline) {
     if (e.asset && e.asset.trim()) hosts.add(e.asset.trim());
-    for (const acct of extractAccounts(e.description)) {
+    for (const acct of learnableAccounts(e.description)) {
       if (isNoiseAccount(acct)) continue; // registry hive / Windows principal / tactic folder, not a victim account
       accounts.add(acct);
       if (acct.includes("\\")) internalDomains.add(acct.split("\\")[0]);
@@ -790,7 +790,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     ...state.findings.flatMap((f) => [f.title, f.description]),
     ...state.iocs.map((i) => i.value),
   ];
-  const usernames = collectUsernames({ texts, accountsOf: extractAccounts, internalDomains: domains });
+  const usernames = collectUsernames({ texts, accountsOf: learnableAccounts, internalDomains: domains });
   const allHosts = [...new Set([...hosts, ...shortHostLabels(hosts, domains)])];
   return { hosts: allHosts.sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
 }

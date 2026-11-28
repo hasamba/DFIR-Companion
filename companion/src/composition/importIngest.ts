@@ -50,7 +50,7 @@ import {
   type ImportBaseline,
 } from "../analysis/importBaseline.js";
 import { createImportDemote } from "./importDemote.js";
-import { settleStreamedImport, type StreamedSettleDeps } from "./importIngestSettle.js";
+import { settleStreamedImport, type StreamedSettled, type StreamedSettleDeps } from "./importIngestSettle.js";
 import { createSuperEvictionTally } from "../analysis/superTimelineStore.js";
 import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
@@ -84,9 +84,9 @@ export interface ImportIngestDeps {
 
 // Declared in routes/context.ts (#1736) so RouteContext.ingestStreamed can name it without an upward
 // import; re-exported here for the callers that have always taken it from this module.
-import type { ModelCallHooks } from "../routes/context.js";
+import type { ModelCallHooks, StreamedIngestResult } from "../routes/context.js";
 import { recordImportRows } from "../storage/importRowsLog.js";
-export type { ModelCallHooks } from "../routes/context.js";
+export type { DropToolRun, ModelCallHooks, StreamedIngestResult } from "../routes/context.js";
 
 export interface ImportIngest {
   /** The live declarative-importer registry. An accessor: it is loaded async and reloaded on CRUD. */
@@ -136,7 +136,7 @@ export interface ImportIngest {
      * ingestStreamed makes its own, so the success line is still written.
      */
     debug?: ImportDebugRecorder,
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ): Promise<StreamedIngestResult>;
   /** A cloud export or Plaso file streamed from an open handle: the drop folder's large/gzip path (#2336). */
   ingestDiskFile: IngestDiskFile;
   /** A drop-folder batch of small same-importer files, and its crash recovery (#2540). */
@@ -147,7 +147,7 @@ export interface ImportIngest {
     bytes: Buffer,
     originalName: string,
     debug?: ImportDebugRecorder,
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ): Promise<StreamedIngestResult>;
 }
 
 export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
@@ -575,7 +575,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     assetHost?: string, // the analyst-declared host (#1496): a drop subfolder named asset=<HOST>
     modelCall?: ModelCallHooks,
     debug: ImportDebugRecorder = createImportDebugRecorder(), // this attempt's (#1736)
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
+  ): Promise<StreamedIngestResult> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     options.onImport?.(caseId); // cross-case signal (parity with /import + captures) for push/monitor ingest
@@ -630,9 +630,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         await releaseBaseline(baseline);
       }
     });
-    async function dispatchAndSettle(
-      baseline: ImportBaseline | null,
-    ): Promise<{ addedEvents: number; addedIocs: number }> {
+    async function dispatchAndSettle(baseline: ImportBaseline | null): Promise<StreamedSettled> {
       const superEvictions = createSuperEvictionTally(); // this attempt's own (#2816, #2831)
       await dispatchImport(kind, caseId, text, {
         label: storedName,
@@ -650,9 +648,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
       return settleStreamedImport(settleDeps, { caseId, kind, storedName, baseline, superEvictions });
     }
-    const { addedEvents, addedIocs } = counts;
     await autoMarkAndResynthesize(caseId);
-    return { storedName, addedEvents, addedIocs, analyzed: true };
+    return { storedName, ...counts, analyzed: true }; // the settled counts travel on (#2982)
   }
 
   /**
@@ -676,7 +673,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     bytes: Buffer,
     originalName: string,
     debug: ImportDebugRecorder = createImportDebugRecorder(), // this attempt's (#1736)
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
+  ): Promise<StreamedIngestResult> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     const macPipeline = pipeline;
@@ -711,7 +708,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       detail: `importing ${preview.kept} macOS login item(s)`,
     });
 
-    const { addedEvents, addedIocs } = await importLock.runExclusive(caseId, async () => {
+    const settled = await importLock.runExclusive(caseId, async () => {
       const baseline = await baselineOf(caseId);
       try {
         return await importAndSettle(baseline);
@@ -719,9 +716,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         await releaseBaseline(baseline);
       }
     });
-    async function importAndSettle(
-      baseline: ImportBaseline | null,
-    ): Promise<{ addedEvents: number; addedIocs: number }> {
+    async function importAndSettle(baseline: ImportBaseline | null): Promise<StreamedSettled> {
       // Same call routes/importMacLoginItem.ts makes; it applies its own state (mergeWithAliases +
       // save) internally rather than returning a delta this caller would apply. Bypasses
       // dispatchImport, so it writes its own start/merged lines (#1438).
@@ -745,7 +740,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       return settleStreamedImport(settleDeps, { caseId, kind: "macloginitem", storedName, baseline });
     }
     resynthesizeInBackground(caseId);
-    return { storedName, addedEvents, addedIocs, analyzed: true };
+    return { storedName, ...settled, analyzed: true };
   }
 
   // The drop folder's streamed import of a cloud export or Plaso file (#2336, importIngestDisk.ts).

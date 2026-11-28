@@ -29,6 +29,9 @@ const IPV4 = /(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)/g;
 const EMAIL = /(?<![\w.%+-])[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}(?![\w-])/g;
 const DOMAIN =
   /(?<![\w.@\\-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+([A-Za-z]{2,24})(?![\w-]|\.[A-Za-z0-9])/g;
+// #2995: the dotted IPv4 tail the IPv6 scan stops before, and octets left in clear right after a token.
+const DOTTED_TAIL = /^(?:\.\d{1,3}){3}\b/;
+const RESIDUE = /(?<=ANON_[A-Z]+_\d+)(?:\.\d{1,3}){1,3}(?![\w-]|\.\d)/g;
 const HOST = /(?<![\w.\\-])([A-Z][A-Z0-9]*)(?:-[A-Z0-9]+)+(?![\w.-])/g;
 
 // Common generic and private-namespace TLDs. Two-letter country codes count too (minus file types).
@@ -88,10 +91,15 @@ function collect(masked: string, policy: Pick<AnonPolicy, "maskPublicIps">): Can
   // An address after a word:: separator is hidden whatever its value grades (#2976); it is flagged
   // when a piece the detector read before the separator was split off looks like a leak (#2979).
   for (const span of findReservableIpv6Spans(masked, policy.maskPublicIps)) {
-    const pieces = span.failClosed ? separatorPieces(masked, span) : [masked.slice(span.start, span.end)];
-    if (pieces.some((p) => ipv6Leak(p, policy)))
-      out.push({ m: [span.start, span.end], looksLike: "ip", rank: 1 });
+    const head = masked.slice(span.start, span.end);
+    const tail = /:\d{1,3}$/.test(head)
+      ? (DOTTED_TAIL.exec(masked.slice(span.end, span.end + 13))?.[0] ?? "")
+      : "";
+    const pieces = span.failClosed ? separatorPieces(masked, span) : [head];
+    if ([...pieces, head + tail].some((p) => ipv6Leak(p, policy)))
+      out.push({ m: [span.start, span.end + tail.length], looksLike: "ip", rank: 1 });
   }
+  add(RESIDUE, "ip", 1, () => true);
   add(IPV4, "ip", 1, (h) => ipLeak(h[0], policy));
   add(DOMAIN, "domain", 2, (h) => domainLeak(h[1]));
   add(HOST, "host", 3, (h) => hostLeak(h[0], h[1]));

@@ -9,6 +9,7 @@ import {
   wildcardRegExp,
 } from "./anonPatterns.js";
 import { findIpv6Literals } from "./anonIpv6Scan.js";
+import { matchSpans, type LongValueMatcher } from "./anonChunkedMatch.js";
 
 // One pass over the original text for every custom entity — exact values, wildcard patterns and
 // IPv4 ranges (#2946). Matching each kind in turn over already-tokenized text could tokenize a
@@ -26,7 +27,7 @@ import { findIpv6Literals } from "./anonIpv6Scan.js";
 // inside an address leaves the address whole, as before.
 
 export interface CompiledCustom {
-  exact: Array<{ re: RegExp; category: AnonTokenCategory }>;
+  exact: Array<{ re: RegExp | LongValueMatcher; category: AnonTokenCategory }>;
   wildcards: Array<{ re: RegExp; category: AnonTokenCategory }>;
   ranges: Array<{ block: BlockList; category: AnonTokenCategory }>;
 }
@@ -101,8 +102,7 @@ function rangeCandidates(text: string, c: CompiledCustom): Candidate[] {
 function candidates(text: string, c: CompiledCustom): Candidate[] {
   const out: Candidate[] = [];
   for (const { re, category } of c.exact)
-    for (const m of text.matchAll(re))
-      out.push({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length, category, kind: 0 });
+    for (const [start, end] of matchSpans(re, text)) out.push({ start, end, category, kind: 0 });
   for (const { re, category } of c.wildcards)
     for (const m of text.matchAll(re)) {
       const span = wildcardMatchSpan(m);

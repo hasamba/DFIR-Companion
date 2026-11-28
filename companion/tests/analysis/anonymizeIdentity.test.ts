@@ -81,8 +81,9 @@ describe("createAnonymizer with the case's saved map (#2657)", () => {
     const anon = createAnonymizer(POLICY, known(["ws-02"]), [], saved);
     const masked = anon.apply("ANON_HOST_7 attacked ws-02");
     expect(masked.match(/ANON_HOST_7/g)).toHaveLength(1);
-    // Escaped literals keep their marked form on restore (#2569): never turned into the real host.
-    expect(anon.restore(masked)).toBe("ANON-LITERAL_HOST_7 attacked ws-02");
+    // An escaped literal restores as itself (#3001), never as the real host (#2569).
+    expect(anon.restore(masked)).toBe("ANON_HOST_7 attacked ws-02");
+    expect(anon.restore(masked)).not.toContain("fs-09");
   });
 
   it("the same holds across two apply calls and for a lowercase literal", () => {
@@ -90,6 +91,7 @@ describe("createAnonymizer with the case's saved map (#2657)", () => {
     const first = anon.apply("anon_host_7 seen");
     const second = anon.apply("then ws-02");
     expect(second).toBe("then ANON_HOST_7");
-    expect(anon.restore(first)).toBe("ANON-LITERAL_host_7 seen");
+    expect(anon.restore(first)).toBe("anon_host_7 seen");
+    expect(anon.restore(first)).not.toContain("ws-02");
   });
 });

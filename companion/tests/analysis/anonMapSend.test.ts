@@ -90,6 +90,31 @@ describe("the case's masking map across AI calls (#2657)", () => {
     expect((await stores.anonMapStore.load("c1")).pairs).toEqual(before);
   });
 
+  // #3001: a literal equal to a saved token goes out escaped and comes back as itself. analyzeRestored
+  // restores once; a second restore would turn the planted literal into "Jane Doe".
+  it("a planted literal of a saved token is restored once, as itself", async () => {
+    const { ctx } = await setup();
+    const p = new Echo();
+    await ask(ctx, p, "Jane Doe logged on.");
+    const jane = /ANON_PERSON_\d+/.exec(p.sent[0])![0];
+    const prompt = `planted ${jane} and Jane Doe.`;
+    const out = (await ask(ctx, p, prompt)) as { echo: string };
+    expect(p.sent[1]).toBe(`planted ANON-LITERAL_${jane.slice(5)} and ${jane}.`);
+    expect(out.echo).toBe(prompt);
+  });
+
+  it("an unparseable answer is restored once too (parse-error path)", async () => {
+    const { ctx } = await setup();
+    await ask(ctx, new Echo(), "Jane Doe logged on.");
+    const raw: AIProvider = {
+      name: "stub",
+      model: "stub-model",
+      analyze: async (req) => ({ rawText: `not json: ${req.userPrompt}` }),
+    };
+    const err = await ask(ctx, raw, "planted ANON_PERSON_1 and Jane Doe.").catch((e: unknown) => e);
+    expect((err as { rawText?: string }).rawText).toBe("not json: planted ANON_PERSON_1 and Jane Doe.");
+  });
+
   it("concurrent calls agree: one value, one token; two values, two tokens", async () => {
     const { ctx, stores } = await setup();
     const p = new Echo();

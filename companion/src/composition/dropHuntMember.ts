@@ -16,6 +16,7 @@ import { readZipMember, writeZipMember, type ZipFile, type ZipMember } from "../
 import { createStagingFile, extractFailedMember, moveStagedToFailed } from "./dropHuntExtract.js";
 import type { MemberOutcome } from "./dropHuntZipLedger.js";
 import type { StreamDropFile } from "./dropStreamed.js";
+import type { ImportCounts } from "../analysis/importNotification.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import { rm } from "node:fs/promises";
 
@@ -32,7 +33,7 @@ export interface HuntMemberDeps {
     assetHost?: string,
     modelCall?: ModelCallHooks,
     debug?: ImportDebugRecorder,
-  ) => Promise<{ analyzed: boolean }>;
+  ) => Promise<{ analyzed: boolean; counts?: ImportCounts }>;
   streamDropFile: StreamDropFile;
   recordImportFailure: (
     caseId: string,
@@ -104,7 +105,7 @@ export async function importHuntMember(deps: HuntMemberDeps, a: HuntMemberArgs):
     if (!r.analyzed)
       return await fail("AI is off — saved as evidence but not analyzed; enable AI and re-import");
     logSiemFallback(a.caseId, a.member.name, kind, a.debug); // a guessed SIEM kind still imports (#1824)
-    return { ok: true, ...siemFallbackWarning(kind, a.debug) };
+    return { ok: true, ...(r.counts ? { counts: r.counts } : {}), ...siemFallbackWarning(kind, a.debug) };
   } catch (err) {
     deps.recordImportFailure(a.caseId, "drop", name, err, a.debug);
     return fail(msg(err));
@@ -128,7 +129,8 @@ async function importStaged(deps: HuntMemberDeps, a: HuntMemberArgs): Promise<Me
     const r = await deps.streamDropFile(a.caseId, staged.path, relpath, a.debug);
     if (r?.ok) {
       await rm(staged.path, { force: true });
-      return { ok: true, ...(r.warning ? { warning: r.warning } : {}) }; // coverage disclosures travel on
+      const counts = r.counts ? { counts: r.counts } : {}; // #2982
+      return { ok: true, ...counts, ...(r.warning ? { warning: r.warning } : {}) }; // coverage disclosures travel on
     }
     const mb = Math.round(deps.dropMaxBytes / 1048576);
     reason =

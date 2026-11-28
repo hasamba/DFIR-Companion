@@ -15,6 +15,7 @@ import { logActivity } from "../analysis/activityLog.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
+import { trackToolRun } from "./importNotify.js";
 
 /**
  * External-tool runner + forensic-gate routes: the top-level /tools* config/registry and custom-tool
@@ -50,6 +51,15 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     toolId in TOOL_DEFS
       ? TOOL_DEFS[toolId as ToolId].extensions
       : (ctx.customTools().find((t) => t.id === toolId)?.extensions ?? []);
+
+  // A dashboard tool run's "Import finished/failed" message, named after the tool and the file (#3036).
+  const toolRunReport = (caseId: string, toolId: string, file: string): ReturnType<typeof trackToolRun> => {
+    const label =
+      toolId in TOOL_DEFS
+        ? TOOL_DEFS[toolId as ToolId].label
+        : (ctx.customTools().find((t) => t.id === toolId)?.name ?? toolId);
+    return trackToolRun(ctx, caseId, `${label}: ${basename(file)}`);
+  };
 
   // ── External forensic tools (#211) ────────────────────────────────────────────────────────────
   // Per-tool configured/auto-run status for the Settings → Tools tab (no secret values). Derived LIVE
@@ -119,11 +129,14 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!path) return res.status(400).json({ error: "path is required" });
     const debug = createImportDebugRecorder(); // this run's import attempt (#1736)
+    // An HTTP tool is refused by runToolAndIngest and reports through its own job runner (#3008).
+    const report = transportOf(toolId) === "spawn" ? toolRunReport(caseId, toolId, path) : null;
     try {
       const r = await runToolAndIngest(caseId, toolId, path, {
         undoLabel: `Tool: ${toolId} — ${basename(path)}`,
         debug,
       });
+      report?.finished(r.counts);
       return res.status(200).json({
         ok: true,
         tool: toolId,
@@ -133,6 +146,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
         analyzed: r.analyzed,
       });
     } catch (err) {
+      report?.failed(err);
       recordImportFailure(caseId, toolId, path, err, debug);
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
@@ -208,6 +222,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
         .slice(0, 120) || "raw.bin";
     let stageDir = "";
     const debug = createImportDebugRecorder(); // this run's import attempt (#1736)
+    const report = toolRunReport(caseId, toolId, filename);
     try {
       await store.mkdirInCase(toolWork);
       stageDir = await mkdtemp(join(toolWork, "up-"));
@@ -219,6 +234,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
         preserveOriginal: { bytes, originalName: basename(filename) },
         debug,
       });
+      report.finished(r.counts);
       return res.status(200).json({
         ok: true,
         tool: toolId,
@@ -227,6 +243,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
         analyzed: r.analyzed,
       });
     } catch (err) {
+      report.failed(err);
       recordImportFailure(caseId, toolId, filename, err, debug);
       return res.status(400).json({ ok: false, error: (err as Error).message });
     } finally {

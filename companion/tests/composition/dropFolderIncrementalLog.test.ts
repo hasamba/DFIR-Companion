@@ -34,7 +34,7 @@ async function seed(ingest: (name: string) => Promise<unknown>) {
     liveToolConfigs: () => new Map(),
     resolveToolForExt: () => null,
     rawExtClaimed: () => false,
-    runDropToolAndIngest: vi.fn(async () => false),
+    runDropToolAndIngest: vi.fn(async () => ({ submitted: false })),
     indexCaptureText: refuse,
     captureBuffers: new Map(),
     flush: refuse,

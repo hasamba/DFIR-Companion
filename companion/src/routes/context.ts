@@ -31,6 +31,7 @@ import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { PlaybookControl } from "../analysis/playbookControl.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
+import type { ImportCounts } from "../analysis/importNotification.js";
 import type { CombinedLogImportOptions } from "../analysis/combinedLogImport.js";
 import type { CloudBatchHooks } from "../analysis/ingest/cloudStreamImport.js";
 import type { PerCaseMap, PerCaseSet } from "../storage/caseKeyedState.js";
@@ -92,6 +93,22 @@ export type ImportBase = {
 export interface ModelCallHooks {
   signal?: AbortSignal;
   beforeModelRun?: (kind: string) => void;
+}
+
+/** What one streamed ingest settled. `counts` is absent when its settle was not seen (#2982). */
+export interface StreamedIngestResult {
+  storedName: string;
+  addedEvents: number;
+  addedIocs: number;
+  analyzed: boolean;
+  /** The settled diff's counts, for a drop sweep's "import finished" message — unknown is never zero. */
+  counts?: ImportCounts;
+}
+
+/** A drop-folder tool run: `submitted` when handed off to an HTTP tool (not finished), else its counts. */
+export interface DropToolRun {
+  submitted: boolean;
+  counts?: ImportCounts;
 }
 
 export interface RouteContext {
@@ -185,7 +202,7 @@ export interface RouteContext {
     assetHost?: string,
     modelCall?: ModelCallHooks,
     debug?: ImportDebugRecorder, // this attempt's recorder (#1736)
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ): Promise<StreamedIngestResult>;
   // External-tool runner machinery shared between the drop-folder auto-run path + the drop batch route
   // (both still in createApp) and routes/tools.ts. Stable (hoisted function declarations bound at
   // construction), so safe to destructure at registration scope:
@@ -202,7 +219,7 @@ export interface RouteContext {
       preserveOriginal?: { bytes: Buffer; originalName: string };
       debug?: ImportDebugRecorder; // this attempt's recorder (#1736)
     },
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  ): Promise<StreamedIngestResult>;
   reloadCustomTools(): Promise<void>;
   // Submit a file to SO-CRATES and start background polling. Zips are extracted first (SO-CRATES
   // can only ever try the password "infected"), so one call may start several jobs — one per entry.
@@ -215,7 +232,7 @@ export interface RouteContext {
   // Run a raw drop-folder file through whichever transport its tool uses (spawn → runToolAndIngest,
   // http → startSocratesAnalysis). Shared with the drop poller so the "Run pending" batch behaves
   // identically to auto-run.
-  // Returns true when the work is ASYNCHRONOUS (handed off, not finished), so the caller logs
+  // `submitted` is true when the work is ASYNCHRONOUS (handed off, not finished), so the caller logs
   // SUBMITTED instead of claiming an import that has not happened yet.
   runDropToolAndIngest(
     caseId: string,
@@ -223,7 +240,7 @@ export interface RouteContext {
     fullPath: string,
     // `cache` is a per-import-job memo so a batch hashes the rule set once, not once per file (#721).
     opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
-  ): Promise<boolean>;
+  ): Promise<DropToolRun>;
   // Import machinery shared between routes/import.ts and the createApp import seams that stay
   // (the Velociraptor bundle collector reuses dispatchImport/demoteForensicForCase/resynthesize,
   // the drop-folder poller reuses moveDropFile, and the push/tool paths reuse the whitelist/NSRL/
