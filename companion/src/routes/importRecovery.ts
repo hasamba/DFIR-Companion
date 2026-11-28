@@ -230,6 +230,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
                 file: parameters.storedName,
                 diff: timelineDiff,
                 superTimelineAddedCount,
+                superTimelineAvailable: Boolean(options.superTimelineStore), // #3045
                 superTimelineEvicted: evictedInImport(base, superTimelineEvicted),
                 iocsDiff: iocDiff,
                 linesIn: text ? text.split(/\r?\n/).length : 0,

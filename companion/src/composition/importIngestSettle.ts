@@ -91,6 +91,7 @@ export async function settleStreamedImport(
         file: args.storedName,
         diff: tDiff,
         superTimelineAddedCount: settled.superTimelineAddedCount,
+        superTimelineAvailable: settled.superTimelineAvailable, // #3045
         superTimelineEvicted: args.superEvictions
           ? args.superEvictions.plus(settled.superTimelineEvicted)
           : settled.superTimelineEvicted,

@@ -246,6 +246,7 @@ export async function importFromHandle(
                 file: storedName,
                 diff: tDiff,
                 superTimelineAddedCount,
+                superTimelineAvailable: settled.superTimelineAvailable, // #3045
                 superTimelineEvicted: evictedInImport(base, superTimelineEvicted),
                 iocsDiff: iDiff,
                 linesIn: text.split(/\r?\n/).length,

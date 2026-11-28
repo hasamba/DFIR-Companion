@@ -473,6 +473,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
                 file: lastStoredName,
                 diff: tDiff,
                 superTimelineAddedCount: settled.superTimelineAddedCount,
+                superTimelineAvailable: settled.superTimelineAvailable, // #3045
                 superTimelineEvicted: capDropped.plus(settled.superTimelineEvicted),
                 iocsDiff: iDiff,
               });

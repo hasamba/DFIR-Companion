@@ -246,6 +246,7 @@ export function commitDedicatedImport(
               file: storedName,
               diff: tDiff,
               superTimelineAddedCount: settled.superTimelineAddedCount,
+              superTimelineAvailable: settled.superTimelineAvailable, // #3045
               superTimelineEvicted: capDropped.plus(settled.superTimelineEvicted),
               iocsDiff: iDiff,
               linesIn: commit.linesIn,

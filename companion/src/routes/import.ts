@@ -382,6 +382,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   file: storedName,
                   diff: tDiff,
                   superTimelineAddedCount,
+                  superTimelineAvailable: settled.superTimelineAvailable, // #3045
                   superTimelineEvicted: evictedInImport(base, superTimelineEvicted),
                   iocsDiff: iDiff,
                   linesIn: text.split(/\r?\n/).length,

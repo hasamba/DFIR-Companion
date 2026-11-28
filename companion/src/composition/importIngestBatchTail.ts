@@ -215,6 +215,7 @@ async function recordOutcome(deps: BatchTailDeps, a: BatchTailArgs, s: SettledIm
         file: a.label,
         diff: t,
         superTimelineAddedCount: s.superTimelineAddedCount,
+        superTimelineAvailable: s.superTimelineAvailable, // #3045
         superTimelineEvicted: s.superTimelineEvicted,
         iocsDiff: i,
         ...(sum ? { linesIn: sum.records, streamDisclosure: describeCloudStreamDisclosure(sum) } : {}),

@@ -159,6 +159,7 @@ export interface ImportRecord {
   source?: string; // human label for what produced the import (hunt/bundle) when it spans many files
   diff: TimelineDiff; // forensic-timeline diff
   superTimelineAddedCount?: number; // rows actually appended to the super-timeline
+  superTimelineAvailable?: boolean; // false: no super-timeline store, so no count is recorded (#3045)
   superTimelineEvicted?: ImportMeta["superTimelineEvicted"]; // rows the cap dropped (#1535)
   iocsDiff: IocsDiff; // IOC diff
   linesIn?: number; // raw input lines/rows the import read (#10)
@@ -270,7 +271,11 @@ export class ImportMetaStore {
       lastImportFile: rec.file,
       lastImportSource: rec.source ?? "",
       addedCount: rec.diff.added.length,
-      superTimelineAddedCount: Math.max(0, Math.floor(rec.superTimelineAddedCount ?? 0)),
+      // #3045: with no store there is no count — leaving it out makes the cockpit say "unavailable"
+      // instead of a real-looking 0. A case with a store keeps a real 0.
+      ...(rec.superTimelineAvailable === false
+        ? {}
+        : { superTimelineAddedCount: Math.max(0, Math.floor(rec.superTimelineAddedCount ?? 0)) }),
       superTimelineEvicted: rec.superTimelineEvicted?.count ? rec.superTimelineEvicted : null,
       removedCount: rec.diff.removed.length,
       lastDiff: {

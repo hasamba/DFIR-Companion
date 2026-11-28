@@ -159,6 +159,7 @@ export async function settleHuntCollect(
         }),
         diff,
         superTimelineAddedCount: input.superTimelineAddedCount + settled.superTimelineAddedCount,
+        superTimelineAvailable: settled.superTimelineAvailable, // #3045
         superTimelineEvicted: mergeEvictions(beforeSettle, settled.superTimelineEvicted),
         iocsDiff,
       });

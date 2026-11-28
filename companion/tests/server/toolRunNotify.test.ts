@@ -9,6 +9,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { NotificationConfigStore } from "../../src/analysis/notificationStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { createNotifier } from "../../src/integrations/notify/notifyDispatch.js";
 import { loadToolConfig, type ToolId, type ToolConfig } from "../../src/integrations/tools/toolConfig.js";
 import type { ToolRunner } from "../../src/integrations/tools/toolRunner.js";
@@ -59,6 +60,7 @@ async function harness(runner: ToolRunner, withSuperTimeline = false) {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     }),
     stateStore,
+    importMetaStore: new ImportMetaStore(store),
     ...(withSuperTimeline ? { superTimelineStore: new SuperTimelineStore(store) } : {}),
     toolRunner: runner,
     loadToolConfigs: hayabusaCfg,
@@ -71,6 +73,12 @@ async function harness(runner: ToolRunner, withSuperTimeline = false) {
     .send({ type: "slack", webhookUrl: "https://hooks.slack.com/services/T/B/tools" });
   const importMessages = (): string[] => bodies.filter((b) => /Import (finished|failed)/.test(b));
   return { app, store, importMessages };
+}
+
+async function cockpitImportTitles(app: Parameters<typeof request>[0]): Promise<string[]> {
+  const r = await request(app).get("/cases/c1/cockpit");
+  const changes = (r.body?.sections?.changes ?? []) as Array<{ id: string; title: string }>;
+  return changes.filter((c) => c.id.startsWith("change:import:")).map((c) => c.title);
 }
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 300));
@@ -96,6 +104,12 @@ describe("a dashboard tool run's import message (#3036)", { timeout: POLL_TIMEOU
     expect(sent[0]).not.toContain("Event counts are not available");
     // No super-timeline store in this harness: no "+0 rows" that only means "no store" (#3042).
     expect(sent[0]).not.toContain("Super-timeline");
+    // #3045: nor does the last-import record or the cockpit card it feeds.
+    const meta = await request(h.app).get("/cases/c1/import-meta");
+    expect(meta.body.lastImportedAt).toBeTruthy();
+    expect(meta.body.superTimelineAddedCount).toBeUndefined();
+    const titles = await cockpitImportTitles(h.app);
+    expect(titles).toEqual(["Import added 1 forensic event · super-timeline count unavailable"]);
   });
 
   it("with a super-timeline store, a re-run that adds nothing says +0 rows (#3042)", async () => {
@@ -107,6 +121,8 @@ describe("a dashboard tool run's import message (#3036)", { timeout: POLL_TIMEOU
     expect((await run()).status).toBe(200);
     await pollFor("the first message", async () => (h.importMessages().length ? true : undefined));
     expect(h.importMessages()[0]).toContain("Super-timeline: +1 row");
+    // #3045: with a store the last-import record keeps the real count.
+    expect((await request(h.app).get("/cases/c1/import-meta")).body.superTimelineAddedCount).toBe(1);
     expect((await run()).status).toBe(200);
     await pollFor("the second message", async () => (h.importMessages().length > 1 ? true : undefined));
     await settle();
