@@ -65,6 +65,10 @@ function sidV6Ipv4(v6: string): string | null {
 const SID_V6_RE =
   /(?<![A-Za-z0-9_])(ANON_REG_\d+|[Ss]-1-5-21(?:-\d{1,10}){4})(::(?:[0-9A-Fa-f]{1,4}:){0,6}(?:\d{1,3}(?:\.\d{1,3}){3}(?!\d)|[0-9A-Fa-f]{1,4}(?!:))|::(?:[Ff]{4}:)?ANON_(?:IP|EXTIP|PHONE)_\d+)(?![0-9A-Za-z_])/g;
 const SAVED_RUN = /^\d{1,3}(?:\.\d{1,3}){3,}$/;
+// #3065: a saved dotted phone value whose first number ends the address in a SID run. PHONE_HEAD
+// needs a separator other than "." after that number, so the run stayed split and the address's
+// middle numbers between the two saved tokens went in clear.
+const DOTTED_PHONE_HEAD = /^(\d{1,3})(\.)(\d+(?:\.\d+)+)$/;
 const OCTET = /^(?:0|[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])$/;
 
 /** Whether an IPv4 glued right after this point of the text could be read as its own address. */
@@ -543,7 +547,7 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const value = d.real(savedTok) ?? "";
     if (!savedTok.startsWith("ANON_PHONE_"))
       return raw && SAVED_RUN.test(value) ? { dotted: lead + value, phone: null } : null;
-    const ph = PHONE_HEAD.exec(value);
+    const ph = PHONE_HEAD.exec(value) ?? DOTTED_PHONE_HEAD.exec(value);
     const dotted = lead + (ph?.[1] ?? "");
     return ph && dotted.split(".").length >= 4 ? { dotted, phone: ph } : null;
   }
