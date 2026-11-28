@@ -64,8 +64,9 @@ export function readValueQuoted(text: string, at: number, mode: QuoteMode = {}):
 }
 
 // A here-string opener: `@'` / `@"` (or the JSON-escaped `@\"`), then the line break, raw or the
-// JSON-escaped `\n` / `\r\n`. The terminator is the same quote + `@` at the start of a line.
-const HERE_OPEN = /@(\\"|"|')[ \t]*(\r?\n|(?:\\r)?\\n)/y;
+// JSON-escaped `\n` / `\r\n`. The terminator is the same quote + `@` at the start of a line. A value
+// written right after a tab (`@'\t<pw>\n'@`, raw or JSON-escaped) is read to that terminator too (#3063).
+const HERE_OPEN = /@(\\"|"|')(?:[ \t]|\\t)*(\r?\n|(?:\\r)?\\n|(?<=\t|\\t))/y;
 // A here-string may run past the command window: its terminator is searched this far from the opener
 // (#3057). The terminators of a text are listed once per form and found by binary search, so many
 // openers stay linear.
@@ -101,7 +102,7 @@ export function readHereString(text: string, at: number, end: number): QuotedVal
   const m = HERE_OPEN.exec(text);
   if (!m || HERE_OPEN.lastIndex > end) return null;
   const start = HERE_OPEN.lastIndex;
-  const nl = m[2].startsWith("\\") ? "\\n" : "\n";
+  const nl = m[2].startsWith("\\") || (m[2] === "" && m[0].endsWith("\\t")) ? "\\n" : "\n";
   const cr = nl === "\n" ? "\r" : "\\r";
   const close = nl + m[1] + "@";
   // From the opener's own line break, so an empty here-string closes at once.

@@ -184,6 +184,21 @@ function breaksBeforeCommand(text: string, k: number): boolean {
   return NEXT_COMMAND.test(text);
 }
 
+// A quote escaped twice or more (`\\\"` in a JSON string inside a JSON string): the value runs to the same
+// escape on its line (#3063). The readers below know only `"` and `\"`.
+const DEEP_QUOTE = /(?:\\\\)+\\"/y;
+
+function deepQuoted(text: string, at: number, end: number): Token | null {
+  DEEP_QUOTE.lastIndex = at;
+  const q = DEEP_QUOTE.exec(text)?.[0];
+  if (!q) return null;
+  const close = text.indexOf(q, at + q.length);
+  if (close < 0 || close + q.length > end || /[\r\n]/.test(text.slice(at, close))) return null;
+  return close > at + q.length
+    ? { span: [at + q.length, close], after: close + q.length, quoted: true }
+    : null;
+}
+
 function bareToken(text: string, at: number, end: number, stops: string): Token {
   let k = at;
   while (
@@ -211,6 +226,8 @@ function nextToken(
   while (at < end && (text[at] === " " || text[at] === "\t")) at += 1;
   if (at >= end || text[at] === "\r" || text[at] === "\n" || stops.includes(text[at])) return null;
   if (breaksBeforeCommand(text, at)) return null;
+  const deep = deepQuoted(text, at, end);
+  if (deep) return deep;
   const escapedQuote = text.startsWith('\\"', at);
   // Inside `cmd /c "…"` a quote after a space that is followed by text opens a quoted argument
   // (`cmd /c "reg add "HKLM\…\Windows NT\…" /v …"`); any other bare quote closes the command.
