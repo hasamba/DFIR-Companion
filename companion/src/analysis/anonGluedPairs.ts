@@ -1,6 +1,8 @@
 import type { AnonTokenCategory } from "./anonymize.js";
 import { AMEX, C16, C19, type CardShape, cardOk, isCardNumber, replaceEach } from "./anonPiiPatterns.js";
 import { readCardsAsBefore, readGluedIpv4AsBefore, replaceGluedIpv4 } from "./anonPiiPatterns.js";
+import type { TokenEnds } from "./anonTokenLiterals.js";
+import { replaceWordGluedIpv4 } from "./anonWordGluedIpv4.js";
 
 // Values glued to each other (#3062): a card glued to an IPv4 address (either order), or two
 // addresses glued together, were read as one value and the rest was left in clear. Each part now
@@ -21,6 +23,10 @@ export interface PairRules {
   readonly assign: (category: AnonTokenCategory, raw: string) => string;
   /** Splices a token before what follows it (a digit needs a delimiter, #2992). */
   readonly ended: (token: string, value: string, at: number, end: number, text: string) => string;
+  /** The call's token ends: where a token alias spliced before a digit ends (#3071). */
+  readonly ends: Pick<TokenEnds, "aliasEnd">;
+  /** False: no address glued after a word is split off. A profile name keeps its one token, as before. */
+  readonly word?: boolean;
 }
 
 const V4 = String.raw`\d{1,3}(?:\.\d{1,3}){3}`;
@@ -112,16 +118,19 @@ export function replaceGluedPairs(text: string, r: PairRules): string {
 }
 
 /**
- * The glued IPv4 readings (#3058). A run minted whole also mints the card reading master had of it
- * (saved only, #3068): a later call that leaves the run in clear (public masking off) still hides it.
+ * The glued IPv4 readings (#3058), then an address glued after a word (#3071). A run minted whole also
+ * mints the card reading master had of it (saved only, #3068): a later call that leaves the run in
+ * clear (public masking off) still hides it.
  */
 export function replaceGluedIpv4Runs(text: string, r: PairRules): string {
-  return replaceGluedIpv4(text, (head, run) => {
+  const mask = (head: string, run: string) => {
     const cat = r.category(head);
     if (!cat) return run;
     if (r.card) readCardsAsBefore(run, (c) => r.assign("CARD", c));
     return r.assign(cat, run);
-  });
+  };
+  const out = replaceGluedIpv4(text, mask);
+  return r.word === false ? out : replaceWordGluedIpv4(out, { category: r.category, mask, ends: r.ends });
 }
 
 /**

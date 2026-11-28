@@ -147,6 +147,8 @@ export interface TokenEnds {
   ended(result: string, value: string, at: number, end: number, text: string): string;
   /** The final text; a value a later pass swallowed an alias into gets the token's real text. */
   finish(text: string, toReal: Map<string, string>): string;
+  /** The end of the alias this call spliced at text[at], or -1: its number is no part of what follows (#3071). */
+  aliasEnd(text: string, at: number): number;
 }
 
 /**
@@ -211,6 +213,10 @@ export function tokenEnds(tokenSource: string, categories: readonly string[]): T
         for (const [a, t] of aliases)
           if (value.includes(a)) toReal.set(tok, value.replaceAll(a, toReal.get(t) ?? t)); // #2991
       return mark ? out.replaceAll(mark, "") : out;
+    },
+    aliasEnd: (text, at) => {
+      const hit = [...aliases.keys()].filter((a) => text.startsWith(a, at)); // longest first, as finish() reads
+      return hit.length ? at + Math.max(...hit.map((a) => a.length)) : -1;
     },
   };
 }

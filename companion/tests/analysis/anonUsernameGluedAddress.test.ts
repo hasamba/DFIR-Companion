@@ -56,13 +56,13 @@ describe("a learned user name glued to a digit-led address (#3070)", () => {
     expect(a.restore(a.apply(all))).toBe(all);
   });
 
-  // The address itself stays as on master: an IPv4 glued after any word is a separate defect.
+  // The internal address after the name gets its own token too (#3071).
   it("masks a name glued to an IPv4 address", () => {
     const a = anon(["someuser"]);
     const text = `x someuser${dotted(10, 0, 0, 5)} y`;
     const out = a.apply(text);
     expect(out).not.toMatch(/someuser/i);
-    expect(out).toMatch(/^x ANON_USER_1\u00B7/);
+    expect(out).toBe("x ANON_USER_1ANON_IP_1 y");
     expect(a.restore(out)).toBe(text);
   });
 

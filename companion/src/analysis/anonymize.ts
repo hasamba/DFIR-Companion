@@ -455,7 +455,7 @@ export function createAnonymizer(
     return replaceUserPaths(rest, userToken, carve);
   }
   const valuesIn = valuePasses(policy.categories, {
-    ...{ CMD: anonEncodedCmd, REG: anonSids, IP: anonIpv4 },
+    ...{ CMD: anonEncodedCmd, REG: anonSids, IP: (t: string) => anonIpv4(t, false) },
     ...{ CARD: anonCards, PHONE: anonPhones, NATID: anonNatIds },
   });
   function anonEncodedCmd(t: string): string {
@@ -551,10 +551,10 @@ export function createAnonymizer(
     return policy.maskPublicIps && isMaskableIpv4(ip) ? "EXTIP" : null;
   }
 
-  function anonIpv4(t: string): string {
+  function anonIpv4(t: string, word = true): string {
     const mask = (ip: string, m: string, cat = ipv4Category(ip)) => (cat ? assign(cat, m) : m);
     const plain = tails.gluedRaw(t).replace(IPV4_RE, (ip) => mask(ip, ip));
-    return tails.gluedRun(replaceGluedIpv4Runs(plain, pairRules())); // glued digits, dotted tail (#3058, #3066)
+    return tails.gluedRun(replaceGluedIpv4Runs(plain, { ...pairRules(), word })); // #3058, #3066, #3071
   }
 
   function anonCards(t: string): string {
@@ -562,7 +562,7 @@ export function createAnonymizer(
   }
   function pairRules(): PairRules {
     const { IP: ip, CARD: card } = policy.categories;
-    return { ip, card, category: ipv4Category, internal: isInternalIp, assign, ended: ends.ended };
+    return { ip, card, category: ipv4Category, internal: isInternalIp, assign, ended: ends.ended, ends };
   }
 
   // E.164 runs first: it is the most specific, and an international number has no leading zero
