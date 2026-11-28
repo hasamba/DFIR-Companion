@@ -417,7 +417,7 @@ export function createAnonymizer(
       assign(knownHosts.has(real.toLowerCase()) ? "HOST" : "DOMAIN", raw);
     const user = (real: string, raw: string) =>
       raw === real ? userToken(real) : (learn(real), guard("USER", raw));
-    const mint = { qualifier: qualify, user, whole: guard };
+    const mint = { qualifier: qualify, user, whole: guard, ended: ends.ended };
     let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
     out = replaceDoubledAccounts(replaceNetbiosAccounts(out, netbiosToken), netbiosToken, rules.fileUser);
     // Only UPNs on an internal domain are AD accounts → USER; others stay for the e-mail pass (#3060).

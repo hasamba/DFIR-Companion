@@ -49,6 +49,8 @@ export interface TokenAccountMint {
   qualifier: (real: string, raw: string) => string; // a HOST or DOMAIN token
   user: (real: string, raw: string) => string; // a USER token for the user half
   whole: (category: "USER" | "EMAIL" | "REG", value: string) => string; // one token; tokens inside expand
+  // A splice of text[at, end) before a glued digit (tokenEnds): the token gets its delimiter.
+  ended: (result: string, value: string, at: number, end: number, text: string) => string;
 }
 type Ctx = TokenAccountRules &
   TokenAccountMint & { expand: (s: string) => string; single: (s: string) => boolean };
@@ -69,9 +71,22 @@ export function tokenQualifiedAccounts(
   // `x@CORP\\bob` is an account behind `CORP`: the NETBIOS pattern reads it before the UPN one.
   const behind = (s: string, end: number, d: string) =>
     s[end] === "\\" && NETBIOS_AFTER.test(s.slice(end + 1, end + 3)) && NETBIOS_QUALIFIER.test(expand(d));
-  return out.replace(UPN, (all, user: string, d: string, at: number, s: string) =>
-    HAS_TOKEN.test(all) && !behind(s, at + all.length, d) ? upn(c, all, user, d) : all,
-  );
+  return out.replace(UPN, (all, user: string, d: string, at: number, s: string) => {
+    if (!HAS_TOKEN.test(all) || behind(s, at + all.length, d)) return all;
+    const hit = upn(c, all, user, d);
+    return hit !== all ? hit : gluedUpn(c, all, user, d, at, s);
+  });
+}
+
+// Digits glued after the TLD (`<user>@<domain>1`), as GLUED_EMAIL_RE reads the real text (#3050): a
+// saved qualifier minted first left `<user>@ANON_DOMAIN_1.local1`, which no reader took (#3069).
+const GLUED_TLD = /\.[A-Za-z]{2,}(\d{1,3})$/;
+function gluedUpn(c: Ctx, all: string, user: string, d: string, at: number, s: string): string {
+  const digits = GLUED_TLD.exec(d)?.[1];
+  if (!digits || /[_%+@]/.test(s[at + all.length] ?? "")) return all;
+  const head = all.slice(0, -digits.length);
+  const hit = upn(c, head, user, d.slice(0, -digits.length));
+  return hit === head ? all : c.ended(hit, head, at, at + head.length, s) + digits;
 }
 
 // The longest prefix of `run` that ends where the fresh pattern may end (the run's end, or before a
