@@ -1,5 +1,6 @@
 import { isRegistryCredentialName } from "./anonSecretKeys.js";
-import { readQuoted, type Span } from "./anonSecretValues.js";
+import { readQuotedField } from "./anonSecretRegCommands.js";
+import type { Span } from "./anonSecretValues.js";
 
 // `.reg` export bodies (`reg export` / `reg import`) under a section header (#3051):
 //   [HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon]
@@ -16,7 +17,9 @@ import { readQuoted, type Span } from "./anonSecretValues.js";
 // A section header at a line start (raw, or a JSON-escaped `\n`, or the start of a JSON string).
 const SECTION_RE = /(?:^|\n|\\n|")[ \t]*\[-?(?:HKEY_|HK(?:LM|CU|CR|CC|U)\\)/g;
 // A value line: the quoted name at a line start, then `=`.
-const VALUE_LINE_RE = /(?:^|\n|\\n)[ \t]*(\\"|")([^"\\\r\n]{1,255})\1[ \t]*=[ \t]*/g;
+// The quote may be escaped once (`\"`) or twice or three times (3 or 7 backslashes, #3061).
+const VALUE_LINE_RE =
+  /(?:^|\n|\\n)[ \t]*((?<!\\)\\{7}"|(?<!\\)\\{3}"|(?<!\\)\\"|")([^"\\\r\n]{1,255})\1[ \t]*=[ \t]*/g;
 // Hex data: `hex:` / `hex(n):`, or what the keyed pass left of it (`"<placeholder>"):` for hex(n),
 // `"<placeholder>",` for hex:), then the bytes, a continuation being `,\` + a line break (raw, or
 // `\\` + `\n` in a JSON string).
@@ -57,7 +60,7 @@ export function regFileSpans(text: string, placeholder: string): Span[] {
     const at = re.lastIndex;
     // A string value (an unterminated one runs to its line end, as readQuoted reads it), unless the
     // keyed pass already hid it; then the hex bytes after the keyed pass's placeholder, if any.
-    const quoted = text.startsWith(m[1], at) ? readQuoted(text, at) : null;
+    const quoted = text.startsWith(m[1], at) ? readQuotedField(text, at) : null;
     const str = quoted && !text.startsWith(placeholder, quoted.span[0]) ? quoted.span : null;
     const span = str ?? hexSpan(text, at, head);
     if (span && span[1] > span[0]) spans.push(span);

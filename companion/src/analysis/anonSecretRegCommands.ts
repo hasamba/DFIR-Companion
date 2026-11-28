@@ -10,7 +10,7 @@ import {
   type PsVariables,
   type QuoteMode,
 } from "./anonSecretPsQuote.js";
-import { isEncodedCue, type Span } from "./anonSecretValues.js";
+import { isEncodedCue, readQuoted, type Span } from "./anonSecretValues.js";
 
 // The command readers of the registry-credential pass (anonSecretRegPairs.ts): reg add,
 // Set-/New-ItemProperty, .NET SetValue calls and splatted hashtables that set a stored-credential
@@ -23,17 +23,59 @@ export const escapedAt = (text: string, j: number): boolean => {
   return r % 2 === 1;
 };
 
-// How a quote at `j` acts in a record written with plain quotes (level 0) or with quotes escaped
-// once inside a JSON string (level 1, `{\"ValueData\":…}`, #3059): it opens or closes a string
-// ("toggle"), it is the outer string's quote, so the record ends there ("end"), or it is text (null).
-export type QuoteLevel = 0 | 1;
+// How a quote at `j` acts in a record at quote level L: plain quotes (level 0), quotes escaped once
+// inside a JSON string (level 1, `{\"ValueData\":…}`, #3059), or escaped again inside a string in
+// that string (levels 2 and 3: 3 and 7 backslashes, #3061): it opens or closes a string ("toggle"),
+// it is an outer string's quote, so the record ends there ("end"), or it is text (null).
+export type QuoteLevel = 0 | 1 | 2 | 3;
+const MAX_QUOTE_LEVEL = 3;
+
+// The level a quote after `r` backslashes belongs to. One JSON layer turns an even run into half as
+// many backslashes before a real quote (this level), and an odd run into an escaped quote one level
+// down, with (r - 1) / 2 backslashes before it.
+export function levelOfRun(r: number): number {
+  let level = 0;
+  for (let n = r; n % 2 === 1; n = (n - 1) / 2) level += 1;
+  return level;
+}
+
+function runBefore(text: string, j: number, floor = 0): number {
+  let r = 0;
+  while (j - 1 - r >= floor && text[j - 1 - r] === "\\") r += 1;
+  return r;
+}
+
 export function quoteAt(text: string, j: number, level: QuoteLevel): "toggle" | "end" | null {
   if (text[j] !== '"') return null;
-  let r = 0;
-  while (text[j - 1 - r] === "\\") r += 1;
-  if (level === 0) return r % 2 === 0 ? "toggle" : null;
-  if (r === 1) return "toggle";
-  return r % 2 === 0 ? "end" : null;
+  const at = levelOfRun(runBefore(text, j));
+  if (at === level) return "toggle";
+  return at < level ? "end" : null;
+}
+
+/** The quote level a field's quote (`"`, `\"`, 3 or 7 backslashes and `"`) stands for. */
+export const quoteLevel = (quote: string): QuoteLevel =>
+  Math.min(MAX_QUOTE_LEVEL, levelOfRun(quote.length - 1)) as QuoteLevel;
+
+// A quoted value at `i`. Levels 0 and 1 are readQuoted's. A value opened by 3 or 7 backslashes and a
+// quote (#3061) ends at the next quote of its own level (the backslashes of that quote are not part
+// of the value) or at an outer string's quote, and never runs past a line break.
+export function readQuotedField(text: string, i: number): { span: Span; after: number } | null {
+  let b = 0;
+  while (text[i + b] === "\\") b += 1;
+  if (b < 3 || text[i + b] !== '"') return readQuoted(text, i);
+  const level = levelOfRun(b);
+  if (b !== 2 ** level - 1 || level > MAX_QUOTE_LEVEL) return null;
+  const start = i + b + 1;
+  for (let j = start; j < text.length && text[j] !== "\n"; j += 1) {
+    if (text[j] !== '"') continue;
+    const r = runBefore(text, j, start);
+    const at = levelOfRun(r);
+    if (at === level) return { span: [start, j - b], after: j + 1 };
+    if (at < level) return { span: [start, j - r], after: j - r };
+  }
+  const nl = text.indexOf("\n", start);
+  const end = nl === -1 ? text.length : nl;
+  return { span: [start, end], after: end };
 }
 
 // Where the object holding position `from` closes, or `limit` when it does not close before it.

@@ -1,7 +1,8 @@
 import { isRegistryCredentialName } from "./anonSecretKeys.js";
-import { commandSpans, objectEnd, quoteAt, type QuoteLevel } from "./anonSecretRegCommands.js";
+import { commandSpans, objectEnd, quoteAt, quoteLevel, readQuotedField } from "./anonSecretRegCommands.js";
+import type { QuoteLevel } from "./anonSecretRegCommands.js";
 import { regFileSpans } from "./anonSecretRegFile.js";
-import { readQuoted, type Span } from "./anonSecretValues.js";
+import type { Span } from "./anonSecretValues.js";
 
 // One-way redaction of a stored-credential registry value whose NAME and DATA sit in separate
 // fields (#3021). The keyed pass sees `…\DefaultPassword=<pw>`, but importers write the pair apart:
@@ -15,12 +16,14 @@ import { readQuoted, type Span } from "./anonSecretValues.js";
 
 // A field that names the value: a key path ending in "\<Name>", or the bare value name. A quote is
 // its own boundary, so a quoted label glued to the character before it (`}5"ValueName"`) still counts.
+// A JSON quote may be escaped once (`\"`) or, in a string inside a JSON string, again (3 or 7
+// backslashes, #3061); the whole run is the quote, never its tail (`\"` read out of `\\\"`).
 const ANCHOR_RE =
-  /(?:(\\"|"|')|(?<![\w.-]))(TargetObject|TgtObj|ValueName|RegValueName|RegistryValueName)\1[ \t]*([:=])/gi;
+  /(?:((?<!\\)\\{7}"|(?<!\\)\\{3}"|(?<!\\)\\"|"|')|(?<![\w.-]))(TargetObject|TgtObj|ValueName|RegValueName|RegistryValueName)\1[ \t]*([:=])/gi;
 const PATH_LABELS = new Set(["targetobject", "tgtobj"]);
 // A field that holds the value's data.
 const DATA_RE =
-  /(?:(\\"|"|')|(?<![\w.-]))(Details|ValueData|RegStringValue|RegistryValueData)\1[ \t]*([:=])/gi;
+  /(?:((?<!\\)\\{7}"|(?<!\\)\\{3}"|(?<!\\)\\"|"|')|(?<![\w.-]))(Details|ValueData|RegStringValue|RegistryValueData)\1[ \t]*([:=])/gi;
 
 // What ends a bare NAME value (a key path may hold spaces: `Windows NT`): a line break, the
 // Hayabusa cell separator, the host suffix, or the next `Field=` / `Field: ` / ` - Field=` (the
@@ -29,7 +32,7 @@ const FIELD_END = /\r|\n| ¦ | @ |[ \t]+(?:- )?[A-Za-z][A-Za-z0-9_]{0,63}(?:=|: 
 // A quoted name or data field (a JSON record on the same line) also ends a bare name (#3056): read
 // on, the name would swallow the record, and the record's own fields would be skipped.
 const QUOTED_FIELD =
-  /\\?"(?:TargetObject|TgtObj|ValueName|RegValueName|RegistryValueName|Details|ValueData|RegStringValue|RegistryValueData)\\?"[ \t]*[:=]/i;
+  /(?:\\{7}|\\{3}|\\)?"(?:TargetObject|TgtObj|ValueName|RegValueName|RegistryValueName|Details|ValueData|RegStringValue|RegistryValueData)(?:\\{7}|\\{3}|\\)?"[ \t]*[:=]/i;
 
 // A bare DATA value is its first word, cut at a "|" or before a glued option (`x·-enc`), plus each
 // following word joined by one space or tab that is a plain word with a letter in it: a password
@@ -95,7 +98,7 @@ function readFieldValue(text: string, i: number, sep: string, data: boolean): Fi
   } else {
     while (text[at] === " " || text[at] === "\t") at += 1;
   }
-  const quoted = readQuoted(text, at);
+  const quoted = readQuotedField(text, at);
   if (quoted) return quoted;
   if (data) {
     const stop = readBareData(text, at);
@@ -144,7 +147,7 @@ function dataSpan(text: string, from: number, limit: number, placeholder: string
 // pretty-printed record spans lines; a raw line break never sits inside a JSON string, so each one
 // resets the string state, and one stray quote cannot flip the parity of the lines after it. A record
 // inside a JSON string (`{\"ValueData\":…}`) is read the same way at quote level 1, where `\"` is its
-// quote and a plain `"` ends it (#3059). quoteAt and objectEnd live in anonSecretRegCommands.ts (the
+// quote and a plain `"` ends it (#3059), and at levels 2 and 3 likewise (#3061). quoteAt and objectEnd live in anonSecretRegCommands.ts (the
 // splat reader walks a hashtable with them too).
 
 // Where the object holding position `at` (outside any string) opens, or -1 within the window. The
@@ -231,9 +234,10 @@ function jsonLimit(text: string, from: number, quote: string): number {
   return n && n.index < close ? n.index : close;
 }
 
-// A name field's quote: `"` is a JSON member, `\"` a member of a record inside a JSON string (#3059).
-const jsonLevel = (quote: string): QuoteLevel => (quote === '"' ? 0 : 1);
-const isJsonQuote = (quote: string | undefined): quote is string => quote === '"' || quote === '\\"';
+// A name field's quote: `"` is a JSON member, `\"` a member of a record inside a JSON string (#3059),
+// 3 or 7 backslashes and `"` a record nested one or two strings deeper (#3061).
+const jsonLevel = (quote: string): QuoteLevel => quoteLevel(quote);
+const isJsonQuote = (quote: string | undefined): quote is string => quote?.endsWith('"') === true;
 
 // --- Flat data-first lines (#3040) -------------------------------------------------------------
 // `ValueData=<pw> - ValueName=DefaultPassword - Type=REG_SZ`. On a flat line forward pairing cannot

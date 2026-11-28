@@ -24,6 +24,15 @@ import {
 // it must end at a non-name character. An e-mail keeps the e-mail pass's own word boundaries (so
 // `\njdoe@…` read without the JSON escape still lends `njdoe`, as the e-mail pass learns it), and a
 // profile name found after other text lends only its first word.
+//
+// #3061: a learned name is never a piece of the credential itself. A password shaped `Zx9-ab\cdefgh`
+// or `Winter\cdefgh` read as DOMAIN\user and lent `cdefgh`, which was then stored as a reversible
+// USER token. A DOMAIN\user now counts only as the whole value or a whole word of it (whitespace or a
+// quote on both sides; a trailing `, ; . ) ] } > |` is allowed), and only when the qualifier is
+// written as a NetBIOS domain is (upper case): shape alone cannot tell CORP\jdoe from a password.
+// An e-mail must start a word too, so the plain reading no longer lends `njdoe` out of a JSON
+// `\njdoe@…` (the JSON-break reading still lends `jdoe`), and a profile path must start the value
+// or follow a space, quote or separator.
 
 const NAME_CHAR = /[A-Za-z0-9._%+$@\\-]/;
 // Built from the patterns' own flags, so the account pattern keeps its `u` flag (#3049).
@@ -31,7 +40,10 @@ const scanner = (re: RegExp) => new RegExp(re.source, re.flags.includes("g") ? r
 const ACCOUNT = scanner(NETBIOS_ACCT);
 const UPN = scanner(UPN_ACCT);
 const PROFILE = scanner(USER_PATH_RE);
-const OPENS = /[\s"'`=,;(|[{<>]/; // what may stand right before a DOMAIN\user inside a value
+const OPENS = /[\s"'`=,;(|[{<>]/; // what may stand right before a profile path inside a value
+const WORD_OPEN = /[\s"'`]/; // what may stand right before a DOMAIN\user or e-mail inside a value
+const WORD_CLOSE = /^[,;.)\]}>|]*(?:[\s"'`]|$)/; // what may follow a DOMAIN\user inside a value
+const DOMAIN_CASE = /^\p{Lu}[\p{Lu}\p{N}.-]*$/u; // a qualifier written as a NetBIOS domain is (#3061)
 const EDGES = /^[\s"'`]+|[\s"'`]+$/g;
 const BACKSLASHES = /\\+/g;
 const JSON_BREAK = /\\+[nrt]/g;
@@ -40,7 +52,16 @@ const MAY_HOLD = /[\\@/]/; // every entity shape needs one of these
 
 // The e-mail pattern is the account pass's own (UPN_ACCT, run over every text already); the timing
 // test covers its use here.
-export const ENTITY_PATTERNS: readonly RegExp[] = [ACCOUNT, PROFILE, OPENS, BACKSLASHES, JSON_BREAK];
+export const ENTITY_PATTERNS: readonly RegExp[] = [
+  ACCOUNT,
+  PROFILE,
+  OPENS,
+  WORD_OPEN,
+  WORD_CLOSE,
+  DOMAIN_CASE,
+  BACKSLASHES,
+  JSON_BREAK,
+];
 
 /**
  * What the account pass would see: `internal` (a UPN domain is internal), `fileUser` (Folder\file.exe),
@@ -53,10 +74,13 @@ export interface EntityRules {
   addressAt: (value: string) => number;
 }
 
-const endsName = (text: string, end: number): boolean => !NAME_CHAR.test(text[end] ?? "");
+const startsWord = (text: string, at: number): boolean => at === 0 || WORD_OPEN.test(text[at - 1]);
+const endsWord = (text: string, end: number): boolean =>
+  !NAME_CHAR.test(text[end] ?? "") && WORD_CLOSE.test(text.slice(end, end + 64));
 
 function profileNames(text: string, out: string[]): void {
   for (const m of text.matchAll(PROFILE)) {
+    if (m.index > 0 && !OPENS.test(text[m.index - 1])) continue;
     const name = m.index === 0 ? m[2].trim() : (FIRST_WORD.exec(m[2])?.[0] ?? "");
     if (name && !WELL_KNOWN_PROFILE.test(name)) out.push(name);
   }
@@ -65,9 +89,9 @@ function profileNames(text: string, out: string[]): void {
 function accountNames(text: string, { fileUser }: EntityRules, out: string[]): void {
   for (const m of text.matchAll(ACCOUNT)) {
     const [whole, dom, user] = m;
-    if (m.index > 0 && !OPENS.test(text[m.index - 1])) continue;
-    if (!endsName(text, m.index + whole.length)) continue;
-    if (PATH_DOMAINS.test(dom) || isNoiseAccount(whole) || fileUser.test(user)) continue;
+    if (!startsWord(text, m.index) || !endsWord(text, m.index + whole.length)) continue;
+    if (!DOMAIN_CASE.test(dom) || PATH_DOMAINS.test(dom) || isNoiseAccount(whole) || fileUser.test(user))
+      continue;
     out.push(user);
   }
 }
@@ -75,6 +99,7 @@ function accountNames(text: string, { fileUser }: EntityRules, out: string[]): v
 function mailNames(text: string, { internal }: EntityRules, out: string[]): void {
   for (const m of text.matchAll(UPN)) {
     const upn = m[0];
+    if (!startsWord(text, m.index)) continue;
     const at = upn.lastIndexOf("@");
     if (internal(upn.slice(at + 1)) && !isNoiseAccount(upn)) out.push(upn.slice(0, at));
   }

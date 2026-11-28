@@ -54,8 +54,8 @@ const VALUES: [string, string][] = [
   ["e-mail after other words", `reg add K /v DefaultPassword /d "token for ${MAIL}" /f`],
   ["profile path after a comma", `reg add K /v DefaultPassword /d "a,C:${BS}Users${BS}${USER}${BS}x" /f`],
   [
-    "JSON account after a semicolon",
-    `{"ValueData":"pw;CORP${BS}${BS}${USER}","ValueName":"DefaultPassword"}`,
+    "JSON account as a whole word after other text",
+    `{"ValueData":"pw CORP${BS}${BS}${USER}","ValueName":"DefaultPassword"}`,
   ],
 ];
 
