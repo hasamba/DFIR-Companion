@@ -23,14 +23,29 @@ export const escapedAt = (text: string, j: number): boolean => {
   return r % 2 === 1;
 };
 
+// How a quote at `j` acts in a record written with plain quotes (level 0) or with quotes escaped
+// once inside a JSON string (level 1, `{\"ValueData\":…}`, #3059): it opens or closes a string
+// ("toggle"), it is the outer string's quote, so the record ends there ("end"), or it is text (null).
+export type QuoteLevel = 0 | 1;
+export function quoteAt(text: string, j: number, level: QuoteLevel): "toggle" | "end" | null {
+  if (text[j] !== '"') return null;
+  let r = 0;
+  while (text[j - 1 - r] === "\\") r += 1;
+  if (level === 0) return r % 2 === 0 ? "toggle" : null;
+  if (r === 1) return "toggle";
+  return r % 2 === 0 ? "end" : null;
+}
+
 // Where the object holding position `from` closes, or `limit` when it does not close before it.
-export function objectEnd(text: string, from: number, limit: number): number {
+export function objectEnd(text: string, from: number, limit: number, level: QuoteLevel = 0): number {
   let inString = false;
   let depth = 0;
   for (let j = from; j < limit; j += 1) {
     const ch = text[j];
+    const quote = quoteAt(text, j, level);
+    if (quote === "end") return j;
     if (ch === "\n") inString = false;
-    else if (ch === '"' && !escapedAt(text, j)) inString = !inString;
+    else if (quote) inString = !inString;
     else if (inString || (ch !== "{" && ch !== "}")) continue;
     else if (ch === "{") depth += 1;
     else if (depth === 0) return j;

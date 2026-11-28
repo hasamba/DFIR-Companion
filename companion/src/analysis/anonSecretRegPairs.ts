@@ -1,5 +1,5 @@
 import { isRegistryCredentialName } from "./anonSecretKeys.js";
-import { commandSpans, escapedAt, objectEnd } from "./anonSecretRegCommands.js";
+import { commandSpans, objectEnd, quoteAt, type QuoteLevel } from "./anonSecretRegCommands.js";
 import { regFileSpans } from "./anonSecretRegFile.js";
 import { readQuoted, type Span } from "./anonSecretValues.js";
 
@@ -142,22 +142,26 @@ function dataSpan(text: string, from: number, limit: number, placeholder: string
 // before or after the name, but never from the next or previous object. The walks below are
 // quote-aware (a `{` or `}` inside a string value does not count) and bounded by PAIR_WINDOW. A
 // pretty-printed record spans lines; a raw line break never sits inside a JSON string, so each one
-// resets the string state, and one stray quote cannot flip the parity of the lines after it. escapedAt and objectEnd live in
-// anonSecretRegCommands.ts (the splat reader walks a hashtable with them too).
+// resets the string state, and one stray quote cannot flip the parity of the lines after it. A record
+// inside a JSON string (`{\"ValueData\":…}`) is read the same way at quote level 1, where `\"` is its
+// quote and a plain `"` ends it (#3059). quoteAt and objectEnd live in anonSecretRegCommands.ts (the
+// splat reader walks a hashtable with them too).
 
 // Where the object holding position `at` (outside any string) opens, or -1 within the window. The
 // backward walk is checked forward: `at` must sit directly in the object found (topLevel).
-function objectStart(text: string, at: number): number {
+function objectStart(text: string, at: number, level: QuoteLevel): number {
   const floor = Math.max(0, at - PAIR_WINDOW);
   let inString = false;
   let depth = 0;
   for (let j = at - 1; j >= floor; j -= 1) {
     const ch = text[j];
+    const quote = quoteAt(text, j, level);
+    if (quote === "end") return -1;
     if (ch === "\n") inString = false;
-    else if (ch === '"' && !escapedAt(text, j)) inString = !inString;
+    else if (quote) inString = !inString;
     else if (inString || (ch !== "{" && ch !== "}")) continue;
     else if (ch === "}") depth += 1;
-    else if (depth === 0) return topLevel(text, j, at + 1)[at - j] ? j : -1;
+    else if (depth === 0) return topLevel(text, j, at + 1, level)[at - j] ? j : -1;
     else depth -= 1;
   }
   return -1;
@@ -165,15 +169,17 @@ function objectStart(text: string, at: number): number {
 
 // The positions in [start, end) that sit directly in the object opened at `start` (not inside a
 // string or a nested object).
-function topLevel(text: string, start: number, end: number): Uint8Array {
+function topLevel(text: string, start: number, end: number, level: QuoteLevel): Uint8Array {
   const flags = new Uint8Array(end - start);
   let inString = false;
   let depth = 0;
   for (let j = start + 1; j < end; j += 1) {
     const ch = text[j];
+    const quote = quoteAt(text, j, level);
+    if (quote === "end") break;
     if (!inString && depth === 0) flags[j - start] = 1;
     if (ch === "\n") inString = false;
-    else if (ch === '"' && !escapedAt(text, j)) inString = !inString;
+    else if (quote) inString = !inString;
     else if (!inString && ch === "{") depth += 1;
     else if (!inString && ch === "}") depth -= 1;
   }
@@ -184,20 +190,27 @@ function topLevel(text: string, start: number, end: number): Uint8Array {
 // earlier in the object, the data is that field's, so nothing is taken, except a key path
 // (`"TargetObject":"…\\Winlogon"`) before a bare value name: the path is the key, the name is the
 // value's (#3040).
-function dataBefore(text: string, at: number, label: string, placeholder: string): Span | null {
-  const start = objectStart(text, at);
+function dataBefore(
+  text: string,
+  at: number,
+  quote: string,
+  label: string,
+  placeholder: string,
+): Span | null {
+  const level = jsonLevel(quote);
+  const start = objectStart(text, at, level);
   if (start < 0) return null;
   const other = new RegExp(ANCHOR_RE.source, "gi");
   other.lastIndex = start;
   const bareName = !PATH_LABELS.has(label.toLowerCase());
   for (let o = other.exec(text); o && o.index < at; o = other.exec(text))
     if (!(bareName && PATH_LABELS.has(o[2].toLowerCase()))) return null;
-  const flags = topLevel(text, start, at);
+  const flags = topLevel(text, start, at, level);
   const re = new RegExp(DATA_RE.source, "gi");
   re.lastIndex = start;
   let found: Span | null = null;
   for (let m = re.exec(text); m && m.index < at; m = re.exec(text)) {
-    if (m[1] !== '"' || !flags[m.index - start]) continue;
+    if (m[1] !== quote || !flags[m.index - start]) continue;
     const value = readFieldValue(text, re.lastIndex, m[3], true);
     if (value && value.span[1] <= at && value.span[1] > value.span[0]) found = value.span;
   }
@@ -207,15 +220,20 @@ function dataBefore(text: string, at: number, label: string, placeholder: string
 // A JSON name field's data search stops at its object's `}`, across line breaks (a pretty-printed
 // record), or at the next name field. An object that does not close within the window keeps the
 // one-line bound.
-function jsonLimit(text: string, from: number): number {
+function jsonLimit(text: string, from: number, quote: string): number {
+  const level = jsonLevel(quote);
   const windowEnd = Math.min(text.length, from + PAIR_WINDOW);
-  const close = objectEnd(text, from, windowEnd);
-  if (close === windowEnd) return objectEnd(text, from, pairLimit(text, from, '"', ":"));
+  const close = objectEnd(text, from, windowEnd, level);
+  if (close === windowEnd) return objectEnd(text, from, pairLimit(text, from, quote, ":"), level);
   const next = new RegExp(ANCHOR_RE.source, "gi");
   next.lastIndex = from;
   const n = next.exec(text);
   return n && n.index < close ? n.index : close;
 }
+
+// A name field's quote: `"` is a JSON member, `\"` a member of a record inside a JSON string (#3059).
+const jsonLevel = (quote: string): QuoteLevel => (quote === '"' ? 0 : 1);
+const isJsonQuote = (quote: string | undefined): quote is string => quote === '"' || quote === '\\"';
 
 // --- Flat data-first lines (#3040) -------------------------------------------------------------
 // `ValueData=<pw> - ValueName=DefaultPassword - Type=REG_SZ`. On a flat line forward pairing cannot
@@ -327,7 +345,7 @@ function pairedFieldSpans(text: string, placeholder: string): Span[] {
     if (!name) continue;
     re.lastIndex = Math.max(re.lastIndex, name.after);
     if (!isRegistryCredentialName(valueName(m[2], text.slice(name.span[0], name.span[1])))) continue;
-    const json = m[1] === '"';
+    const json = isJsonQuote(m[1]);
     if (!m[1] && m.index > line.end) line = readFlatLine(text, m.index);
     const flat = m[1] ? undefined : flatDataBefore(text, m.index, line, placeholder);
     if (flat !== undefined) {
@@ -335,10 +353,10 @@ function pairedFieldSpans(text: string, placeholder: string): Span[] {
       continue;
     }
     if (name.beforeQuoted) continue;
-    const limit = json ? jsonLimit(text, name.after) : pairLimit(text, name.after, m[1], m[3]);
+    const limit = json ? jsonLimit(text, name.after, m[1]) : pairLimit(text, name.after, m[1], m[3]);
     const span =
       dataSpan(text, name.after, limit, placeholder) ??
-      (json ? dataBefore(text, m.index, m[2], placeholder) : null) ??
+      (json ? dataBefore(text, m.index, m[1], m[2], placeholder) : null) ??
       (!m[1] && m[3] === ":" ? colonDataBefore(text, m.index, m[2], placeholder) : null);
     if (span) spans.push(span);
   }
