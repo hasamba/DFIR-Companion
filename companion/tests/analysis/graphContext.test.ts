@@ -83,7 +83,11 @@ describe("buildGraphContext — rendering", () => {
       ev({ id: "e2", asset: "DC01", sha256: HASH, severity: "Critical" }),
     );
     const out = buildGraphContext(s);
-    expect(out).toContain("Lateral movement (same binary/account across hosts):");
+    // #3085: the label tells the model a shared binary is a link between hosts, not a proven move.
+    expect(out).toContain("Lateral movement (directed hops:");
+    expect(out).toContain(
+      "shared-hash/shared-account rows are hosts sharing a binary or account, not a proven move",
+    );
     expect(out).toContain("WEB01");
     expect(out).toContain("DC01");
   });

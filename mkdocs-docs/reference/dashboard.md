@@ -555,8 +555,10 @@ A causal graph showing:
 
 - **Process trees** (parent → child process spawns)
 - **File lineage** (file written then executed)
-- **Lateral movement** (shared hashes or accounts across hosts)
+- **Lateral movement** — arrows for who connected to whom (a network logon or remote-service install on the target that names its source host), and dotted lines without arrows for hosts that share a binary or account
 - **Network flows** (host → IP connections)
+
+Below the graph, **Lateral movement paths** chains those arrows by time. A path needs direction evidence the target recorded: a successful network logon (4624, logon type 3), or a remote-execution service (PSEXESVC and similar) installed right after one, whose workstation name or source IP maps to a host in the case. A source IP counts only when a logon record in the case pairs it with a workstation name. When the source cannot be told, no path is drawn. One host reaching several targets shows as one path per target. **Hosts that share a binary or account** lists the same attacker-introduced file or account seen on several hosts: a lead, not a proven move.
 
 This is the "how did we get here" graph — tracing the attack path through actual artifact relationships, not just the AI narrative. No AI — derived from structured event fields.
 

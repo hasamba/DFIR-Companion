@@ -26,7 +26,8 @@ const TYPE_ORDER: EvidenceEdgeType[] = ["spawned", "file_lineage", "lateral_move
 const TYPE_LABEL: Record<EvidenceEdgeType, string> = {
   spawned: "Process spawns (parent → child)",
   file_lineage: "File lineage (wrote → executed)",
-  lateral_move: "Lateral movement (same binary/account across hosts)",
+  lateral_move:
+    "Lateral movement (directed hops: a network logon / remote service on the target naming its source; shared-hash/shared-account rows are hosts sharing a binary or account, not a proven move)",
   network_flow: "Network connections (source → destination)",
   ran_on: "Process anchored to host",
 };

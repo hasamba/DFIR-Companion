@@ -82,6 +82,7 @@
       .then((g) => {
         evGraphData = g;
         renderEvidenceGraph();
+        renderEvidenceShared();
       })
       .catch(() => {});
     loadLateralPaths(caseId);
@@ -183,12 +184,14 @@
     for (const e of edges) {
       els.push({
         data: {
-          id: `ev:${e.source}|${e.target}|${e.type}`,
+          // A shared-hash/account link may sit on the same host pair as a directed hop (#3085).
+          id: `ev:${e.source}|${e.target}|${e.type}${e.undirected ? "|shared" : ""}`,
           source: e.source,
           target: e.target,
           etype: e.type,
           conf: e.confidence,
           basis: e.basis,
+          undirected: e.undirected ? true : null,
           launcher: evLolbinOnly && e.launcher ? true : null,
         },
       });
@@ -240,6 +243,12 @@
         "target-arrow-color": "#ff5c8a",
         "line-style": "solid",
       },
+    },
+    // Shared-hash / shared-account links (#3085): hosts that share something, no direction, so no
+    // arrowhead — a dotted line, never read as a move from one host to the other.
+    {
+      selector: "edge[?undirected]",
+      style: { "target-arrow-shape": "none", "line-style": "dotted" },
     },
     // causal high-confidence: solid orange
     {
@@ -338,7 +347,9 @@
     const sub = lgEl(
       "div",
       "ev-sub",
-      d.basis + (d.etype === "ran_on" ? "" : " — " + d.conf + " confidence"),
+      d.basis +
+        (d.etype === "ran_on" ? "" : " — " + d.conf + " confidence") +
+        (d.undirected ? " (shared by these hosts, no direction)" : ""),
     );
     const close = lgEl("button", "lg-close", "✕ Close");
     close.type = "button";
@@ -463,7 +474,7 @@
       : `<button type="button" id="evPathsShowDismissed" data-safe-style="${evPathBtnStyle}">Show dismissed</button>`;
     if (!evPathsData || !evPathsData.length) {
       el.innerHTML =
-        "<div data-safe-style='padding:8px 0;color:var(--text-muted)'>No multi-hop lateral chains reconstructed yet. " +
+        "<div data-safe-style='padding:8px 0;color:var(--text-muted)'>No lateral movement with a known source host yet. " +
         toggle +
         "</div>";
       return;
@@ -531,6 +542,28 @@
           );
         })
         .join("") + `<div data-safe-style="margin-top:6px">${toggle}</div>`;
+  }
+
+  // Hosts that share a binary or account (#3085), from the evidence-graph read. Kept apart from the
+  // paths above: a shared file or account says these hosts are linked, never which moved to which.
+  // Every host, file and account name is adversary-controlled and goes through esc(). Pure.
+  function sharedHostLinksHtml(links) {
+    if (!links || !links.length)
+      return "<div data-safe-style='padding:8px 0;color:var(--text-muted)'>No file or account seen on more than one host.</div>";
+    return links
+      .map((l) => {
+        const hosts = (l.hosts || []).map((h) => `<b>${esc(h)}</b>`).join(", ");
+        const kind = l.actorKind === "account" ? "account" : "file";
+        return (
+          `<div class="ev-shared-row" data-safe-style="margin-bottom:4px">${hosts} ` +
+          `<span class="ev-sub">share ${kind} <b>${esc(l.actor)}</b>, first seen ${esc(l.firstSeen || "—")}</span></div>`
+        );
+      })
+      .join("");
+  }
+  function renderEvidenceShared() {
+    const el = document.getElementById("evSharedList");
+    if (el) el.innerHTML = sharedHostLinksHtml(evGraphData && evGraphData.sharedHostLinks);
   }
 
   // Kill-chain legend (#93): swatches for the tactics that actually appear in the current graph,
@@ -740,6 +773,7 @@
   }
 
   window.lateralPathGroups = lateralPathGroups;
+  window.sharedHostLinksHtml = sharedHostLinksHtml;
   window.evSelectGraph = evSelectGraph;
   window.evLolbinSubset = evLolbinSubset;
   window.loadEvidenceGraph = loadEvidenceGraph;

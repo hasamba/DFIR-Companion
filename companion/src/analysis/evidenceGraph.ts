@@ -3,12 +3,25 @@ import { filterTimeline, type TimeWindow } from "./assetGraph.js";
 import { KILL_CHAIN_ORDER, tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import {
   canonicalAccounts,
-  canonicalFile,
   canonicalNetwork,
   canonicalProcess,
   upgradeForensicEvent,
 } from "./canonicalEvent.js";
 import { markLolbinChains } from "./lolbinChains.js";
+import {
+  eventAsset,
+  eventHash,
+  eventPath,
+  hostNodeId,
+  isPseudoAccount,
+  shortHash,
+  timeOf,
+  type Confidence,
+} from "./evidenceFields.js";
+import { directedLateralHops, directedLateralPairs, type LateralHop } from "./lateralDirection.js";
+
+export type { Confidence } from "./evidenceFields.js";
+export type { LateralHop } from "./lateralDirection.js";
 
 // Derives the EVIDENCE CHAIN GRAPH — the *causal* view of an incident, complementing the
 // chronological forensic timeline and the (associative) asset↔IoC graph. Where the asset
@@ -20,9 +33,11 @@ import { markLolbinChains } from "./lolbinChains.js";
 //   • spawned       — parent→child from an event's own processName/parentName pair (same asset).
 //                     Process nodes are keyed by (asset, name) so excel→powershell + powershell→cmd
 //                     chain into one tree through the shared powershell node — no PID guessing.
-//   • lateral_move  — the same binary HASH seen on ≥2 hosts (high confidence), or the same
-//                     ACCOUNT active on ≥2 hosts (medium confidence — shared account is signal,
-//                     not proof).
+//   • lateral_move  — DIRECTED host→host hops from what the target recorded about an inbound
+//                     connection (remote-service install / network logon naming its source,
+//                     lateralDirection.ts, #3085). Plus two UNDIRECTED links (`undirected: true`): the
+//                     same binary HASH on ≥2 hosts (high) or the same ACCOUNT on ≥2 hosts (medium) —
+//                     hosts that share something, never a proven move.
 //   • ran_on        — host → the ROOT of each process tree. The host is the BRIDGE: with each tree
 //                     hung off its host node, the lateral_move host↔host edges stitch per-host trees
 //                     into ONE cross-host attack graph (binary runs on A → moves to B → spawns there)
@@ -38,7 +53,6 @@ import { markLolbinChains } from "./lolbinChains.js";
 // a wrong association edge does not.
 
 export type EvidenceEdgeType = "spawned" | "lateral_move" | "ran_on" | "file_lineage" | "network_flow";
-export type Confidence = "high" | "medium" | "low";
 export type EvidenceNodeKind = "process" | "host" | "account" | "file" | "network";
 
 export interface EvidenceNode {
@@ -67,6 +81,7 @@ export interface EvidenceEdge {
   basis: string; // human one-liner, e.g. "excel.exe → powershell.exe on ALCLIENT07"
   eventIds: string[]; // backing events (provenance)
   launcher?: true; // spawned edge from an unusual launcher (Office, browser, ...) into a LOLBIN (#2113)
+  undirected?: true; // shared-hash / shared-account link: hosts share something, no direction (#3085)
 }
 
 export interface EvidenceGraph {
@@ -109,51 +124,9 @@ function dominantTactic(
 }
 
 const procNodeId = (asset: string, name: string) => `proc:${asset.toLowerCase()}:${name.toLowerCase()}`;
-const hostNodeId = (name: string) => `host:${name.toLowerCase()}`;
 const accountNodeId = (name: string) => `account:${name.toLowerCase()}`;
 const fileNodeId = (hash: string) => `file:${hash.toLowerCase()}`;
 const netNodeId = (ip: string, port?: number) => `net:${ip.toLowerCase()}${port ? `:${port}` : ""}`;
-
-function shortHash(h: string): string {
-  return h.length > 14 ? `${h.slice(0, 12)}…` : h;
-}
-
-// Windows virtual/service principals that are NOT users — every host has a DWM/UMFD/MSI
-// session object, so their appearance on many hosts is NOT lateral movement. Dropped from the
-// account-lateral rule so it doesn't manufacture host↔host edges from machine noise. (The
-// regex captures the truncated tail of spaced namespaces like "Window Manager\DWM-1" as
-// "Manager\DWM-1", so match on the user part too.) Kept local to evidence derivation — the
-// asset graph still shows these accounts as associations, where they're harmless.
-// Both sides must also list the TRUNCATED form of every spaced name. extractAccounts' DOMAIN\user
-// regex starts matching at the last space, so "NT AUTHORITY\LOCAL SERVICE" arrives as
-// "AUTHORITY\LOCAL" — neither side matching its untruncated spelling. That leak chained every
-// Windows host in a case into one confident-looking path (LOCAL/NETWORK/ANONYMOUS run everywhere).
-// Anchored full-token matches, so real accounts that merely start with these words (CORP\network.admin)
-// are unaffected.
-const PSEUDO_ACCT_DOMAIN =
-  /^(global|local|session|nt authority|authority|nt service|service|window manager|font driver host|iis apppool|apppool)$/i;
-const PSEUDO_ACCT_USER =
-  /^(dwm-\d+|umfd-\d+|msi[0-9a-f]+|system|local service|network service|anonymous logon|local|network|anonymous)$/i;
-function isPseudoAccount(acct: string): boolean {
-  const i = acct.indexOf("\\");
-  const domain = i >= 0 ? acct.slice(0, i) : "";
-  const user = i >= 0 ? acct.slice(i + 1) : acct;
-  return PSEUDO_ACCT_DOMAIN.test(domain.trim()) || PSEUDO_ACCT_USER.test(user.trim());
-}
-
-function eventAsset(event: ForensicEvent): string {
-  const target = event.canonical?.target;
-  return ((target?.kind === "host" ? target.name : undefined) ?? event.asset ?? "").trim();
-}
-
-function eventHash(event: ForensicEvent): string {
-  const file = canonicalFile(event);
-  return (file?.sha256 ?? file?.md5 ?? "").trim().toLowerCase();
-}
-
-function eventPath(event: ForensicEvent): string {
-  return (canonicalFile(event)?.path ?? "").trim();
-}
 
 function eventAction(event: ForensicEvent): string {
   return event.canonical?.event.action ?? event.action ?? "";
@@ -162,7 +135,8 @@ function eventAction(event: ForensicEvent): string {
 export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindow): EvidenceGraph {
   // Scope the timeline to the requested window (#83) once, up front; every derivation pass below
   // reads `timeline` instead of state.forensicTimeline, so edges/nodes only form from in-window events.
-  const timeline = filterTimeline(state.forensicTimeline, window).map(upgradeForensicEvent);
+  const fullTimeline = state.forensicTimeline.map(upgradeForensicEvent);
+  const timeline = filterTimeline(fullTimeline, window);
   // Nodes are materialized lazily so only those that participate in ≥1 edge are emitted.
   const nodeMap = new Map<string, EvidenceNode>();
   function mergeNode(
@@ -254,6 +228,7 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
         rule: "shared-hash",
         basis: `same binary ${shortHash(h)} on ${aAsset} + ${bAsset}`,
         eventId: eb.id,
+        undirected: true,
       });
     }
   }
@@ -286,6 +261,26 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
         rule: "shared-account",
         basis: `${acct} active on ${asset}`,
         eventId: e.id,
+        undirected: true,
+      });
+    }
+  }
+
+  // ── lateral_move (directed): who connected to whom, one edge per ordered host pair (#3085) ──
+  for (const hop of directedLateralPairs(directedLateralHops(timeline, fullTimeline))) {
+    mergeNode(hop.from, "host", hop.fromHost, undefined, hop.eventIds, hop.severity);
+    mergeNode(hop.to, "host", hop.toHost, undefined, hop.eventIds, hop.severity);
+    for (const eventId of hop.eventIds) {
+      const { from, to, rule, confidence, basis } = hop;
+      addEdge({
+        id: `lateral|dir:${from}|${to}`,
+        type: "lateral_move",
+        source: from,
+        target: to,
+        rule,
+        confidence,
+        basis,
+        eventId,
       });
     }
   }
@@ -439,14 +434,12 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   return markLolbinChains(nodes, edges);
 }
 
-// ── Lateral-movement PATH inference (#92) ───────────────────────────────────────────────
-// buildEvidenceGraph's lateral_move edges are pairwise, and the shared-hash chain above orders
-// its edges ALPHABETICALLY by host name (for deterministic edge ids) rather than by when the
-// pivot actually happened — so the edges alone can't answer "what order did the attacker move
-// through these hosts?". buildLateralPaths re-derives host-to-host hops straight from the
-// timeline, each ordered by the real timestamp of the evidence tying a host to the shared
-// hash/account, then stitches them into ordered entry → pivot → ... → target chains. Pure,
-// derived on read, no AI — same shape of guarantee as buildEvidenceGraph.
+// ── Lateral-movement PATH inference (#92, #3085) ──────────────────────────────────────────
+// Hops are DIRECTED: each says which host connected to which, read from what the target recorded
+// (lateralDirection.ts). Shared-hash / shared-account links have no direction and are never hops —
+// chaining them in time order drew fan-out (SRC→A, SRC→B) as A→B — so they are reported apart, as
+// hosts that share something (sharedHostLinks.ts). buildLateralPaths stitches the directed hops into
+// ordered entry → pivot → ... → target chains by real timestamp. Pure, derived on read, no AI.
 //
 // COMPLETENESS GUARANTEE (a forensics correctness requirement, not just enumeration): every
 // derived hop appears in at least one returned path, so a host the attacker actually reached is
@@ -454,23 +447,6 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
 // fork) for readability, then a PATH COVER seeds an additional chain from every hop still uncovered
 // — including the onward branch(es) a fork's longest-tail walk discarded. This is bounded (total
 // paths ≤ number of hops, no combinatorial blow-up) and identical full chains are de-duplicated.
-
-export interface LateralHop {
-  from: string; // host node id — where the artifact/account was before this hop
-  to: string; // host node id — where it appeared next
-  fromTimestamp: string; // earliest evidence tying the FROM host to this hop's hash/account
-  toTimestamp: string; // earliest evidence tying the TO host to this hop's hash/account — the hop's order key
-  confidence: Confidence;
-  rule: "shared-hash" | "shared-account";
-  // WHO/WHAT carried this hop, as a STRUCTURED field: the account for a shared-account hop, the
-  // binary's filename (falling back to a short hash when no path was recorded) for a shared-hash
-  // one. `basis` says the same thing in prose, but consumers must never parse it back out — that
-  // format-coupling is exactly what silently empties a view when the wording changes.
-  actor: string;
-  actorKind: "account" | "binary";
-  basis: string; // human one-liner
-  eventIds: string[]; // the two backing events (from-host + to-host sightings) for this hop
-}
 
 export interface LateralPath {
   id: string;
@@ -484,159 +460,11 @@ export interface LateralPath {
 const CONF_RANK: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
 const weakerConf = (a: Confidence, b: Confidence): Confidence => (CONF_RANK[b] > CONF_RANK[a] ? b : a);
 
-// Unparseable/absent timestamps sort as epoch (0) rather than poisoning comparisons with NaN —
-// mirrors how buildEvidenceGraph's time-window filter treats an unparseable timestamp as in-range.
-function timeOf(ts: string): number {
-  const t = Date.parse(ts);
-  return Number.isFinite(t) ? t : 0;
-}
-
 export function buildLateralPaths(state: InvestigationState, window?: TimeWindow): LateralPath[] {
-  const timeline = filterTimeline(state.forensicTimeline, window).map(upgradeForensicEvent);
-
-  // The EARLIEST event tying each host to a given hash/account (not just "a" event, as in
-  // buildEvidenceGraph's byHash/byAccount — here the hop order depends on real chronology).
-  function earliestPerHost(
-    pick: (e: ForensicEvent) => string | undefined,
-  ): Map<string, Map<string, ForensicEvent>> {
-    const byKey = new Map<string, Map<string, ForensicEvent>>();
-    for (const e of timeline) {
-      const key = (pick(e) ?? "").trim().toLowerCase();
-      const asset = eventAsset(e);
-      if (!key || !asset) continue;
-      const hosts = byKey.get(key) ?? new Map<string, ForensicEvent>();
-      const assetKey = asset.toLowerCase();
-      const existing = hosts.get(assetKey);
-      if (!existing || timeOf(e.timestamp) < timeOf(existing.timestamp)) hosts.set(assetKey, e);
-      byKey.set(key, hosts);
-    }
-    return byKey;
-  }
-
-  const hops: LateralHop[] = [];
-
-  // A shared binary only implies lateral movement when the binary was ATTACKER-INTRODUCED. Ordinary
-  // corporate software shares a hash across every workstation BY DESIGN, so an unguarded rule made
-  // chrome.exe/OUTLOOK.EXE/vpnui.exe/updaters the longest and top-sorted "attack chain" in a real
-  // 12-host case.
-  //
-  // The discriminator is PROVENANCE, not grading. "Is it flagged?" does not work here: the pipeline
-  // registers every observed binary hash as an IOC and tags process events with MITRE techniques, so
-  // chrome.exe reads as flagged too (95 MITRE events + IOC on a real case) and nothing is filtered.
-  // Where a binary LIVES does discriminate — a hash only ever seen in a vendor install root is
-  // installed software, while attacker tooling lands in an arbitrary writable location. Prevalence
-  // is deliberately NOT part of the test: a vendor binary on two hosts is the same non-event as one
-  // on ten, and requiring a spread would only postpone the noise.
-  //
-  // Escape hatches, so this can only ever suppress ordinary software:
-  //   • graded High/Critical      → kept (LOLbin abuse, or malware planted in System32)
-  //   • no recorded path          → kept (absent provenance, do not filter)
-  // NOTE: VENDOR_INSTALL_ROOT is a curated list. Modern apps install PER USER (OneDrive, Teams,
-  // Zoom), so those roots have to be named explicitly — a plain "under a user profile ⇒ suspicious"
-  // rule would readmit them. Distinguishing per-user vendor software from malware living in AppData
-  // properly needs publisher/signature data or a known-good baseline, neither of which exists here.
-  const GRAVE_SEVERITY: ReadonlySet<Severity> = new Set<Severity>(["Critical", "High"]);
-  const VENDOR_INSTALL_ROOT = new RegExp(
-    "^[a-z]:[\\\\/](" +
-      "windows|program files( \\(x86\\))?|programdata[\\\\/]microsoft" + // machine-wide
-      "|users[\\\\/][^\\\\/]+[\\\\/]appdata[\\\\/](local|roaming)[\\\\/]" + // per-user vendor roots
-      "(microsoft|zoom|slack|google|mozilla|discord|dropbox|programs[\\\\/]microsoft)" +
-      ")[\\\\/]",
-    "i",
+  const fullTimeline = state.forensicTimeline.map(upgradeForensicEvent);
+  const hops: LateralHop[] = directedLateralHops(filterTimeline(fullTimeline, window), fullTimeline).map(
+    ({ fromHost: _f, toHost: _t, severity: _s, ...hop }) => hop,
   );
-  const provenance = new Map<string, { vendorOnly: boolean; hasPath: boolean; grave: boolean }>();
-  for (const e of timeline) {
-    const key = eventHash(e);
-    if (!key) continue;
-    const rec = provenance.get(key) ?? { vendorOnly: true, hasPath: false, grave: false };
-    const p = eventPath(e);
-    if (p) {
-      rec.hasPath = true;
-      if (!VENDOR_INSTALL_ROOT.test(p)) rec.vendorOnly = false;
-    }
-    if (GRAVE_SEVERITY.has(e.severity)) rec.grave = true;
-    provenance.set(key, rec);
-  }
-  function isInstalledSoftware(hash: string): boolean {
-    const rec = provenance.get(hash);
-    return !!rec && rec.hasPath && rec.vendorOnly && !rec.grave;
-  }
-
-  // The binary's filename, for naming WHAT moved ("psexec.exe" reads far better than a hash
-  // prefix). Falls back to the short hash when no path was recorded for the file.
-  const binaryNameByHash = new Map<string, string>();
-  for (const e of timeline) {
-    const key = eventHash(e);
-    const p = eventPath(e);
-    if (!key || !p || binaryNameByHash.has(key)) continue;
-    const base = p.split(/[\\/]/).pop();
-    if (base) binaryNameByHash.set(key, base);
-  }
-
-  // shared-hash hops: chronological chain across every host the binary touched (high confidence).
-  const byHash = earliestPerHost(eventHash);
-  for (const [h, hosts] of byHash) {
-    if (hosts.size < 2) continue;
-    if (isInstalledSoftware(h)) continue; // installed vendor software ≠ movement
-    const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
-    const binary = binaryNameByHash.get(h) ?? shortHash(h);
-    for (let i = 1; i < ordered.length; i++) {
-      const from = ordered[i - 1],
-        to = ordered[i];
-      const fromAsset = eventAsset(from),
-        toAsset = eventAsset(to);
-      hops.push({
-        from: hostNodeId(fromAsset),
-        to: hostNodeId(toAsset),
-        fromTimestamp: from.timestamp,
-        toTimestamp: to.timestamp,
-        confidence: "high",
-        rule: "shared-hash",
-        actor: binary,
-        actorKind: "binary",
-        basis: `same binary ${shortHash(h)}: ${fromAsset} → ${toAsset}`,
-        eventIds: [from.id, to.id],
-      });
-    }
-  }
-
-  // shared-account hops: chronological chain of hosts the same (non-pseudo) account touched
-  // (medium confidence — a roaming account is signal, not proof of an attacker's hand).
-  const byAccount = new Map<string, Map<string, ForensicEvent>>();
-  for (const e of timeline) {
-    const asset = eventAsset(e);
-    if (!asset) continue;
-    for (const acct of canonicalAccounts(e)) {
-      if (isPseudoAccount(acct)) continue;
-      const hosts = byAccount.get(acct) ?? new Map<string, ForensicEvent>();
-      const assetKey = asset.toLowerCase();
-      const existing = hosts.get(assetKey);
-      if (!existing || timeOf(e.timestamp) < timeOf(existing.timestamp)) hosts.set(assetKey, e);
-      byAccount.set(acct, hosts);
-    }
-  }
-  for (const [acct, hosts] of byAccount) {
-    if (hosts.size < 2) continue;
-    const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
-    for (let i = 1; i < ordered.length; i++) {
-      const from = ordered[i - 1],
-        to = ordered[i];
-      const fromAsset = eventAsset(from),
-        toAsset = eventAsset(to);
-      hops.push({
-        from: hostNodeId(fromAsset),
-        to: hostNodeId(toAsset),
-        fromTimestamp: from.timestamp,
-        toTimestamp: to.timestamp,
-        confidence: "medium",
-        rule: "shared-account",
-        actor: acct,
-        actorKind: "account",
-        basis: `${acct} active on ${fromAsset} then ${toAsset}`,
-        eventIds: [from.id, to.id],
-      });
-    }
-  }
   if (hops.length === 0) return [];
 
   // ── stitch hops into ordered chains ───────────────────────────────────────────────────

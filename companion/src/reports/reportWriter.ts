@@ -24,12 +24,8 @@ import { forensicTimelineCsv, geoMapCsv } from "./csv.js";
 import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph, type TimeWindow } from "../analysis/assetGraph.js";
-import {
-  buildEvidenceGraph,
-  buildLateralPaths,
-  type EvidenceGraph,
-  type LateralPath,
-} from "../analysis/evidenceGraph.js";
+import { buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
+import { evidenceGraphRead, type EvidenceGraphRead } from "../analysis/sharedHostLinks.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
@@ -357,8 +353,8 @@ export class ReportWriter {
   // The causal evidence chain graph (process trees + lateral movement) for the case, derived on
   // demand with the same scope/legitimate filtering as the report. An optional time `window` (#83)
   // narrows it to events in that range.
-  async evidenceGraph(caseId: string, window?: TimeWindow, signal?: AbortSignal): Promise<EvidenceGraph> {
-    return buildEvidenceGraph(await this.loadFilteredState(caseId, false, signal), window);
+  async evidenceGraph(caseId: string, window?: TimeWindow, signal?: AbortSignal): Promise<EvidenceGraphRead> {
+    return evidenceGraphRead(await this.loadFilteredState(caseId, false, signal), window);
   }
 
   // Ordered lateral-movement chains (entry host → pivot → ... → target, #92) for the case, derived

@@ -4,6 +4,7 @@ import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { demoCaseDir, caseAlreadySeeded } from "./seedDemoPaths.js";
 import { demoBackfillEvent, demoBackfillFindings } from "./seedDemoBackfillFixtures.js";
+import { demoLateralLogons } from "./seedDemoLateralFixtures.js";
 import { writeDemoEvidence, type DemoSeedOutput } from "./seedDemoEvidence.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
@@ -1245,7 +1246,7 @@ export async function seedDemoCase(
     },
     ...dc01EnumBurst,
     ...beaconCheckIns,
-  ].concat(demoBackfillEvent); // e044, deliberately UNCOVERED — sorts to May 22 07:45, seedDemoBackfillFixtures.ts
+  ].concat(demoBackfillEvent, demoLateralLogons); // e044 (seedDemoBackfillFixtures.ts); e062–e064 (#3085)
 
   // ── Super-Timeline (raw host-triage artifact feed) ───────────────────────────
   // A separate, import-only store (analysis/superTimelineStore.ts) never touched by synthesis —

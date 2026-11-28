@@ -44,9 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Attack Path Hosts view, multi-host steps** — a step that names two or more hosts appears under each of them, and its time link in each row opens that host's own event (closes #3082)
+- **Lateral movement paths follow who connected to whom** — paths come from a network logon or remote-service install on the target that names its source host, so fan-out stays fan-out; hosts that only share a binary or account are listed separately, without arrows (closes #3085)
 - **Demo case Chain of Custody populated** — seeding the demo stores its five screenshots and four imports and records them on the chain of custody, so the panel and report appendix list them and Verify now passes (closes #3022)
 - **IPv6 with a dotted IPv4 tail masked whole** — an address such as `fd00::192.168.1.5` is one token instead of masking only up to the first octet and sending the rest of the IPv4 in clear (closes #2990)
-- **Demo case shows a lateral movement path** — a freshly seeded or reset demo reconstructs the workstation → DC01 → FS01 → WEB01 chain in Evidence Chain; Lateral Movement collection targets no longer list an account name as a host (closes #3024)
+- **Demo case shows a lateral movement path** — a freshly seeded or reset demo shows the workstation's PsExec movement to DC01, FS01 and WEB01 in Evidence Chain; Lateral Movement collection targets no longer list an account name as a host (closes #3024)
 - **Demo ransomware events name their host** — a freshly seeded demo gives every encrypt.exe event its server, so the binary's hash links DC01, FS01 and WEB01 (closes #3086)
 - **Demo Attack Path step 9 described** — the move to FS01 and WEB01 now says what happened instead of a lone "."; a description that is only punctuation is hidden (closes #3023)
 - **A custom value before an @domain restores** — a custom value (or a masked account) right before `@` and a domain no longer leaves a token inside the email token, so the answer restores to the original text (closes #2991)
