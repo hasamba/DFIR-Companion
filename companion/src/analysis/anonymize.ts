@@ -467,9 +467,10 @@ export function createAnonymizer(
   // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved. A last number
   // of 11-13 digits is a RID with an IPv4 glued after it only when three dotted numbers follow, or
   // a saved address or phone value the custom pass masked already (#3048). Text glued after the RID
-  // (`…-1001bob`) does not stop it (#3049).
+  // (`…-1001bob`) does not stop it (#3049). A last number of 11-14 digits before an IPv6 colon holds
+  // an address's first group (#3052).
   const SID_RE =
-    /\bS-1-5-21(?:-\d{1,10}){3}-(?:\d{1,10}|\d{11,13}(?=(?:\.\d{1,3}){3}|(?:\.\d{1,3}){0,2}\.ANON_(?:IP|EXTIP|PHONE)_\d))(?!\d)/gi;
+    /\bS-1-5-21(?:-\d{1,10}){3}-(?:\d{1,10}|\d{11,13}(?=(?:\.\d{1,3}){3}|(?:\.\d{1,3}){0,2}\.ANON_(?:IP|EXTIP|PHONE)_\d)|\d{11,14}(?=[0-9a-f]{0,3}:[0-9a-f:]))(?!\d)/gi;
   function anonSids(t: string): string {
     return t.replace(SID_RE, (m) => assign("REG", m));
   }

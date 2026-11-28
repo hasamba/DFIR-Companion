@@ -47,7 +47,23 @@ const DIGIT_GROUP = /:(\d{1,4})$/;
 // or dotted numbers glued after it. A RID with the address's first number glued on runs to 13 digits.
 const SID_TAIL_RE =
   /(?<![A-Za-z0-9_])(ANON_REG_\d+|[Ss]-1-5-21(?:-\d{1,10}){3}-\d{2,13})(?:((?:\.\d{1,3})*\.)(ANON_(?:PHONE|IP|EXTIP)_\d+)(?!\d)|((?:\.\d{1,3}){3,})\b)/g;
-const SID_VALUE = /^S-1-5-21(?:-\d{1,10}){3}-\d{1,13}$/i;
+const SID_VALUE = /^S-1-5-21(?:-\d{1,10}){3}-\d{1,14}$/i;
+// #3052: an IPv6 address that opens with "::" glued after a REG token or a SID left in clear. The
+// address scan reads the RID's digits into it ("1001::c0a8:105"), a literal it never masks. On a
+// seeded call the dotted IPv4 in it may be a saved IP token already.
+// The IPv4 inside a "::" mapped or compatible address, dotted or in two hex groups.
+const V6_DOTTED_V4 = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/i;
+const V6_HEX_V4 = /^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i;
+function sidV6Ipv4(v6: string): string | null {
+  const dotted = V6_DOTTED_V4.exec(v6);
+  if (dotted) return dotted[1];
+  const hex = V6_HEX_V4.exec(v6);
+  if (!hex) return null;
+  const [hi, lo] = [parseInt(hex[1], 16), parseInt(hex[2], 16)];
+  return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
+}
+const SID_V6_RE =
+  /(?<![A-Za-z0-9_])(ANON_REG_\d+|[Ss]-1-5-21(?:-\d{1,10}){4})(::(?:[0-9A-Fa-f]{1,4}:){0,6}(?:\d{1,3}(?:\.\d{1,3}){3}(?!\d)|[0-9A-Fa-f]{1,4}(?!:))|::(?:[Ff]{4}:)?ANON_(?:IP|EXTIP|PHONE)_\d+)(?![0-9A-Za-z_])/g;
 const SAVED_RUN = /^\d{1,3}(?:\.\d{1,3}){3,}$/;
 const OCTET = /^(?:0|[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])$/;
 
@@ -305,7 +321,7 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
   }
   function restore(raw: string, literals: readonly ReservedLiteral[]): string {
     for (const ip of readings.splice(0)) mintReadings(ip, "");
-    const t = [...phoneLeads].reduce(splitPhoneLead, sidTail(raw));
+    const t = sidV6([...phoneLeads].reduce(splitPhoneLead, sidTail(raw)));
     phoneLeads.clear();
     // Tokens of a whole dotted-tail address with more octets after it (#3012 shape 1), joined late.
     const dotted = new Set<string>();
@@ -475,6 +491,44 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
       const plain = r.tail.length === 1 && r.tail[0] === tail.slice(1) && d.ipv4Category(r.tail[0]);
       const p = phoneOut(c, !plain || d.suppressed.has(r.tail[0]));
       return { out: d.ended(tok + p.out, all, m.index, end + p.skip, t), skip: p.skip };
+    });
+  }
+  // #3052: the "::" address after a SID is read on its own, as it is after a space: masked when it
+  // is internal (fail closed) or its embedded IPv4 is one the IPv4 pass masks. Never saved: where
+  // it starts is a reading. A dotted IPv4 in it keeps the pair the IPv4 pass saved; before a fifth
+  // number the IPv4 pass keeps its own reading.
+  function sidV6(t: string): string {
+    return consume(t, SID_V6_RE, (m) => {
+      const [all, head, text] = m;
+      const keep = { out: all, skip: 0 };
+      // A seeded call: the custom pass masked the saved dotted IPv4 inside it already, maybe with
+      // the rest of a phone number after it ("10.0.0.100 555-0100"), which is split off.
+      const tk = /ANON_[A-Z]+_\d+/.exec(text)?.[0];
+      const real = tk ? (d.real(tk) ?? "") : "";
+      const ph = tk ? PHONE_HEAD.exec(real) : null;
+      const lead = ph && DOTTED_V4.test(ph[1]) ? ph : null;
+      const v6 = tk ? text.replace(tk, lead ? lead[1] : real) : text;
+      const end = m.index + all.length;
+      const sid = head.startsWith("ANON_") ? (d.real(head) ?? "") : head;
+      const dotted = v6.includes(".");
+      if (!SID_VALUE.test(sid) || !isIPv6(v6) || d.suppressed.has(v6.toLowerCase())) return keep;
+      if (dotted && FIFTH_OCTET.test(t.slice(end))) return keep;
+      const v4 = sidV6Ipv4(v6);
+      const cat4 = v4 && !d.suppressed.has(v4) ? d.ipv4Category(v4) : null;
+      const cat = cat4 ?? (d.base(v6) === "IP" ? "IP" : null);
+      if (!cat) return keep;
+      if (dotted && v4 && cat4) d.assign(cat4, v4); // today's saved pair
+      const tok = unsaved(d.assign(cat, v6), v6);
+      // A phone number that starts in its last number is split, as after a space (#3043).
+      if (lead) {
+        const rest = unsaved(
+          d.forcing(() => d.assign("PHONE", lead[3])),
+          lead[3],
+        );
+        return { out: d.ended(head + tok + lead[2] + rest, all, m.index, end, t), skip: 0 };
+      }
+      const p = phoneOut(endPhone(v6, t.slice(end, end + NEXT), rules()), false);
+      return { out: d.ended(head + tok + p.out, all, m.index, end + p.skip, t), skip: p.skip };
     });
   }
   // The dotted numbers a SID run holds: glued digits, the numbers before a saved phone value and its
