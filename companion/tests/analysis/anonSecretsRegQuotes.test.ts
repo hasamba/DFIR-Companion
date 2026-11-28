@@ -166,11 +166,11 @@ describe("redactSecretText — PowerShell here-strings (#3051)", () => {
     expect(out).toContain(`${PH}\nWrite-Host done`);
   });
 
-  it("leaves an empty here-string and a variable alone", () => {
+  it("leaves an empty here-string alone; a variable is followed to its assignment (#3054)", () => {
     const empty = `sp '${WP}' DefaultPassword @'\n'@`;
     expect(redactSecretText(empty)).toBe(empty);
     const variable = `$v = @'\nx\n'@\nsp '${WP}' DefaultPassword $v`;
-    expect(redactSecretText(variable)).toBe(variable);
+    expect(redactSecretText(variable)).toBe(`$v = @'\n${PH}\n'@\nsp '${WP}' DefaultPassword $v`);
   });
 });
 

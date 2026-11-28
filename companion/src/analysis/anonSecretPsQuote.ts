@@ -66,7 +66,6 @@ export function readValueQuoted(text: string, at: number, mode: QuoteMode = {}):
 // A here-string opener: `@'` / `@"` (or the JSON-escaped `@\"`), then the line break, raw or the
 // JSON-escaped `\n` / `\r\n`. The terminator is the same quote + `@` at the start of a line.
 const HERE_OPEN = /@(\\"|"|')[ \t]*(\r?\n|(?:\\r)?\\n)/y;
-export const PS_QUOTE_PATTERNS: readonly RegExp[] = [HERE_OPEN];
 
 /**
  * A here-string at `at` within `end` (#3051): its content between the opener's line break and the
@@ -88,4 +87,143 @@ export function readHereString(text: string, at: number, end: number): QuotedVal
   if (text.startsWith(cr, stop - cr.length)) stop -= cr.length;
   if (stop <= start) return null;
   return { span: [start, stop], after: k >= 0 ? start - nl.length + k + close.length : stop };
+}
+
+/**
+ * A quoted value walked with `''` only (`span`, opened at `open`), widened across its `""` / backtick
+ * escapes when the widened value still ends inside its call or hashtable (`ends` after it, within
+ * `limit`); the walked span otherwise.
+ */
+export function widen(
+  text: string,
+  open: number,
+  span: Span,
+  mode: QuoteMode,
+  ends: string,
+  limit: number,
+): Span {
+  const q = readValueQuoted(text, open, mode);
+  if (!q || q.span[0] !== span[0] || q.span[1] <= span[1] || q.span[1] > limit) return span;
+  let k = q.after;
+  while (text[k] === " " || text[k] === "\t") k += 1;
+  return ends.includes(text[k] ?? "") ? q.span : span;
+}
+
+// --- cmd-doubled quotes (#3054) ----------------------------------------------------------------
+// Inside an outer `"…"` (`powershell -c "sp ""K"" DefaultPassword ""v"""`), cmd writes a quote as
+// `""` (`\"\"` in a JSON string). An argument opened by one after a space runs to the next one on
+// the line, and only when that close is followed by a space, the outer quote, a separator or the
+// end, so a malformed close never moves where the command's next token starts.
+const DOUBLED_CLOSE_NEXT = /^(?:[ \t\r\n;|&]|\\"|"|\\[nrt]|$)/;
+
+export function readDoubled(text: string, at: number, end: number): QuotedValue | null {
+  const pair = text.startsWith('\\"\\"', at) ? '\\"\\"' : text.startsWith('""', at) ? '""' : null;
+  if (!pair || !/[ \t]/.test(text[at - 1] ?? "")) return null;
+  const start = at + pair.length;
+  if (start >= end || /[\s"\\]/.test(text[start])) return null;
+  const k = text.slice(start, end).indexOf(pair);
+  if (k < 0) return null;
+  const stop = start + k;
+  const content = text.slice(start, stop);
+  if (content.includes('"') || content.includes("\n")) return null;
+  const after = stop + pair.length;
+  return DOUBLED_CLOSE_NEXT.test(text.slice(after, after + 2)) ? { span: [start, stop], after } : null;
+}
+
+// --- Backtick escapes in a value name (#3054) --------------------------------------------------
+// `"Default`Password"` is DefaultPassword to PowerShell, and so is the name the walk reads from
+// `"DefaultPassword`"`. A backtick before a special escape (`n, `t, `0 …) makes another character,
+// so it is kept there. A single-quoted name keeps its backticks.
+const ESCAPE_BACKTICK = /`([^0abefnrtuv]|$)/g;
+
+/** The value name in `span` as PowerShell reads it, for the credential-name test only. */
+export function psNameText(text: string, span: Span, ps: boolean): string {
+  const name = text.slice(span[0], span[1]);
+  return ps && text[span[0] - 1] !== "'" ? name.replace(ESCAPE_BACKTICK, "$1") : name;
+}
+
+// --- Variable flow (#3054) ---------------------------------------------------------------------
+//   $v = @'⏎<pw>⏎'@; Set-ItemProperty <key> DefaultPassword $v
+// A whole `$name` (`${name}`, or a script:/global:/local:/private: scope) passed as the value of a
+// credential name is followed to the nearest `$name = <literal>` before it, within VAR_WINDOW,
+// case-insensitively. Only that assignment counts: when it is not a literal, nothing is taken. A
+// property, index or `$env:` reference is never followed. The assignments are listed in one pass,
+// only once a use is seen, and each literal is read once within its own window.
+const VAR_NAME = String.raw`\$(?:\{([A-Za-z_]\w{0,63})\}|(?:(?:script|global|local|private):)?([A-Za-z_]\w{0,63}))`;
+const VAR_REF = new RegExp(String.raw`${VAR_NAME}(?![\w.[:({])`, "iy");
+const VAR_ASSIGN = new RegExp(String.raw`(?<=^|[\s;{("\]]|\\[nrt])${VAR_NAME}[ \t]*=(?!=)[ \t]*`, "gi");
+const VAR_WINDOW = 4096;
+const LITERAL_WINDOW = 1024;
+const BARE_NUMBER = /\d{1,64}(?=[\s;|)}]|\\[nrt]|$)/y;
+
+export const PS_QUOTE_PATTERNS: readonly RegExp[] = [
+  HERE_OPEN,
+  DOUBLED_CLOSE_NEXT,
+  ESCAPE_BACKTICK,
+  VAR_REF,
+  VAR_ASSIGN,
+  BARE_NUMBER,
+];
+
+interface Assignment {
+  name: string;
+  at: number;
+  value: number;
+}
+
+// The literal assigned at `at` (the index after `=`): a here-string, a closed quoted value (widened
+// across its escapes when it then ends the statement), or a bare number; null for anything else.
+function assignedLiteral(text: string, at: number): Span | null {
+  const end = Math.min(text.length, at + LITERAL_WINDOW);
+  if (text[at] === "@") return readHereString(text, at, end)?.span ?? null;
+  if (text[at] === "'" || text[at] === '"' || text.startsWith('\\"', at)) {
+    const view = text.slice(0, end);
+    const q = readValueQuoted(view, at, { escapes: false });
+    if (!q || q.after <= q.span[1]) return null;
+    return widen(view, at, q.span, { ps: true }, ";})|\r\n\\", end);
+  }
+  BARE_NUMBER.lastIndex = at;
+  const m = BARE_NUMBER.exec(text);
+  return m ? [at, at + m[0].length] : null;
+}
+
+/** Resolves a variable passed as a credential value to the literal assigned to it (see above). */
+export interface PsVariables {
+  literal(at: number): Span | null;
+}
+
+export function psVariables(text: string): PsVariables {
+  let list: Assignment[] | null = null;
+  const read = new Map<number, Span | null>();
+  const literalAt = (value: number): Span | null => {
+    if (!read.has(value)) read.set(value, assignedLiteral(text, value));
+    return read.get(value) ?? null;
+  };
+  return {
+    literal(at: number): Span | null {
+      VAR_REF.lastIndex = at;
+      const ref = VAR_REF.exec(text);
+      if (!ref) return null;
+      const name = (ref[1] ?? ref[2]).toLowerCase();
+      list ??= [...text.matchAll(VAR_ASSIGN)].map((m) => ({
+        name: (m[1] ?? m[2]).toLowerCase(),
+        at: m.index,
+        value: m.index + m[0].length,
+      }));
+      // The last assignment whose `=` ends before the use, then back within the window.
+      let lo = 0;
+      let hi = list.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (list[mid].value <= at) lo = mid + 1;
+        else hi = mid;
+      }
+      for (let k = lo - 1; k >= 0 && at - list[k].at <= VAR_WINDOW; k -= 1) {
+        if (list[k].name !== name) continue;
+        const span = literalAt(list[k].value);
+        return span && span[1] <= at ? span : null;
+      }
+      return null;
+    },
+  };
 }

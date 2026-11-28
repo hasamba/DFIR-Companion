@@ -1,5 +1,14 @@
 import { isRegistryCredentialName } from "./anonSecretKeys.js";
-import { readHereString, readValueQuoted, type QuoteMode } from "./anonSecretPsQuote.js";
+import {
+  psNameText,
+  psVariables,
+  readDoubled,
+  readHereString,
+  readValueQuoted,
+  widen,
+  type PsVariables,
+  type QuoteMode,
+} from "./anonSecretPsQuote.js";
 import { regFileSpans } from "./anonSecretRegFile.js";
 import { isEncodedCue, readQuoted, type Span } from "./anonSecretValues.js";
 
@@ -457,6 +466,9 @@ function nextToken(
   // A PowerShell here-string (`@'…'@`, `@"…"@`) is one value across its lines (#3051).
   const here = ps && text[at] === "@" ? readHereString(text, at, end) : null;
   if (here) return { span: here.span, after: here.after, quoted: true, last: true };
+  // `""v""` inside `powershell -c "…"`: cmd's doubled quote around one argument (#3054).
+  const doubled = ps && nested ? readDoubled(text, at, end) : null;
+  if (doubled) return { span: doubled.span, after: doubled.after, quoted: true };
   if (text[at] === '"' && nested && !(/\s/.test(text[at - 1] ?? "") && /[^\s"]/.test(text[at + 1] ?? "")))
     return null;
   if (escapedQuote || text[at] === '"' || text[at] === "'") {
@@ -578,18 +590,22 @@ function psBind(
   named: Partial<Record<PsSlot, Token>>,
   positional: Token[],
   end: number,
+  vars: PsVariables,
 ): Span | null {
   const bound = { ...named };
   for (const s of (["path", "name", "value"] as const).filter((x) => !named[x]))
     bound[s] ??= positional.shift();
   const { name, value } = bound;
-  if (!name || !value || !isRegistryCredentialName(text.slice(name.span[0], name.span[1]))) return null;
+  if (!name || !value || !isRegistryCredentialName(psNameText(text, name.span, true))) return null;
   const data = psData(text, value, end);
-  return isLiteral(text.slice(data[0], data[1])) ? data : null;
+  if (isLiteral(text.slice(data[0], data[1]))) return data;
+  // A `$variable` (or `"$variable"`): the literal assigned to it (#3054).
+  const assigned = text[value.span[0] - 1] === "'" ? null : vars.literal(value.span[0]);
+  return assigned && beforeCue(text, assigned);
 }
 
 // Set-ItemProperty / New-ItemProperty / sp: Name and Value by name, prefix, `-P:v` or position.
-function psCommandSpan(text: string, from: number): PsResult {
+function psCommandSpan(text: string, from: number, vars: PsVariables): PsResult {
   const nested = insideQuotes(text, from);
   const end = Math.min(text.length, from + COMMAND_WINDOW);
   const named: Partial<Record<PsSlot, Token>> = {};
@@ -625,7 +641,7 @@ function psCommandSpan(text: string, from: number): PsResult {
     } else positional.push(t);
     t = t.last ? null : nextToken(text, i, end, nested, PS_SET_PROPERTY.stops, true);
   }
-  return { span: psBind(text, named, positionalOk ? positional : [], end), after: i, more };
+  return { span: psBind(text, named, positionalOk ? positional : [], end, vars), after: i, more };
 }
 
 // --- .NET calls and splatting (#3040) ----------------------------------------------------------
@@ -637,24 +653,15 @@ const SET_VALUE_RE = /(\]::|\.)SetValue\(/gi;
 
 // The quoted arguments of a call whose `(` ends at `at`, up to its `)`: null for a non-literal one.
 // A non-literal argument is skipped within the window, so many unclosed calls stay linear.
-// A quoted value walked with `''` only, widened across its `""` / backtick escapes when the widened
-// value still ends inside its call or hashtable (`ends` after it, within `limit`); else the walked span.
-function widen(text: string, open: number, span: Span, mode: QuoteMode, ends: string, limit: number): Span {
-  const q = readValueQuoted(text, open, mode);
-  if (!q || q.span[0] !== span[0] || q.span[1] <= span[1] || q.span[1] > limit) return span;
-  let k = q.after;
-  while (text[k] === " " || text[k] === "\t") k += 1;
-  return ends.includes(text[k] ?? "") ? q.span : span;
-}
-
 // The arguments are found with the `''` escape only, so a stray escape never shifts them; each is
 // then widened on its own (#3051).
-function callArgs(text: string, at: number, mode: QuoteMode): (Span | null)[] {
+function callArgs(text: string, at: number, mode: QuoteMode, starts: number[] = []): (Span | null)[] {
   const args: (Span | null)[] = [];
   const end = Math.min(text.length, at + COMMAND_WINDOW);
   let i = at;
   for (let n = 0; n < 4; n += 1) {
     while (text[i] === " " || text[i] === "\t") i += 1;
+    starts.push(i);
     const quote = text[i] === '"' || text[i] === "'" || text.startsWith('\\"', i);
     const here = mode.ps && text[i] === "@" ? readHereString(text, i, end) : null;
     const q = here ?? (quote ? readValueQuoted(text, i, { escapes: false }) : null);
@@ -678,19 +685,21 @@ const KEY_PATH_RE = /^(?:HKEY_|HK(?:LM|CU|CR|CC|U)(?:\\|:|$))/i;
 // `::SetValue(key, name, value)` is the static form. `.SetValue(name, value)` is a key object's, but
 // the static call is also written with a dot (`Registry.SetValue(…)`, C#): it is read as
 // (key, name, value) as well when its first argument is not a literal or is a key path (#3047).
-function setValueSpans(text: string): Span[] {
+function setValueSpans(text: string, vars: PsVariables): Span[] {
   const spans: Span[] = [];
   const re = new RegExp(SET_VALUE_RE.source, "gi");
   for (let m = re.exec(text); m; m = re.exec(text)) {
     // `]::` and `$key.` are PowerShell (backtick escapes); a bare dotted call may be C#.
     const ps = m[1] !== "." || /\$[\w:]+$/.test(text.slice(Math.max(0, m.index - 64), m.index));
-    const args = callArgs(text, re.lastIndex, { ps });
+    const starts: number[] = [];
+    const args = callArgs(text, re.lastIndex, { ps }, starts);
     const firsts = m[1] === "." ? [0] : [1];
     if (m[1] === "." && (!args[0] || KEY_PATH_RE.test(text.slice(args[0][0], args[0][1])))) firsts.push(1);
     for (const first of firsts) {
       const name = args[first];
-      const value = args[first + 1];
-      if (name && value && isRegistryCredentialName(text.slice(name[0], name[1])))
+      // A non-literal value may be a `$variable` assigned a literal earlier (#3054).
+      const value = args[first + 1] ?? (ps && starts[first + 1] ? vars.literal(starts[first + 1]) : null);
+      if (name && value && isRegistryCredentialName(psNameText(text, name, ps)))
         spans.push(beforeCue(text, value));
     }
   }
@@ -715,7 +724,7 @@ function splatStarts(text: string): number[] {
   return [...starts];
 }
 
-function splatSpans(text: string): Span[] {
+function splatSpans(text: string, vars: PsVariables): Span[] {
   const spans: Span[] = [];
   for (const at of splatStarts(text)) {
     const end = objectEnd(text, at + 2, Math.min(text.length, at + COMMAND_WINDOW));
@@ -724,15 +733,17 @@ function splatSpans(text: string): Span[] {
     const re = new RegExp(HASH_ENTRY_RE.source, "gi");
     let name: string | null = null;
     let value: Span | null = null;
+    let valueAt = -1;
     for (let m = re.exec(body); m; m = re.exec(body)) {
       const v = at + 1 + re.lastIndex;
       const here = text[v] === "@" ? readHereString(text, v, end) : null;
       const q = here ?? readValueQuoted(text, v, { escapes: false });
       const walked = q && q.after > q.span[1] && q.span[1] <= end ? q.span : null;
       const span = walked && !here ? widen(text, v, walked, { ps: true }, ";}\r\n", end) : walked;
-      if (m[2].toLowerCase() === "name") name ??= span ? text.slice(span[0], span[1]) : "";
-      else value ??= span;
+      if (m[2].toLowerCase() === "name") name ??= span ? psNameText(text, span, true) : "";
+      else if (!(value ??= span) && valueAt < 0) valueAt = v;
     }
+    value ??= valueAt < 0 ? null : vars.literal(valueAt);
     if (name && value && isRegistryCredentialName(name)) spans.push(beforeCue(text, value));
   }
   return spans;
@@ -740,20 +751,21 @@ function splatSpans(text: string): Span[] {
 
 function commandSpans(text: string, placeholder: string): Span[] {
   const spans: Span[] = [];
+  const vars = psVariables(text);
   for (const g of [REG_ADD, PS_SET_PROPERTY]) {
     const re = new RegExp(g.start.source, "gi");
     for (let m = re.exec(text); m; m = re.exec(text)) {
       let r: PsResult = { span: null, after: re.lastIndex, more: true };
       while (r.more) {
         const at = r.after;
-        r = g === REG_ADD ? { ...commandSpan(text, at, g), more: false } : psCommandSpan(text, at);
+        r = g === REG_ADD ? { ...commandSpan(text, at, g), more: false } : psCommandSpan(text, at, vars);
         if (r.span) spans.push(r.span);
         if (r.after <= at) break;
       }
       re.lastIndex = Math.max(re.lastIndex, r.after);
     }
   }
-  return [...spans, ...setValueSpans(text), ...splatSpans(text)].filter(
+  return [...spans, ...setValueSpans(text, vars), ...splatSpans(text, vars)].filter(
     (s) => s[1] > s[0] && !text.startsWith(placeholder, s[0]),
   );
 }
@@ -768,10 +780,12 @@ export function redactRegistryCredentialPairs(text: string, placeholder: string)
   ]
     .sort((a, b) => a[0] - b[0])
     // Overlapping spans merge into one, so no part of either is left out or written twice.
+    // Built in place: copying the list per span was quadratic in the number of spans (#3054).
     .reduce<Span[]>((kept, s) => {
       const last = kept[kept.length - 1];
-      if (!last || s[0] >= last[1]) return [...kept, s];
-      return [...kept.slice(0, -1), [last[0], Math.max(last[1], s[1])]];
+      if (!last || s[0] >= last[1]) kept.push(s);
+      else kept[kept.length - 1] = [last[0], Math.max(last[1], s[1])];
+      return kept;
     }, []);
   if (!spans.length) return text;
   let out = "";
