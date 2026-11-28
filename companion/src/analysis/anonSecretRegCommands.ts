@@ -1,5 +1,6 @@
 import { isRegistryCredentialName } from "./anonSecretKeys.js";
 import {
+  concatEnd,
   psNameText,
   psVariables,
   readDoubled,
@@ -53,7 +54,7 @@ interface CommandGrammar {
   stops: string;
 }
 const REG_ADD: CommandGrammar = {
-  start: /(?<![\w.-])reg(?:\.exe)?(?:\\?")?[ \t]+add(?=[ \t])/gi,
+  start: /(?:(?<![\w.-])|(?<=\\[nrt]))reg(?:\.exe)?(?:\\?")?[ \t]+add(?=[ \t])/gi,
   name: /^[/-]v$/i,
   data: /^[/-]d$/i,
   stops: "&|<>",
@@ -61,7 +62,7 @@ const REG_ADD: CommandGrammar = {
 // PowerShell binds a parameter by any unique prefix (`-N`, `-Va`; a bare `-V` is ambiguous with
 // -Verbose and fails) and by position: Path, then Name, then Value (#3040). `sp` is the alias.
 const PS_SET_PROPERTY: CommandGrammar = {
-  start: /(?<![\w.-])(?:(?:Set|New)-ItemProperty|sp)(?=[ \t])/gi,
+  start: /(?:(?<![\w.-])|(?<=\\[nrt]))(?:(?:Set|New)-ItemProperty|sp)(?=[ \t])/gi,
   name: /^-n(?:a(?:me?)?)?$/i,
   data: /^-va(?:l(?:ue?)?)?$/i,
   stops: ";|",
@@ -105,9 +106,37 @@ function insideQuotes(text: string, at: number): boolean {
   return odd;
 }
 
+// --- A JSON-escaped line break before the next command (#3057) ---------------------------------
+// In a JSON string (a 4104 ScriptBlockText) a script's lines are joined by `\n`. A command may start
+// right after one (the start patterns accept a `\n`, `\r` or `\t` before it, when its backslash is
+// not itself escaped: `C:\\nsp` is a path), and a token stops before one that is followed by another
+// registry command, so the walk never runs on into that command. Nothing else is cut there: a value
+// that holds a backslash and a letter (`ab\nq9`, `HKLM\x\new`) stays one token, as before.
+const NEXT_COMMAND = /(?:(?:Set|New)-ItemProperty|sp|reg(?:\.exe)?(?:\\?")?[ \t]+add)(?=[ \t])/iy;
+
+const escapedBreakAt = (text: string, k: number): boolean =>
+  text[k] === "\\" && "nrt".includes(text[k + 1] ?? "x") && !escapedAt(text, k);
+
+function startOk(text: string, at: number): boolean {
+  return !/\w/.test(text[at - 1] ?? "") || ("nrt".includes(text[at - 1]) && escapedBreakAt(text, at - 2));
+}
+
+function breaksBeforeCommand(text: string, k: number): boolean {
+  if (!escapedBreakAt(text, k)) return false;
+  NEXT_COMMAND.lastIndex = k + 2;
+  return NEXT_COMMAND.test(text);
+}
+
 function bareToken(text: string, at: number, end: number, stops: string): Token {
   let k = at;
-  while (k < end && !/\s/.test(text[k]) && text[k] !== '"' && !stops.includes(text[k])) k += 1;
+  while (
+    k < end &&
+    !/\s/.test(text[k]) &&
+    text[k] !== '"' &&
+    !stops.includes(text[k]) &&
+    !(k > at && breaksBeforeCommand(text, k))
+  )
+    k += 1;
   // `pw\"` inside a JSON string: the backslash escapes the closing quote, it is not data.
   const stop = text[k] === '"' && escapedAt(text, k) ? k - 1 : k;
   return { span: [at, stop], after: stop, quoted: false };
@@ -124,14 +153,16 @@ function nextToken(
   let at = i;
   while (at < end && (text[at] === " " || text[at] === "\t")) at += 1;
   if (at >= end || text[at] === "\r" || text[at] === "\n" || stops.includes(text[at])) return null;
+  if (breaksBeforeCommand(text, at)) return null;
   const escapedQuote = text.startsWith('\\"', at);
   // Inside `cmd /c "…"` a quote after a space that is followed by text opens a quoted argument
   // (`cmd /c "reg add "HKLM\…\Windows NT\…" /v …"`); any other bare quote closes the command.
   // A PowerShell here-string (`@'…'@`, `@"…"@`) is one value across its lines (#3051).
   const here = ps && text[at] === "@" ? readHereString(text, at, end) : null;
   if (here) return { span: here.span, after: here.after, quoted: true, last: true };
-  // `""v""` inside `powershell -c "…"`: cmd's doubled quote around one argument (#3054).
-  const doubled = ps && nested ? readDoubled(text, at, end) : null;
+  // `""v""` inside `powershell -c "…"` or `cmd /c "reg add …"`: cmd's doubled quote around one
+  // argument (#3054, #3057).
+  const doubled = nested ? readDoubled(text, at, end) : null;
   if (doubled) return { span: doubled.span, after: doubled.after, quoted: true };
   if (text[at] === '"' && nested && !(/\s/.test(text[at - 1] ?? "") && /[^\s"]/.test(text[at + 1] ?? "")))
     return null;
@@ -191,7 +222,12 @@ function isRegLauncher(text: string, value: string, t: Token, end: number, neste
   return next !== null && !next.quoted && /^add$/i.test(text.slice(next.span[0], next.span[1]));
 }
 
-function commandSpan(text: string, from: number, g: CommandGrammar): { span: Span | null; after: number } {
+function commandSpan(
+  text: string,
+  from: number,
+  g: CommandGrammar,
+  vars: PsVariables,
+): { span: Span | null; after: number } {
   const nested = insideQuotes(text, from);
   const end = Math.min(text.length, from + COMMAND_WINDOW);
   let name: string | null = null;
@@ -212,7 +248,11 @@ function commandSpan(text: string, from: number, g: CommandGrammar): { span: Spa
     t = nextToken(text, i, end, nested, g.stops);
   }
   const ok = name !== null && data !== null && isRegistryCredentialName(name);
-  return { span: ok && data && isLiteral(text.slice(data[0], data[1])) ? data : null, after: i };
+  if (!ok || !data) return { span: null, after: i };
+  if (isLiteral(text.slice(data[0], data[1]))) return { span: data, after: i };
+  // `/d $v` from PowerShell: the literal assigned to `$v` (#3057), never a single-quoted `'$v'`.
+  const assigned = text[data[0] - 1] === "'" ? null : vars.literal(data[0]);
+  return { span: assigned, after: i };
 }
 
 type PsSlot = "path" | "name" | "value";
@@ -247,6 +287,9 @@ interface PsResult {
   // A Name or Value given twice: a second command glued to this one (`…'0Set-ItemProperty …`)
   // starts at `after`, so the caller binds from there again.
   more: boolean;
+  // The command ended on a here-string: the scan resumes inside its body, so a command written in
+  // it is still read (#3057; the body may now run far past the window).
+  resume?: number;
 }
 
 function psBind(
@@ -264,8 +307,7 @@ function psBind(
   const data = psData(text, value, end);
   if (isLiteral(text.slice(data[0], data[1]))) return data;
   // A `$variable` (or `"$variable"`): the literal assigned to it (#3054).
-  const assigned = text[value.span[0] - 1] === "'" ? null : vars.literal(value.span[0]);
-  return assigned && beforeCue(text, assigned);
+  return text[value.span[0] - 1] === "'" ? null : vars.literal(value.span[0]);
 }
 
 // Set-ItemProperty / New-ItemProperty / sp: Name and Value by name, prefix, `-P:v` or position.
@@ -277,6 +319,7 @@ function psCommandSpan(text: string, from: number, vars: PsVariables): PsResult 
   let positionalOk = true;
   let pending: PsSlot | "other" | null = null;
   let more = false;
+  let resume: number | undefined;
   let i = from;
   for (let t = nextToken(text, i, end, nested, PS_SET_PROPERTY.stops, true); t && t.after > i;) {
     const raw = text.slice(t.span[0], t.span[1]);
@@ -303,9 +346,10 @@ function psCommandSpan(text: string, from: number, vars: PsVariables): PsResult 
       if (inline && slot && slot !== "switch" && slot !== "other") named[slot] = inline;
       else if (!inline && colon < 0 && slot !== "switch") pending = slot ?? "other";
     } else positional.push(t);
+    if (t.last) resume = t.span[0];
     t = t.last ? null : nextToken(text, i, end, nested, PS_SET_PROPERTY.stops, true);
   }
-  return { span: psBind(text, named, positionalOk ? positional : [], end, vars), after: i, more };
+  return { span: psBind(text, named, positionalOk ? positional : [], end, vars), after: i, more, resume };
 }
 
 // --- .NET calls and splatting (#3040) ----------------------------------------------------------
@@ -330,8 +374,11 @@ function callArgs(text: string, at: number, mode: QuoteMode, starts: number[] = 
     const here = mode.ps && text[i] === "@" ? readHereString(text, i, end) : null;
     const q = here ?? (quote ? readValueQuoted(text, i, { escapes: false }) : null);
     if (q && q.after > q.span[1]) {
-      args.push(here ? q.span : widen(text, i, q.span, mode, ",)", end));
-      i = q.after;
+      const span = here ? q.span : widen(text, i, q.span, mode, ",)", end);
+      // `'a' + 'b'`: one value (#3057).
+      const more = span === q.span && !here ? concatEnd(text, q.after, end) : null;
+      args.push(more ? [span[0], more.span[1]] : span);
+      i = more ? more.after : q.after;
     } else {
       args.push(null);
       while (i < end && !",)\n".includes(text[i])) i += 1;
@@ -362,9 +409,13 @@ function setValueSpans(text: string, vars: PsVariables): Span[] {
     for (const first of firsts) {
       const name = args[first];
       // A non-literal value may be a `$variable` assigned a literal earlier (#3054).
-      const value = args[first + 1] ?? (ps && starts[first + 1] ? vars.literal(starts[first + 1]) : null);
-      if (name && value && isRegistryCredentialName(psNameText(text, name, ps)))
-        spans.push(beforeCue(text, value));
+      const arg = args[first + 1];
+      const value = arg
+        ? beforeCue(text, arg)
+        : ps && starts[first + 1]
+          ? vars.literal(starts[first + 1])
+          : null;
+      if (name && value && isRegistryCredentialName(psNameText(text, name, ps))) spans.push(value);
     }
   }
   return spans;
@@ -373,16 +424,24 @@ function setValueSpans(text: string, vars: PsVariables): Span[] {
 // A hashtable entry `Name = …` or `Value = …` (key bare or quoted), after `{`, `;` or a line break.
 // The separator is matched, not looked behind for: a lookbehind over `[ \t]*` would rescan a long
 // run of spaces from every position in it.
-const HASH_ENTRY_RE = /[{;\n][ \t]*(["']?)(Name|Value)\1[ \t]*=[ \t]*/gi;
+// A JSON-escaped `\n` / `\r` separates entries too (a hashtable in a ScriptBlockText, #3057).
+const HASH_ENTRY_RE = /(?:[{;\n]|\\[nr])[ \t]*(["']?)(Name|Value)\1[ \t]*=[ \t]*/gi;
 
 // The hashtables worth reading: the nearest `@{` before each `Name =` entry, within the window. The
 // search starts from the entries, so a long script with many hashtables and no Name stays linear.
 function splatStarts(text: string): number[] {
   const starts = new Set<number>();
   const re = new RegExp(HASH_ENTRY_RE.source, "gi");
+  // The last `@{` before each entry, found by walking the openers forward with the entries: a
+  // backward search per entry rescanned a long hashtable once per entry (#3057).
+  let at = -1;
+  let next = text.indexOf("@{");
   for (let m = re.exec(text); m; m = re.exec(text)) {
     if (m[2].toLowerCase() !== "name") continue;
-    const at = text.lastIndexOf("@{", m.index);
+    while (next !== -1 && next <= m.index) {
+      at = next;
+      next = text.indexOf("@{", next + 1);
+    }
     if (at !== -1 && m.index - at <= COMMAND_WINDOW) starts.add(at);
   }
   return [...starts];
@@ -402,31 +461,54 @@ function splatSpans(text: string, vars: PsVariables): Span[] {
       const v = at + 1 + re.lastIndex;
       const here = text[v] === "@" ? readHereString(text, v, end) : null;
       const q = here ?? readValueQuoted(text, v, { escapes: false });
-      const walked = q && q.after > q.span[1] && q.span[1] <= end ? q.span : null;
-      const span = walked && !here ? widen(text, v, walked, { ps: true }, ";}\r\n", end) : walked;
+      // A here-string may run past the window (#3057); a quoted value ends inside the hashtable.
+      const walked = q && q.after > q.span[1] && (here || q.span[1] <= end) ? q.span : null;
+      const widened = walked && !here ? widen(text, v, walked, { ps: true }, ";}\r\n", end) : walked;
+      const more = q && widened && widened === walked && !here ? concatEnd(text, q.after, end) : null;
+      const span: Span | null = more && widened ? [widened[0], more.span[1]] : widened;
       if (m[2].toLowerCase() === "name") name ??= span ? psNameText(text, span, true) : "";
       else if (!(value ??= span) && valueAt < 0) valueAt = v;
     }
-    value ??= valueAt < 0 ? null : vars.literal(valueAt);
-    if (name && value && isRegistryCredentialName(name)) spans.push(beforeCue(text, value));
+    const data = value ? beforeCue(text, value) : valueAt < 0 ? null : vars.literal(valueAt);
+    if (name && data && isRegistryCredentialName(name)) spans.push(data);
   }
   return spans;
 }
 
+export const REG_COMMAND_PATTERNS: readonly RegExp[] = [
+  REG_ADD.start,
+  REG_ADD.name,
+  REG_ADD.data,
+  PS_SET_PROPERTY.start,
+  PS_SET_PROPERTY.name,
+  PS_SET_PROPERTY.data,
+  PS_PATH,
+  PS_SWITCH,
+  PS_VALUED,
+  NEXT_COMMAND,
+  ESCAPED_CUE,
+  SET_VALUE_RE,
+  KEY_PATH_RE,
+  HASH_ENTRY_RE,
+];
+
 export function commandSpans(text: string, placeholder: string): Span[] {
   const spans: Span[] = [];
-  const vars = psVariables(text);
+  // A variable's literal is cut before a cue once, however many uses it has.
+  const vars = psVariables(text, (span) => beforeCue(text, span));
   for (const g of [REG_ADD, PS_SET_PROPERTY]) {
     const re = new RegExp(g.start.source, "gi");
     for (let m = re.exec(text); m; m = re.exec(text)) {
+      if (!startOk(text, m.index)) continue;
       let r: PsResult = { span: null, after: re.lastIndex, more: true };
       while (r.more) {
         const at = r.after;
-        r = g === REG_ADD ? { ...commandSpan(text, at, g), more: false } : psCommandSpan(text, at, vars);
+        r =
+          g === REG_ADD ? { ...commandSpan(text, at, g, vars), more: false } : psCommandSpan(text, at, vars);
         if (r.span) spans.push(r.span);
         if (r.after <= at) break;
       }
-      re.lastIndex = Math.max(re.lastIndex, r.after);
+      re.lastIndex = Math.max(re.lastIndex, r.resume ?? r.after);
     }
   }
   return [...spans, ...setValueSpans(text, vars), ...splatSpans(text, vars)].filter(
