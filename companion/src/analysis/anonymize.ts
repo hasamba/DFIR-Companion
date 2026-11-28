@@ -18,6 +18,7 @@ import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
 import { CARD_RE, NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
 import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { literalEscapes } from "./anonTokenLiterals.js";
+import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
 import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
 import type { Ipv6Grade, Ipv6Span } from "./anonIpv6Scan.js";
 import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
@@ -388,10 +389,17 @@ export function createAnonymizer(
     return userToken(account);
   }
   function anonAccounts(t: string): string {
-    let out = t.replace(NETBIOS_ACCT, (m, dom: string) => (PATH_DOMAINS.test(dom) ? m : accountToken(m)));
+    // First an account whose qualifier or user a custom or saved value already tokenized (#3020).
+    const rules = { tokens: toReal, suppressed, internal: isInternalDomain, fileUser: FILE_EXT_USER };
+    const qualify = (real: string, raw: string) =>
+      assign(knownHosts.has(real.toLowerCase()) ? "HOST" : "DOMAIN", raw);
+    const user = (real: string, raw: string) =>
+      raw === real ? userToken(real) : (learn(real), guard("USER", raw));
+    const mint = { qualifier: qualify, user, whole: guard };
+    let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
+    out = out.replace(NETBIOS_ACCT, (m, dom: string) => (PATH_DOMAINS.test(dom) ? m : accountToken(m)));
     // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
-    out = out.replace(UPN_ACCT, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
-    return out;
+    return out.replace(UPN_ACCT, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
   }
   // Every learned username as a whole word, after HOST and DOMAIN have claimed their spans (so
   // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
