@@ -346,6 +346,14 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
               kind: "velociraptor",
               file: storedName,
               diff: tDiff,
+              // #3046: the settle's real count; with no settle this is the super-only request on a
+              // case with no store (one with a store returned above), so there is no count to record.
+              ...(settled
+                ? {
+                    superTimelineAddedCount: settled.superTimelineAddedCount,
+                    superTimelineAvailable: settled.superTimelineAvailable,
+                  }
+                : { superTimelineAvailable: false }),
               superTimelineEvicted,
               iocsDiff: iDiff,
             });
