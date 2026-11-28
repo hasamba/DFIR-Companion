@@ -15,6 +15,7 @@ import {
 import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
+import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
 import { CARD_RE, NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
 import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { literalEscapes } from "./anonTokenLiterals.js";
@@ -366,6 +367,12 @@ export function createAnonymizer(
   }
   for (const n of known.usernames ?? []) learn(n);
   const oneWay = createOneWayCheck(policy.redactSecrets, learn); // holds a glued secret (#3003, #3006)
+  const entityRules = {
+    internal: isInternalDomain,
+    fileUser: FILE_EXT_USER,
+    addressAt: (v: string) =>
+      policy.categories.IP ? (findReservableIpv6Spans(v, policy.maskPublicIps)[0]?.start ?? -1) : -1,
+  }; // #3039
   const guard = (cat: AnonTokenCategory, v: string) => (oneWay(v) ? SECRET_SENTINEL : assign(cat, v));
   const knownHosts = new Set(known.hosts.map((h) => h.toLowerCase()));
   const qualifier = (q: string) => assign(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q);
@@ -607,10 +614,11 @@ export function createAnonymizer(
     t = t.replace(IPV6_SENTINEL_RE, "");
     if (policy.redactSecrets) {
       const spans = () => (policy.categories.IP ? findReservableIpv6Spans(t, policy.maskPublicIps) : []);
-      t = growGluedRemnants(t, redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans), {
-        remember: oneWay.claim,
-        compiled,
-      });
+      const red = redactSecretsWithCustom(t, compiled, SECRET_SENTINEL, spans);
+      learnRedactedEntities(t, red, SECRET_SENTINEL, entityRules, (n) =>
+        oneWay(n) ? oneWay.claim(n) : learn(n),
+      );
+      t = growGluedRemnants(t, red, { remember: oneWay.claim, compiled });
     }
     // Then reserve IPv6 literals — before anonCustom or any other pass — so nothing can substitute
     // inside one. Only when IP masking is active: if the IP category is off, no later step ever
