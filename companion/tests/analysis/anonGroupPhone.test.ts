@@ -83,7 +83,11 @@ describe.each([false, true])("a phone number after a last group of digits (maskP
 
   it("leaves a group that starts no phone number as it was", () => {
     expect(run("x fd00::164 4624 y", mask).out).toBe("x ANON_IP_1 4624 y");
-    expect(run(`x fd00::164.${REST} y`, mask).out).toBe(`x ANON_IP_1.${REST} y`);
+  });
+
+  // #3048: the phone pass reads "164.555-0100" as one number, so the rest after the address is masked.
+  it("splits a phone number joined to the group by a dot", () => {
+    expect(run(`x fd00::164.${REST} y`, mask).out).toBe("x ANON_IP_1.ANON_PHONE_1 y");
   });
 });
 

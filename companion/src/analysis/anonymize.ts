@@ -436,8 +436,11 @@ export function createAnonymizer(
     return out;
   }
   // Machine/domain-issued user SIDs (S-1-5-21-…-RID) are victim-identifying. Well-known SIDs
-  // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved.
-  const SID_RE = /\bS-1-5-21(?:-\d{1,10}){4}\b/gi;
+  // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved. A last number
+  // of 11-13 digits is a RID with an IPv4 glued after it only when three dotted numbers follow, or
+  // a saved address or phone value the custom pass masked already (#3048).
+  const SID_RE =
+    /\bS-1-5-21(?:-\d{1,10}){3}-(?:\d{1,10}|\d{11,13}(?=(?:\.\d{1,3}){3}|(?:\.\d{1,3}){0,2}\.ANON_(?:IP|EXTIP|PHONE)_\d))\b/gi;
   function anonSids(t: string): string {
     return t.replace(SID_RE, (m) => assign("REG", m));
   }

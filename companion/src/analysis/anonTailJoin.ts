@@ -43,10 +43,12 @@ const PHONE_HEAD = /^(\d{1,3}(?:\.\d{1,3}){0,3})([^\d.]\D*)(\d.*)$/s;
 const NEXT = 32; // how far a phone number after the tail is read
 // A last group of digits a phone number can start in ("fd00::164" + " 555-0100", #3043).
 const DIGIT_GROUP = /:(\d{1,4})$/;
-// A REG token, then a saved phone value or dotted numbers glued after it (#3037).
+// A REG token (#3037) or a SID left in clear (REG off, #3048), then a saved phone or address value
+// or dotted numbers glued after it. A RID with the address's first number glued on runs to 13 digits.
 const SID_TAIL_RE =
-  /(?<![A-Za-z0-9_])(ANON_REG_\d+)(?:((?:\.\d{1,3})*\.)(ANON_PHONE_\d+)(?!\d)|((?:\.\d{1,3}){3,})\b)/g;
-const SID_VALUE = /^S-1-5-21(?:-\d{1,10}){4}$/i;
+  /(?<![A-Za-z0-9_])(ANON_REG_\d+|[Ss]-1-5-21(?:-\d{1,10}){3}-\d{2,13})(?:((?:\.\d{1,3})*\.)(ANON_(?:PHONE|IP|EXTIP)_\d+)(?!\d)|((?:\.\d{1,3}){3,})\b)/g;
+const SID_VALUE = /^S-1-5-21(?:-\d{1,10}){3}-\d{1,13}$/i;
+const SAVED_RUN = /^\d{1,3}(?:\.\d{1,3}){3,}$/;
 const OCTET = /^(?:0|[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])$/;
 
 /** Whether an IPv4 glued right after this point of the text could be read as its own address. */
@@ -99,9 +101,10 @@ function lastOctetPhone(ip: string, next: string, rules: TailRules): Crossing | 
 // The end of an address a phone number may start in: the dotted IPv4 after its first number
 // ("::ffff:198" + ".51.100.120" + " 4624", as for a cut tail), or a last group of digits
 // ("fd00::" + "164" + " 555-0100", #3043). A plain IPv4 keeps lastOctetPhone (#3018).
+// A last group of digits also opens a dotted phone number ("fd00::164" + ".555.0100", #3048).
 function endPhone(value: string, next: string, rules: TailRules): Crossing | null {
   if (DOTTED_V4.test(value)) return lastOctetPhone(value, next, rules);
-  if (FIFTH_OCTET.test(next)) return null;
+  if (DOTTED_V6.test(value) && FIFTH_OCTET.test(next)) return null;
   const ipv4 = value.slice(value.lastIndexOf(":") + 1);
   const seg = DOTTED_V6.test(value) ? ipv4.slice(ipv4.indexOf(".")) : DIGIT_GROUP.exec(value)?.[1];
   const c = seg ? crossing(seg, next, rules.crossers) : null;
@@ -115,7 +118,7 @@ function endPhone(value: string, next: string, rules: TailRules): Crossing | nul
 function sidReadings(sid: string, dotted: string): { all: string[]; tail: string[] } {
   const rid = sid.slice(sid.lastIndexOf("-") + 1);
   const rest = dotted.split(".").slice(1, 4).join(".");
-  const heads = [1, 2, 3].filter((n) => n < rid.length && OCTET.test(rid.slice(-n)));
+  const heads = [3, 2, 1].filter((n) => n < rid.length && OCTET.test(rid.slice(-n)));
   const tail = dotted.match(IPV4_READ) ?? [];
   return { all: [...heads.map((n) => `${rid.slice(-n)}.${rest}`), ...tail], tail };
 }
@@ -427,32 +430,41 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const p = phoneOut(c, false);
     return { out: d.ended(tok + p.out, value, at, end + p.skip, t), skip: p.skip };
   }
-  // #3037: a SID with an IPv4 glued right after it ("S-1-5-21-…-1001" + "192.168.1.5"). The RID took
+  // #3037: a SID with an IPv4 glued right after it ("S-1-5-21-…-1001" + the address). The RID took
   // the address's first number, and where the address starts cannot be known, so the dotted numbers
   // after the REG token join it in one token, forced and never saved. The SID's pair and every
   // address the IPv4 pass reads in the run stay minted, so the saved values do not change. Only when
   // a reading is one the IPv4 pass masks. A phone number that starts in the run is split, and so is a
   // saved phone value the run ends in. It runs in `restore`, so only with the IP category on.
+  // #3048: with the REG category off the SID is still in clear. Its prefix stays so; the RID digits
+  // and the run are one token under the category of a reading the IPv4 pass masks. A run that ends
+  // in a saved address (a seeded call) joins the same way.
   function sidTail(t: string): string {
     return consume(t, SID_TAIL_RE, (m) => {
-      const [all, token, lead = "", phoneTok = "", tail = ""] = m;
+      const [all, head, lead = "", savedTok = "", tail = ""] = m;
       const keep = { out: all, skip: 0 };
-      const sid = d.real(token) ?? "";
-      const ph = phoneTok ? PHONE_HEAD.exec(d.real(phoneTok) ?? "") : null;
-      const dotted = phoneTok ? lead + (ph?.[1] ?? "") : tail;
-      if (!SID_VALUE.test(sid) || (phoneTok && (!ph || dotted.split(".").length < 4))) return keep;
-      const r = sidReadings(sid, dotted);
-      if (!r.all.some((ip) => d.ipv4Category(ip) && !d.suppressed.has(ip))) return keep;
+      const raw = !head.startsWith("ANON_");
+      const sid = raw ? head : (d.real(head) ?? "");
+      const run = SID_VALUE.test(sid) ? sidRun(lead, savedTok, tail, raw) : null;
+      if (!run) return keep;
+      const r = sidReadings(sid, run.dotted);
+      const cats = r.all.map((ip) => (d.suppressed.has(ip) ? null : d.ipv4Category(ip)));
+      const cat = raw ? cats.find((c) => c !== null) : cats.some((c) => c !== null) ? "REG" : null;
+      if (!cat) return keep;
       const end = m.index + all.length;
-      const c = ph ? null : crossing(tail, t.slice(end, end + NEXT), d.crossers());
+      const c = run.phone ? null : crossing(run.dotted, t.slice(end, end + NEXT), d.crossers());
       if (!phoneOk(c, d.suppressed)) return keep;
       for (const ip of r.tail) mintReadings(ip, "");
-      const whole = sid + dotted;
-      const tok = unsaved(
-        d.forcing(() => d.assign("REG", whole)),
-        whole,
-      );
-      if (ph) {
+      const cut = raw ? sid.lastIndexOf("-") + 1 : 0;
+      const whole = sid.slice(cut) + run.dotted;
+      const tok =
+        sid.slice(0, cut) +
+        unsaved(
+          d.forcing(() => d.assign(cat, whole)),
+          whole,
+        );
+      if (run.phone) {
+        const ph = run.phone;
         const rest = unsaved(
           d.forcing(() => d.assign("PHONE", ph[3])),
           ph[3],
@@ -464,6 +476,22 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
       const p = phoneOut(c, !plain || d.suppressed.has(r.tail[0]));
       return { out: d.ended(tok + p.out, all, m.index, end + p.skip, t), skip: p.skip };
     });
+  }
+  // The dotted numbers a SID run holds: glued digits, the numbers before a saved phone value and its
+  // first number, or (after a SID in clear only) a saved address value. null: not a run.
+  function sidRun(
+    lead: string,
+    savedTok: string,
+    tail: string,
+    raw: boolean,
+  ): { dotted: string; phone: RegExpExecArray | null } | null {
+    if (!savedTok) return { dotted: tail, phone: null };
+    const value = d.real(savedTok) ?? "";
+    if (!savedTok.startsWith("ANON_PHONE_"))
+      return raw && SAVED_RUN.test(value) ? { dotted: lead + value, phone: null } : null;
+    const ph = PHONE_HEAD.exec(value);
+    const dotted = lead + (ph?.[1] ?? "");
+    return ph && dotted.split(".").length >= 4 ? { dotted, phone: ph } : null;
   }
   function joinOne(t: string, token: string): string {
     const value = d.real(token);
