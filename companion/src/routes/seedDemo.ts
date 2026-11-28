@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { isValidCaseId, CaseAlreadyExistsError } from "../storage/caseStore.js";
 import { seedDemoCase, DEMO_CASE_ID_DEFAULT } from "../analysis/seedDemoCase.js";
+import { seedDemoWithCustody } from "../analysis/seedDemoEvidence.js";
+import { warnLine } from "../logging/serverLogger.js";
 import { isTerminal } from "../analysis/jobRegistry.js";
 import { linkNewCase } from "./serverSets.js";
 import type { RouteContext } from "./context.js";
@@ -87,12 +89,22 @@ export function registerSeedDemoRoutes(app: Express, ctx: RouteContext): void {
       const seedId = caseId ?? DEMO_CASE_ID_DEFAULT;
       if (options.jobManager?.isStopping(seedId))
         return res.status(409).json({ error: stoppingMessage(seedId) });
-      const result = await store.withSeedSlot(seedId, async (isNew, generation) => {
-        if (isNew) options.teamAuth?.store.deleteCaseAccess(seedId, requestAuthentication(req)?.identity);
-        return seedDemoCase(store.casesRoot, { caseId, force, generation });
-      });
+      // The demo's chain of custody is recorded once the slot closes (#3022, seedDemoEvidence.ts).
+      const result = await seedDemoWithCustody(
+        store,
+        options.custodyStore,
+        seedId,
+        async (isNew, generation) => {
+          if (isNew) options.teamAuth?.store.deleteCaseAccess(seedId, requestAuthentication(req)?.identity);
+          return seedDemoCase(store.casesRoot, { caseId, force, generation });
+        },
+      );
       options.teamAuth?.grantCreator(req, result.caseId);
       linkNewCase(ctx, result.caseId, { keepExisting: true }); // a reseed keeps the case's set
+      if (result.custodyError)
+        warnLine(
+          `[demo] case ${result.caseId} seeded, but its custody was not recorded: ${result.custodyError}`,
+        );
       return res.status(201).json(result);
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
