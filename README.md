@@ -23,7 +23,11 @@ stays on disk, and the AI provider is yours to choose.
 > from **Velociraptor, Security Onion, Chainsaw, Hayabusa, THOR, Cyber Triage, EDR/SIEM**,
 > correlates them into one forensic timeline, and synthesizes findings, attacker path, IOCs, and reports.
 > The value is **"so what"**, not re-deriving alerts.
->
+
+> **Warning - use at your own risk.** You use DFIR Companion on your own responsibility. The
+> creator and contributors take no responsibility or liability for how you use it, or for any
+> result, decision, or damage that follows. Output can be wrong or incomplete. Verify it
+> independently. See the [Disclaimer](#disclaimer).
 
 Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=demo
  
