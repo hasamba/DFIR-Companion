@@ -38,13 +38,19 @@ export const PHONE_E164 = /(?<![A-Za-z0-9._-])\+\d{7,15}\b/g;
 // uses `glued`; raw-text readers, and the value passes over a profile name (the name's user token
 // already hides such a number, and carving it would show the separators), keep PHONE_E164. The "+"
 // is checked first and the lookbehinds are bounded, so a long run is never rescanned at every index.
+// A second run after the IL/NANP patterns reads a number glued after their phone token (review).
 export const E164 = {
   glued:
-    /(?=\+\d)(?:(?<![A-Za-z0-9._-])|(?<=ANON_(?:EMAIL|USER|DOMAIN|HOST|PERSON|OTHER)_\d{1,9}|@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,8}))\+\d{7,15}\b/g,
+    /(?=\+\d)(?:(?<![A-Za-z0-9._-])|(?<=ANON_(?:EMAIL|USER|DOMAIN|HOST|PERSON|OTHER|PHONE)_\d{1,9}|@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,8}))\+\d{7,15}\b/g,
   plain: PHONE_E164,
 };
 export const PHONE_IL = /\b0(?:5\d|[2-46-9])-?\d{7}\b/g;
 export const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
+// The phone pass's IL/NANP readings: a number may also end right before the token of a glued E.164
+// number, which took the boundary the plain patterns need (review).
+const beforePhone = (re: RegExp) =>
+  new RegExp(re.source.replace(/\\b$/, String.raw`(?:\b|(?=ANON_PHONE_\d))`), "g");
+export const BEFORE_PHONE = { il: beforePhone(PHONE_IL), nanp: beforePhone(PHONE_NANP) };
 
 // Exactly nine digits, not adjacent to another digit, a dot, a dash, or an underscore. The
 // lookarounds keep this out of longer runs (byte counts, ten-digit unix seconds), dotted version

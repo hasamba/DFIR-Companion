@@ -16,7 +16,7 @@ import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
 import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
-import { NATID_RE, E164, PHONE_IL, PHONE_NANP, replaceCards } from "./anonPiiPatterns.js";
+import { NATID_RE, E164, PHONE_IL, PHONE_NANP, BEFORE_PHONE, replaceCards } from "./anonPiiPatterns.js";
 import { replaceEncodedCommands } from "./anonEncodedCmd.js";
 import { replaceGluedIpv4Runs } from "./anonGluedPairs.js"; // + the card reading master had (#3068)
 import { replaceCardOnlyPairs, replaceGluedPairs, type PairRules } from "./anonGluedPairs.js";
@@ -456,7 +456,7 @@ export function createAnonymizer(
   }
   const valuesIn = valuePasses(policy.categories, {
     ...{ CMD: anonEncodedCmd, REG: anonSids, IP: (t: string) => anonIpv4(t, false) },
-    ...{ CARD: anonCards, PHONE: (t: string) => anonPhones(t, E164.plain), NATID: anonNatIds },
+    ...{ CARD: anonCards, PHONE: (t: string) => anonPhones(t, false), NATID: anonNatIds },
   });
   function anonEncodedCmd(t: string): string {
     const cmd = (blob: string) => assign("CMD", blob);
@@ -561,17 +561,17 @@ export function createAnonymizer(
     return replaceCards(replaceCardOnlyPairs(t, pairRules()), (m) => assign("CARD", m)); // + glued (#3058, #3062)
   }
   function pairRules(): PairRules {
-    const { IP: ip, CARD: card, PHONE: phone } = policy.categories;
-    return { ip, card, phone, category: ipv4Category, internal: isInternalIp, assign, ends };
+    const { IP: ip, CARD: card, PHONE: phone, REG: reg } = policy.categories;
+    return { ip, card, phone, reg, category: ipv4Category, internal: isInternalIp, assign, ends };
   }
 
   // E.164 runs first: it is the most specific, and an international number has no leading zero
   // for the Israeli pattern to latch onto.
-  function anonPhones(t: string, e164 = E164.glued): string {
-    let out = t.replace(e164, (m) => assign("PHONE", m));
-    out = out.replace(PHONE_IL, (m) => assign("PHONE", m));
-    out = out.replace(PHONE_NANP, (m) => assign("PHONE", m));
-    return out;
+  function anonPhones(t: string, glued = true): string {
+    const mint = (m: string) => assign("PHONE", m);
+    if (!glued) return t.replace(E164.plain, mint).replace(PHONE_IL, mint).replace(PHONE_NANP, mint);
+    const out = t.replace(E164.glued, mint).replace(BEFORE_PHONE.il, mint).replace(BEFORE_PHONE.nanp, mint);
+    return out.replace(E164.glued, mint); // again: a number glued after a phone token (review)
   }
 
   // KNOWN LIMITATION: roughly one in ten arbitrary nine-digit numbers passes the check digit, and

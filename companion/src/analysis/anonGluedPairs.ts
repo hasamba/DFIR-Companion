@@ -25,6 +25,8 @@ export interface PairRules {
   readonly phone: boolean;
   /** The call's token ends: `ended` splices a token before a digit (#2992), `aliasEnd` (#3071). */
   readonly ends: Pick<TokenEnds, "aliasEnd" | "ended">;
+  /** Whether the REG category is on: a SID before a pair is folded into a REG token (review). */
+  readonly reg?: boolean;
   /** False: no address glued after a word is split off. A profile name keeps its one token, as before. */
   readonly word?: boolean;
 }
@@ -32,6 +34,9 @@ export interface PairRules {
 const V4 = String.raw`\d{1,3}(?:\.\d{1,3}){3}`;
 const HEAD3 = String.raw`\d{1,3}\.\d{1,3}\.\d{1,3}`;
 // Not inside a word or a dotted run, nor after an address group ("abcd:", anonTailJoin's place).
+// A pair never starts at a SID's number (review): one that started at the RID left the SID's prefix in
+// clear. A pair after a SID is matched with the SID in front (group 1); the SID gets a REG token.
+const SID_HEAD = String.raw`(?:\b([Ss]-1-5-21(?:-\d{1,10}){0,3}-)|(?<![Ss]-1-5-21(?:-\d{1,10}){0,3}-))`;
 const V4_START = String.raw`(?<![\w.]|[0-9A-Fa-f]:)`;
 type Shape = {
   readonly src: string;
@@ -63,14 +68,17 @@ const FRONT: readonly Shape[] = [
 ];
 const CARD_FIRST = [...SHAPES, ...FRONT].map((s) => ({
   ...s,
-  re: new RegExp(String.raw`(?<![\w.])(${s.src})(${V4})(?!\w|\.\d)`, "g"),
+  re: new RegExp(String.raw`${SID_HEAD}(?<![\w.])(${s.src})(${V4})(?!\w|\.\d)`, "g"),
 }));
 const IP_FIRST = SHAPES.map((s) => ({
   ...s,
-  re: new RegExp(String.raw`${V4_START}(${HEAD3}\.\d{1,3}?)(${s.src})(?!\w)`, "g"),
+  re: new RegExp(String.raw`${SID_HEAD}${V4_START}(${HEAD3}\.\d{1,3}?)(${s.src})(?!\w)`, "g"),
 }));
 // Two addresses: the glued middle holds the first one's last octet and the second one's first.
-const V4_PAIR_RE = new RegExp(String.raw`${V4_START}(${HEAD3})\.(\d{2,6})\.(${HEAD3})(?!\w|\.\d)`, "g");
+const V4_PAIR_RE = new RegExp(
+  String.raw`${SID_HEAD}${V4_START}(${HEAD3})\.(\d{2,6})\.(${HEAD3})(?!\w|\.\d)`,
+  "g",
+);
 const OCTET = /^(?:0|[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])$/;
 const validV4 = (ip: string) => ip.split(".").every((p) => Number(p) <= 255);
 const lastOctetOk = (ip: string) => OCTET.test(ip.slice(ip.lastIndexOf(".") + 1)) && validV4(ip);
@@ -78,6 +86,20 @@ const digitsOf = (raw: string) => raw.replace(/[ -]/g, "");
 /** The digits a card match is judged on: a front-glued one by its last group widths' worth. */
 const coreOf = (raw: string, s: Shape) =>
   s.front ? digitsOf(raw).slice(-s.shape.widths.reduce((n, w) => n + w, 0)) : digitsOf(raw);
+
+/** A match's SID head ("" without one), its groups after the head, and the glued run itself. */
+function headOf(m: RegExpExecArray) {
+  const head = m[1] ?? "";
+  return { head, g: m.slice(2), run: m[0].slice(head.length), at: m.index + head.length };
+}
+
+/**
+ * A pair's output after its SID head: the head gets a REG token with the REG category on. A first part
+ * left in clear (suppressed, or not masked) keeps the head as is: the SID pass reads it with the RID.
+ */
+function withHead(head: string, rest: string, r: PairRules): string {
+  return !head || !r.reg || /^\d/.test(rest) ? head + rest : r.assign("REG", head) + rest;
+}
 
 /** The minting helpers both passes share. `old` mints what #3058 read in a pair (saved pairs only). */
 function minters(r: PairRules) {
@@ -99,27 +121,35 @@ function minters(r: PairRules) {
 export function replaceGluedPairs(text: string, r: PairRules): string {
   const { maskable, ip, card, old } = minters(r);
   // #3078: a part kept in clear (suppressed) opens with a digit; the token before it is spliced as #2992.
-  const join = (first: string, value: string, second: string, m: RegExpExecArray) =>
-    /^\d/.test(second)
-      ? r.ends.ended(first, value, m.index, m.index + value.length, m.input) + second
+  const join = (first: string, value: string, second: string, m: RegExpExecArray) => {
+    const { at } = headOf(m);
+    return /^\d/.test(second)
+      ? r.ends.ended(first, value, at, at + value.length, m.input) + second
       : first + second;
+  };
   let out = text;
   if (r.card) {
     for (const s of CARD_FIRST)
       out = replaceEach(out, s.re, (m) => {
-        const [c, a] = [m[1], m[2]];
+        const { head, g, run } = headOf(m);
+        const [c, a] = g;
         if (!cardOk(coreOf(c, s), s.shape) || !validV4(a) || !maskable(a)) return null;
         if (s.bare && isCardNumber(c + a.slice(0, a.indexOf(".")))) return null; // CARD_RE's whole run
-        return (old(m[0]), join(card(c), c, ip(a), m));
+        return (old(run), withHead(head, join(card(c), c, ip(a), m), r));
       });
     for (const s of IP_FIRST)
       out = replaceEach(out, s.re, (m) => {
-        const [a, c] = [m[1], m[2]];
+        const { head, g, run } = headOf(m);
+        const [a, c] = g;
         if (!lastOctetOk(a) || !maskable(a) || !cardOk(digitsOf(c), s.shape)) return null;
-        return (old(m[0]), join(ip(a), a, card(c), m));
+        return (old(run), withHead(head, join(ip(a), a, card(c), m), r));
       });
   }
-  return r.ip ? replaceEach(out, V4_PAIR_RE, (m) => splitPair(m, maskable, r, ip, old, join)) : out;
+  if (!r.ip) return out;
+  return replaceEach(out, V4_PAIR_RE, (m) => {
+    const res = splitPair(m, maskable, r, ip, old, join);
+    return res === null ? null : withHead(headOf(m).head, res, r);
+  });
 }
 
 /**
@@ -152,17 +182,19 @@ export function replaceCardOnlyPairs(text: string, r: PairRules): string {
   let out = text;
   for (const s of CARD_FIRST)
     out = replaceEach(out, s.re, (m) => {
-      const [c, a] = [m[1], m[2]];
+      const { head, g, run, at } = headOf(m);
+      const [c, a] = g;
       if (!s.alone || !cardOk(digitsOf(c), s.shape) || !validV4(a) || maskable(a)) return null;
       if (s.bare && isCardNumber(c + a.slice(0, a.indexOf(".")))) return null;
-      return (old(m[0]), r.ends.ended(card(c), c, m.index, m.index + c.length, out) + a);
+      return (old(run), head + r.ends.ended(card(c), c, at, at + c.length, out) + a);
     });
   const bare = IP_FIRST[IP_FIRST.length - 1];
   return replaceEach(out, bare.re, (m) => {
-    const [a, c] = [m[1], m[2]];
+    const { head, g, run } = headOf(m);
+    const [a, c] = g;
     if (!lastOctetOk(a) || maskable(a) || !cardOk(c, bare.shape)) return null;
     if (isCardNumber(a.slice(a.lastIndexOf(".") + 1) + c)) return null;
-    return (old(m[0]), a + card(c));
+    return (old(run), head + a + card(c));
   });
 }
 
@@ -175,7 +207,7 @@ function splitPair(
   old: (run: string) => void,
   join: (first: string, value: string, second: string, m: RegExpExecArray) => string,
 ): string | null {
-  const [head, mid, tail] = [m[1], m[2], m[3]];
+  const [head, mid, tail] = headOf(m).g;
   if (OCTET.test(mid) && maskable(`${head}.${mid}`)) return null;
   let best: { a: string; b: string; rank: number } | null = null;
   for (let i = 1; i <= 3 && i < mid.length; i++) {
@@ -187,6 +219,6 @@ function splitPair(
     if (!best || rank > best.rank) best = { a, b, rank };
   }
   if (!best) return null;
-  old(m[0]);
+  old(headOf(m).run);
   return join(maskable(best.a) ? ip(best.a) : best.a, best.a, ip(best.b), m);
 }

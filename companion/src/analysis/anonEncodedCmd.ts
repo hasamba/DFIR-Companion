@@ -16,6 +16,10 @@ export interface EncodedCmdDeps {
 // `-enc <blob>10.0.0.5` read `10` into the blob and left `.0.0.5` in clear.
 const DOTTED_TAIL = /(?:\.\d{1,3}){3,}(?!\d)/y;
 const ENDS_IN_DIGIT = /\d$/;
+// A blob run that swallowed a decoder cue (`<blob>FromBase64String(`) hid the cue in its token, so the
+// FROM_B64 pass never saw the quoted payload after it (review). The payload is read right here.
+const CUE_END = /FromBase64String$/i;
+const QUOTED = new RegExp(FROM_B64_RE.source.replace("FromBase64String", ""), "iy");
 
 /** The dotted tail after a blob that ends in a digit and has no padding, or "". */
 function dottedTail(blob: string, pad: string, t: string, end: number): string {
@@ -37,6 +41,13 @@ export function replaceEncodedCommands(t: string, deps: EncodedCmdDeps): string 
   for (let m = re.exec(t); m; m = re.exec(t)) {
     const [whole, flag, blob, pad] = m;
     const at = m.index;
+    QUOTED.lastIndex = at + whole.length;
+    const q = !pad && CUE_END.test(blob) ? QUOTED.exec(t) : null;
+    if (q) {
+      out += t.slice(last, at) + flag + deps.cmd(blob) + q[1] + deps.cmd(q[2]) + q[3];
+      last = re.lastIndex = QUOTED.lastIndex;
+      continue;
+    }
     const tail = dottedTail(blob, pad, t, at + whole.length);
     const end = at + whole.length + tail.length;
     const keep = pad && deps.ip && ipv4StartsAt(t, end); // the address keeps its `=` (#3060)
