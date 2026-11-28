@@ -109,22 +109,36 @@ export const VENDOR_SECRETS: readonly RegExp[] = [
 const EDGE_GUARD = /\\b|\(\?<?!\[[^\]]*\](?:\{\d+(?:,\d*)?\})?\)/g;
 const stripEdges = (re: RegExp, flags: string) => new RegExp(re.source.replace(EDGE_GUARD, ""), flags);
 
+// #3044: stripped, the legacy sk- shape read any 20 characters after "sk-" as a key, so a name such as
+// disk-0123... went one way. Glued, the body must hold a letter: a digit-only body is a name. Every
+// other body stays one way, as before (no key length or alphabet is assumed).
+const GLUED_SK = /sk-(?=[0-9]{0,256}[A-Za-z])[A-Za-z0-9]{20,}/;
+// In a domain label only a body a real key has: 32+ characters with a letter and a digit (a 32-hex or
+// 48-character body). A shorter one (kiosk-frontdesklobbyscreen0123, desk-OperatorWorkstation01) is a host.
+const SK_LONG = "(?=[A-Za-z]{0,256}[0-9])(?=[0-9]{0,256}[A-Za-z])[A-Za-z0-9]{32,}";
+const LABEL_SK = new RegExp(`sk-${SK_LONG}`, "g");
+
 /** The vendor shapes with their edge guards removed (anonGluedSecret.ts tests a name with them). */
 export const GLUED_VENDOR_SECRETS: readonly RegExp[] = VENDOR_SECRETS.map((re) =>
-  stripEdges(re, re.flags.replace("g", "")),
+  re === LEGACY_SK ? GLUED_SK : stripEdges(re, re.flags.replace("g", "")),
 );
 
 // #3041: a key glued inside an e-mail or UPN domain label (bob@SRV<key>.corp.local) is missed by the
 // edge-guarded shapes, and the e-mail or account pass then held it in a reversible token. Each label is
 // tested with the edge-free shapes, except those that cannot be told from a host label: a dotted shape
 // (a JWT or SendGrid key spans labels: x@<host>.<internal domain> (turkeyJerky01)), the [0-9A-Z] AWS shapes (the
-// base32 one stays, so ASIAPACIFICFILESERVER01 is a host) and the plain legacy sk- (disk-0123...).
-// The #3028 growth then sends the whole address one way.
+// base32 one stays, so ASIAPACIFICFILESERVER01 is a host) and the plain legacy sk- (disk-0123...),
+// whose long body (LABEL_SK) is tested instead (#3044). The #3028 growth then sends the whole address
+// one way, before the account pass could mint the domain of a UPN as a reversible DOMAIN token. Every
+// label is read whole, however long the label or the domain (#3044).
 const NOT_IN_LABEL = new Set<RegExp>([AWS_KEY, AWS_AFTER_DIGITS, LEGACY_SK]);
-const LABEL_SECRETS = VENDOR_SECRETS.filter((re) => !NOT_IN_LABEL.has(re) && !re.source.includes("\\.")).map(
-  (re) => stripEdges(re, re.flags),
-);
-const MAIL_DOMAIN = /(?<=[A-Za-z0-9._%+-]@)[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,16}/g;
+const LABEL_SECRETS = [
+  ...VENDOR_SECRETS.filter((re) => !NOT_IN_LABEL.has(re) && !re.source.includes("\\.")).map((re) =>
+    stripEdges(re, re.flags),
+  ),
+  LABEL_SK,
+];
+const MAIL_DOMAIN = /(?<=[A-Za-z0-9._%+-]@)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/g;
 
 function redactDomainLabels(text: string): string {
   if (!text.includes("@")) return text;
