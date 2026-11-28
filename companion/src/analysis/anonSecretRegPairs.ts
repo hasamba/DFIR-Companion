@@ -100,8 +100,9 @@ function pairLimit(text: string, from: number, quote: string | undefined, sep: s
   const n = next.exec(text);
   if (n && n.index < limit) limit = n.index;
   const multiLine = !quote && sep === ":";
-  const stop = text.indexOf(multiLine ? "\n\n" : "\n", from);
-  return stop !== -1 && stop < limit ? stop : limit;
+  // Searched within the limit only, so a long text with no blank line stays linear.
+  const stop = text.slice(from, limit).indexOf(multiLine ? "\n\n" : "\n");
+  return stop !== -1 ? from + stop : limit;
 }
 
 function dataSpan(text: string, from: number, limit: number, placeholder: string): Span | null {
@@ -282,6 +283,40 @@ function flatDataBefore(
   return data.span[1] > data.span[0] ? data.span : null;
 }
 
+// --- Multi-line colon records, data line first (#3047) ----------------------------------------
+// `ValueData: <pw>⏎ValueName: DefaultPassword`. Used only when forward pairing found nothing for the
+// name, so it never changes a pairing that already hides something. The record is one block of
+// lines up to a blank line, within the window. The bare value name starts its line, the data field
+// starts the line right before it, and nothing else in the block before that line is a data field or
+// a name field, except a key path (`TargetObject: …\Winlogon`). A `Details` line is never taken:
+// Sysmon pairs Details with TargetObject, so it is that value's data, not this name's.
+const COLON_DATA_LINE = /^[ \t]*(ValueData|RegStringValue|RegistryValueData)[ \t]*:/i;
+const BLANK_LINE = /\n[ \t\r]*\n/g;
+
+function colonDataBefore(text: string, at: number, label: string, placeholder: string): Span | null {
+  const ls = text.lastIndexOf("\n", at - 1) + 1;
+  if (PATH_LABELS.has(label.toLowerCase()) || ls === 0 || text.slice(ls, at).trim() !== "") return null;
+  const prevStart = text.lastIndexOf("\n", ls - 2) + 1;
+  const head = COLON_DATA_LINE.exec(text.slice(prevStart, ls - 1));
+  if (!head) return null;
+  const floor = Math.max(0, at - PAIR_WINDOW);
+  const before = text.slice(floor, prevStart + 1);
+  let blockStart = floor === 0 ? 0 : -1;
+  for (const b of before.matchAll(BLANK_LINE)) blockStart = floor + b.index + b[0].length;
+  if (blockStart < 0) return null;
+  const other = new RegExp(ANCHOR_RE.source, "gi");
+  other.lastIndex = blockStart;
+  for (let o = other.exec(text); o && o.index < prevStart; o = other.exec(text))
+    if (o[1] || !PATH_LABELS.has(o[2].toLowerCase())) return null;
+  const data = new RegExp(DATA_RE.source, "gi");
+  data.lastIndex = blockStart;
+  const first = data.exec(text);
+  if (!first || first.index < prevStart) return null;
+  const value = readFieldValue(text, prevStart + head[0].length, ":", true);
+  if (!value || value.span[1] >= ls || text.startsWith(placeholder, value.span[0])) return null;
+  return value.span[1] > value.span[0] ? value.span : null;
+}
+
 function pairedFieldSpans(text: string, placeholder: string): Span[] {
   const spans: Span[] = [];
   const re = new RegExp(ANCHOR_RE.source, "gi");
@@ -301,7 +336,8 @@ function pairedFieldSpans(text: string, placeholder: string): Span[] {
     const limit = json ? jsonLimit(text, name.after) : pairLimit(text, name.after, m[1], m[3]);
     const span =
       dataSpan(text, name.after, limit, placeholder) ??
-      (json ? dataBefore(text, m.index, m[2], placeholder) : null);
+      (json ? dataBefore(text, m.index, m[2], placeholder) : null) ??
+      (!m[1] && m[3] === ":" ? colonDataBefore(text, m.index, m[2], placeholder) : null);
     if (span) spans.push(span);
   }
   return spans;
@@ -388,6 +424,23 @@ function bareToken(text: string, at: number, end: number, stops: string): Token 
   return { span: [at, stop], after: stop, quoted: false };
 }
 
+// A single-quoted PowerShell string doubles a quote to escape it: 'a''b' is a'b (#3047). The value
+// runs across each `''`; a continuation that does not close is not taken, so the closed part before
+// it stays the value. A double-quoted or JSON-escaped value is read as before.
+function readValueQuoted(text: string, at: number): { span: Span; after: number } | null {
+  const q = readQuoted(text, at);
+  if (!q || text[at] !== "'" || q.after <= q.span[1]) return q;
+  let after = q.after;
+  let stop = q.span[1];
+  while (text[after] === "'") {
+    const next = readQuoted(text, after);
+    if (!next || next.after <= next.span[1]) break;
+    after = next.after;
+    stop = next.span[1];
+  }
+  return { span: [q.span[0], stop], after };
+}
+
 function nextToken(text: string, i: number, end: number, nested: boolean, stops: string): Token | null {
   let at = i;
   while (at < end && (text[at] === " " || text[at] === "\t")) at += 1;
@@ -398,7 +451,7 @@ function nextToken(text: string, i: number, end: number, nested: boolean, stops:
   if (text[at] === '"' && nested && !(/\s/.test(text[at - 1] ?? "") && /[^\s"]/.test(text[at + 1] ?? "")))
     return null;
   if (escapedQuote || text[at] === '"' || text[at] === "'") {
-    const q = readQuoted(text, at);
+    const q = readValueQuoted(text, at);
     if (!q) return null;
     // An unclosed quote would run to the line end and hide what follows (an address the anonymizer
     // must learn, an encoded command): take one word after the quote instead.
@@ -432,6 +485,16 @@ function withDigitRun(text: string, span: Span, end: number, stops: string): Spa
   return [span[0], stop];
 }
 
+// A token that launches reg (`reg`, `reg.exe`, a path or quoted path ending in it) followed by an
+// `add` token. A `reg add` inside one quoted token is a value, not a launcher.
+const REG_LAUNCHER = /(?:^|[\\/])reg(?:\.exe)?$/i;
+
+function isRegLauncher(text: string, value: string, t: Token, end: number, nested: boolean): boolean {
+  if (!REG_LAUNCHER.test(value)) return false;
+  const next = nextToken(text, t.after, end, nested, REG_ADD.stops);
+  return next !== null && !next.quoted && /^add$/i.test(text.slice(next.span[0], next.span[1]));
+}
+
 function commandSpan(text: string, from: number, g: CommandGrammar): { span: Span | null; after: number } {
   const nested = insideQuotes(text, from);
   const end = Math.min(text.length, from + COMMAND_WINDOW);
@@ -441,8 +504,10 @@ function commandSpan(text: string, from: number, g: CommandGrammar): { span: Spa
   let i = from;
   let t: Token | null = nextToken(text, i, end, nested, g.stops);
   while (t && t.after > i) {
-    i = t.after;
     const value = text.slice(t.span[0], t.span[1]);
+    // The next `reg add` on the same line starts a new command: stop before its launcher (#3047).
+    if (pending === null && isRegLauncher(text, value, t, end, nested)) break;
+    i = t.after;
     if (pending === "name") name ??= value;
     else if (pending === "data")
       data ??= beforeCue(text, t.quoted ? t.span : withDigitRun(text, t.span, end, g.stops));
@@ -475,7 +540,7 @@ function psInline(text: string, t: Token, colon: number, end: number): Token | n
   const at = t.span[0] + colon + 1;
   if (at >= t.span[1]) return null;
   if (text[at] !== "'" && text[at] !== '"') return { span: [at, t.span[1]], after: t.after, quoted: false };
-  const q = readQuoted(text, at);
+  const q = readValueQuoted(text, at);
   return q && q.span[1] <= end ? { span: q.span, after: Math.max(q.after, t.after), quoted: true } : null;
 }
 
@@ -550,18 +615,21 @@ function psCommandSpan(text: string, from: number): PsResult {
 const SET_VALUE_RE = /(\]::|\.)SetValue\(/gi;
 
 // The quoted arguments of a call whose `(` ends at `at`, up to its `)`: null for a non-literal one.
+// A non-literal argument is skipped within the window, so many unclosed calls stay linear.
 function callArgs(text: string, at: number): (Span | null)[] {
   const args: (Span | null)[] = [];
+  const end = Math.min(text.length, at + COMMAND_WINDOW);
   let i = at;
   for (let n = 0; n < 4; n += 1) {
     while (text[i] === " " || text[i] === "\t") i += 1;
-    const q = text[i] === '"' || text[i] === "'" || text.startsWith('\\"', i) ? readQuoted(text, i) : null;
+    const quote = text[i] === '"' || text[i] === "'" || text.startsWith('\\"', i);
+    const q = quote ? readValueQuoted(text, i) : null;
     if (q && q.after > q.span[1]) {
       args.push(q.span);
       i = q.after;
     } else {
       args.push(null);
-      while (i < text.length && !",)\n".includes(text[i])) i += 1;
+      while (i < end && !",)\n".includes(text[i])) i += 1;
     }
     while (text[i] === " " || text[i] === "\t") i += 1;
     if (text[i] !== ",") break;
@@ -570,16 +638,25 @@ function callArgs(text: string, at: number): (Span | null)[] {
   return args;
 }
 
+// A registry key path as the first argument: the static form even when written with a dot.
+const KEY_PATH_RE = /^(?:HKEY_|HK(?:LM|CU|CR|CC|U)(?:\\|:|$))/i;
+
+// `::SetValue(key, name, value)` is the static form. `.SetValue(name, value)` is a key object's, but
+// the static call is also written with a dot (`Registry.SetValue(…)`, C#): it is read as
+// (key, name, value) as well when its first argument is not a literal or is a key path (#3047).
 function setValueSpans(text: string): Span[] {
   const spans: Span[] = [];
   const re = new RegExp(SET_VALUE_RE.source, "gi");
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const args = callArgs(text, re.lastIndex);
-    const first = m[1] === "." ? 0 : 1;
-    const name = args[first];
-    const value = args[first + 1];
-    if (name && value && isRegistryCredentialName(text.slice(name[0], name[1])))
-      spans.push(beforeCue(text, value));
+    const firsts = m[1] === "." ? [0] : [1];
+    if (m[1] === "." && (!args[0] || KEY_PATH_RE.test(text.slice(args[0][0], args[0][1])))) firsts.push(1);
+    for (const first of firsts) {
+      const name = args[first];
+      const value = args[first + 1];
+      if (name && value && isRegistryCredentialName(text.slice(name[0], name[1])))
+        spans.push(beforeCue(text, value));
+    }
   }
   return spans;
 }
@@ -612,7 +689,7 @@ function splatSpans(text: string): Span[] {
     let name: string | null = null;
     let value: Span | null = null;
     for (let m = re.exec(body); m; m = re.exec(body)) {
-      const q = readQuoted(text, at + 1 + re.lastIndex);
+      const q = readValueQuoted(text, at + 1 + re.lastIndex);
       const span = q && q.after > q.span[1] && q.span[1] <= end ? q.span : null;
       if (m[2].toLowerCase() === "name") name ??= span ? text.slice(span[0], span[1]) : "";
       else value ??= span;
