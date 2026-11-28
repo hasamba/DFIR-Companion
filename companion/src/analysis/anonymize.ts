@@ -19,6 +19,7 @@ import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user insid
 import { NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
 import { ENC_CMD_RE, FROM_B64_RE, ipv4StartsAt } from "./anonPiiPatterns.js";
 import { replaceCards, replaceGluedIpv4 } from "./anonPiiPatterns.js";
+import { replaceCardOnlyPairs, replaceGluedPairs, type PairRules } from "./anonGluedPairs.js";
 import { scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
@@ -559,11 +560,15 @@ export function createAnonymizer(
   function anonIpv4(t: string): string {
     const mask = (ip: string, m: string, cat = ipv4Category(ip)) => (cat ? assign(cat, m) : m);
     const plain = tails.gluedRaw(t).replace(IPV4_RE, (ip) => mask(ip, ip));
-    return replaceGluedIpv4(plain, isInternalIp, mask); // an address with digits glued on (#3058)
+    return replaceGluedIpv4(plain, mask); // an address with digits glued on (#3058)
   }
 
   function anonCards(t: string): string {
-    return replaceCards(t, (m) => assign("CARD", m)); // prefix + Luhn; a glued digit too (#3058)
+    return replaceCards(replaceCardOnlyPairs(t, pairRules()), (m) => assign("CARD", m)); // + glued (#3058, #3062)
+  }
+  function pairRules(): PairRules {
+    const { IP: ip, CARD: card } = policy.categories;
+    return { ip, card, category: ipv4Category, internal: isInternalIp, assign, ended: ends.ended };
   }
 
   // E.164 runs first: it is the most specific, and an international number has no leading zero
@@ -649,6 +654,8 @@ export function createAnonymizer(
       t = reserved.text;
       ipv6Literals = reserved.literals;
     }
+    // Values glued to each other (#3062): split first, since no saved value can cut a glued run.
+    if (policy.categories.IP || policy.categories.CARD) t = replaceGluedPairs(t, pairRules());
     t = anonCustom(t, ipv6Literals); // analyst-added entities win over every detector
     // Encoded blobs first: an account, profile path or server read across a cue would hide it (#3060).
     if (policy.categories.CMD) t = anonEncodedCmd(t);

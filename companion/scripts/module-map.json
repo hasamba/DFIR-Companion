@@ -187,6 +187,7 @@
     "anonGluedSecret.ts": "analysis/privacy",
     "anonSecretEntities.ts": "analysis/privacy",
     "anonPiiPatterns.ts": "analysis/privacy",
+    "anonGluedPairs.ts": "analysis/privacy",
     "anonSecretCustom.ts": "analysis/privacy",
     "anonSecretKeys.ts": "analysis/privacy",
     "anonSecretPsQuote.ts": "analysis/privacy",

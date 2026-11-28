@@ -81,10 +81,11 @@ describe("glued IPv4 and card shapes (#3058)", () => {
     }
   });
 
-  it("a public head needs five glued digits, and stays clear with public masking off", () => {
+  it("a public head with digits glued on is masked, and stays clear with public masking off", () => {
     const on = createAnonymizer(policy(true), known());
-    const version = ip(2, 0, 0, 1024);
-    expect(on.apply(`v ${version}`)).toBe(`v ${version}`);
+    const version = ip(2, 0, 0, 1024); // #3062: a short last part is masked too, under public masking
+    expect(on.apply(`v ${version}`)).toMatch(/^v ANON_EXTIP_\d+$/);
+    expect(createAnonymizer(policy(false), known()).apply(`v ${version}`)).toBe(`v ${version}`);
     expect(on.apply(`ran ${ip(8, 8, 8, "823456789")} y`)).toMatch(/^ran ANON_EXTIP_\d+ y$/);
     const off = createAnonymizer(policy(false), known());
     expect(off.apply(`ran ${ip(8, 8, 8, "823456789")} y`)).toBe(`ran ${ip(8, 8, 8, "823456789")} y`);
