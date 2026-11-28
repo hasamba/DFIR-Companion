@@ -1067,15 +1067,15 @@ export async function seedDemoCase(
       mitreTechniques: ["T1486"],
       relatedFindingIds: ["f007"],
       sourceScreenshots: [],
+      asset: "DC01",
       sha256: SHA_RANSOM,
       path: "c:\\windows\\temp\\encrypt.exe",
       sources: ["CrowdStrike Falcon"],
       action: "write" as const,
-      count: 3,
       description:
         "Ransomware binary encrypt.exe (SHA-256: " +
         SHA_RANSOM +
-        ") written to C:\\Windows\\Temp\\ on DC01, FS01, and WEB01 simultaneously via SMB. File matches BlackCat/ALPHV family.",
+        ") written to C:\\Windows\\Temp\\ on DC01, the staging host, then copied over SMB to FS01 and WEB01. File matches BlackCat/ALPHV family.",
     },
     {
       id: "e027",
@@ -1098,11 +1098,26 @@ export async function seedDemoCase(
       mitreTechniques: ["T1486"],
       relatedFindingIds: ["f007"],
       sourceScreenshots: [],
+      asset: "DC01",
       sources: ["CrowdStrike Falcon"],
       sha256: SHA_RANSOM,
-      count: 2,
+      path: "c:\\windows\\temp\\encrypt.exe",
       description:
-        "CrowdStrike quarantined encrypt.exe on DC01 and WEB01 (same hash — same detection). No files were encrypted on any host. EDR policy prevented execution before any file handles opened.",
+        "CrowdStrike quarantined encrypt.exe on DC01 (same hash — same detection as FS01). EDR policy prevented execution before any file handles opened.",
+    },
+    {
+      id: "e032",
+      timestamp: ts(19, 22, 17),
+      severity: "High",
+      mitreTechniques: ["T1486"],
+      relatedFindingIds: ["f007"],
+      sourceScreenshots: [],
+      asset: "WEB01",
+      sources: ["CrowdStrike Falcon"],
+      sha256: SHA_RANSOM,
+      path: "c:\\windows\\temp\\encrypt.exe",
+      description:
+        "CrowdStrike quarantined encrypt.exe on WEB01 (same hash — same detection). No files were encrypted on any host.",
     },
     {
       id: "e029",
@@ -1858,7 +1873,7 @@ export async function seedDemoCase(
         status: "partial",
         answer:
           "Ransomware deployment (encrypt.exe / BlackCat-ALPHV) on May 19 22:15 indicates a double-extortion ransomware attack. EDR blocked encryption.",
-        pointer: "Finding f007; forensic events e026–e028",
+        pointer: "Finding f007; forensic events e026–e028, e032",
       },
       {
         id: "q007",
