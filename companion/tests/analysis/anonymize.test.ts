@@ -827,6 +827,15 @@ describe("isLocalAiProvider", () => {
     expect(isLocalAiProvider("codex", "http://localhost:11434/v1")).toBe(false);
     expect(isLocalAiProvider(undefined, "http://localhost:11434/v1")).toBe(false);
   });
+  // #3106: a local Ollama daemon forwards a ":cloud" / "-cloud" tagged model to Ollama Cloud.
+  it("treats a cloud-tagged model as external even on a loopback base URL", () => {
+    const local = "http://localhost:11434/v1";
+    expect(isLocalAiProvider("ollama", local, "gpt-oss:120b-cloud")).toBe(false);
+    expect(isLocalAiProvider("ollama", local, "glm-4.6:cloud")).toBe(false);
+    expect(isLocalAiProvider("litellm", local, "ollama/qwen3-coder:480b-cloud")).toBe(false);
+    expect(isLocalAiProvider("ollama", local, "llama3.2-vision:11b")).toBe(true);
+    expect(isLocalAiProvider("ollama", local, "cloudy-model")).toBe(true);
+  });
 });
 
 describe("visionAiIsLocal", () => {
@@ -837,6 +846,15 @@ describe("visionAiIsLocal", () => {
         DFIR_AI_BASE_URL_OLLAMA: "http://localhost:11434/v1",
       }),
     ).toBe(true);
+  });
+  it("is external for a cloud-tagged vision model on a local Ollama", () => {
+    expect(
+      visionAiIsLocal({
+        DFIR_VISION_PROVIDER: "ollama",
+        DFIR_VISION_MODEL: "qwen3-vl:235b-cloud",
+        DFIR_AI_BASE_URL_OLLAMA: "http://localhost:11434/v1",
+      }),
+    ).toBe(false);
   });
   it("is external for ollama with no base URL (hosted Ollama Cloud)", () => {
     expect(visionAiIsLocal({ DFIR_VISION_PROVIDER: "ollama" })).toBe(false);

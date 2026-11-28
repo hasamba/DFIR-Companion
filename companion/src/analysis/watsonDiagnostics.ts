@@ -25,7 +25,7 @@ export function watsonDiagnostics(env: EnvLike): WatsonDiagnostics | null {
   const synthModel = orNull(env.DFIR_AI_SYNTH_MODEL) ?? orNull(visionEnv(env, "MODEL"));
   const model = watsonRoleOff(env) ? null : (orNull(env.DFIR_AI_WATSON_MODEL) ?? synthModel);
   const baseUrl = resolveAiRoleSetting(env, "watson", "BASE_URL");
-  return { provider, model, local: isLocalAiProvider(provider, baseUrl) };
+  return { provider, model, local: isLocalAiProvider(provider, baseUrl, model ?? undefined) };
 }
 
 /** The Watson line of the copy-to-clipboard Diagnostics text. */
