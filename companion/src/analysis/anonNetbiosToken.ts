@@ -30,7 +30,7 @@ export interface NetbiosTokenDeps {
 }
 
 export function createNetbiosToken(d: NetbiosTokenDeps): (m: NetbiosMatch) => string {
-  return ({ account, qualifier: q, user, local, after }) => {
+  return ({ account, qualifier: q, user, local, after, cut }) => {
     const old = legacyReading(q, user);
     if (after === "@" && !old.user) return (local ? `${local}@` : "") + account;
     const lead = local ? `${d.userToken(local)}@` : "";
@@ -39,7 +39,7 @@ export function createNetbiosToken(d: NetbiosTokenDeps): (m: NetbiosMatch) => st
     const out = lead + d.accountToken(account);
     const plain = !d.suppressed.has(account.toLowerCase()) && !isNoiseDomain(old.qualifier);
     const qTok = plain ? d.qualifierToken(q) : undefined;
-    if (qTok && (old.user || !known)) (old.user ? d.savedUsers : d.cutUsers).add(qTok);
+    if (qTok && (old.user || !known)) (old.user && !cut ? d.savedUsers : d.cutUsers).add(qTok);
     if (plain && old.qualifier !== q) d.qualifier(old.qualifier);
     if (plain && old.user && old.user !== user && !splitGluedSid(user)) d.userToken(old.user);
     return out;

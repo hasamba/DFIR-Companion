@@ -7,6 +7,8 @@ import { readQuoted, type Span } from "./anonSecretValues.js";
 export interface QuotedValue {
   span: Span;
   after: number;
+  /** The quote of a `''` continuation that never closes (`'a''tail`), when there is one (#3067). */
+  dangling?: number;
 }
 
 /** How a quoted value is read: `ps` allows the backtick escape (PowerShell grammars only, never
@@ -53,14 +55,20 @@ export function readValueQuoted(text: string, at: number, mode: QuoteMode = {}):
   const open = text.startsWith('\\"', at) ? '\\"' : text[at];
   let after = q.after;
   let stop = q.span[1];
+  let dangling: number | undefined;
   for (let from = continuation(text, open, q.span[0], stop, after, mode); from >= 0;) {
     const next = readQuoted(text, from);
-    if (!next || next.after <= next.span[1]) break;
+    if (!next || next.after <= next.span[1]) {
+      dangling = open === "'" ? from : undefined;
+      break;
+    }
     after = next.after;
     stop = next.span[1];
     from = continuation(text, open, q.span[0], stop, after, mode);
   }
-  return { span: [q.span[0], stop], after };
+  return dangling === undefined
+    ? { span: [q.span[0], stop], after }
+    : { span: [q.span[0], stop], after, dangling };
 }
 
 // A here-string opener: `@'` / `@"` (or the JSON-escaped `@\"`), then the line break, raw or the

@@ -160,9 +160,10 @@ describe("redactSecretText — PowerShell '' escape in a single-quoted value (#3
     }
   });
 
-  it("keeps the closed first part when the continuation never closes", () => {
+  it("hides one word after a continuation that never closes (#3067)", () => {
     const out = hides(`sp '${WP}' DefaultPassword 'my ${VALUE};x''tail`);
-    expect(out).toContain(`'${PH}''tail`);
+    expect(out).toContain(`'${PH}`);
+    expect(out).not.toContain("tail");
   });
 
   it("stops before an encoded command after the value", () => {

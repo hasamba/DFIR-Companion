@@ -9,6 +9,7 @@ import {
   widen,
   type PsVariables,
   type QuoteMode,
+  type QuotedValue,
 } from "./anonSecretPsQuote.js";
 import { isEncodedCue, readQuoted, type Span } from "./anonSecretValues.js";
 
@@ -247,6 +248,11 @@ function nextToken(
     // must learn, an encoded command): take one word after the quote instead.
     const closed = q.after > q.span[1] || text[q.after] === '"';
     if (!closed) return bareToken(text, q.span[0], end, stops);
+    // `'a''tail` that never closes: the closed part and one word after the dangling quote (#3067).
+    if (q.dangling !== undefined) {
+      const word = bareToken(text, q.dangling + 1, end, stops);
+      return { span: [q.span[0], word.span[1]], after: word.after, quoted: false };
+    }
     return { span: q.span, after: q.after, quoted: true, open: at, mode: { ps, nested } };
   }
   return bareToken(text, at, end, stops);
@@ -464,6 +470,14 @@ function callArgs(text: string, at: number, mode: QuoteMode, starts: number[] = 
   return args;
 }
 
+// A hashtable value `'a''tail` that never closes runs to the next `;`, `}` or space (#3067).
+function danglingSpan(text: string, q: QuotedValue, end: number): Span {
+  if (q.dangling === undefined) return q.span;
+  let k = q.dangling + 1;
+  while (k < end && !/[\s;}]/.test(text[k])) k += 1;
+  return [q.span[0], k];
+}
+
 // A registry key path as the first argument: the static form even when written with a dot.
 const KEY_PATH_RE = /^(?:HKEY_|HK(?:LM|CU|CR|CC|U)(?:\\|:|$))/i;
 
@@ -536,7 +550,8 @@ function splatSpans(text: string, vars: PsVariables): Span[] {
       const here = text[v] === "@" ? readHereString(text, v, end) : null;
       const q = here ?? readValueQuoted(text, v, { escapes: false });
       // A here-string may run past the window (#3057); a quoted value ends inside the hashtable.
-      const walked = q && q.after > q.span[1] && (here || q.span[1] <= end) ? q.span : null;
+      const walked =
+        q && q.after > q.span[1] && (here || q.span[1] <= end) ? danglingSpan(text, q, end) : null;
       const widened = walked && !here ? widen(text, v, walked, { ps: true }, ";}\r\n", end) : walked;
       const more = q && widened && widened === walked && !here ? concatEnd(text, q.after, end) : null;
       const span: Span | null = more && widened ? [widened[0], more.span[1]] : widened;

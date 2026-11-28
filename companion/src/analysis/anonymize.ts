@@ -17,13 +17,15 @@ import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
 import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
 import { NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
-import { ENC_CMD_RE, FROM_B64_RE, ipv4StartsAt } from "./anonPiiPatterns.js";
+import { replaceEncodedCommands } from "./anonEncodedCmd.js";
 import { replaceCards, replaceGluedIpv4 } from "./anonPiiPatterns.js";
 import { replaceCardOnlyPairs, replaceGluedPairs, type PairRules } from "./anonGluedPairs.js";
 import { scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
 import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
+import { replaceDoubledAccounts } from "./anonDoubledAccounts.js";
+import { createProfileRemnants } from "./anonProfileRemnant.js";
 import { carveProfileName, valuePasses } from "./anonProfileTail.js";
 import { replaceEmails, replaceGluedAddresses, UPN_SCAN } from "./anonAtScan.js"; // linear on long runs (#3055)
 import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
@@ -405,6 +407,7 @@ export function createAnonymizer(
   const userHalfToken = (u: string) => sidUserToken(u, userToken, (sid) => assign("REG", sid));
   const qualifierToken = (q: string) =>
     toToken.get(anonPairKey(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q));
+  const remnants = createProfileRemnants(); // the rest of a profile name a secret cut short (#3067)
   const deps = { userToken, qualifier, accountToken, qualifierToken, suppressed, savedUsers, cutUsers };
   const netbiosToken = createNetbiosToken(deps);
   function anonAccounts(t: string): string {
@@ -416,7 +419,7 @@ export function createAnonymizer(
       raw === real ? userToken(real) : (learn(real), guard("USER", raw));
     const mint = { qualifier: qualify, user, whole: guard };
     let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
-    out = replaceNetbiosAccounts(out, netbiosToken);
+    out = replaceDoubledAccounts(replaceNetbiosAccounts(out, netbiosToken), netbiosToken, rules.fileUser);
     // Only UPNs on an internal domain are AD accounts → USER; others stay for the e-mail pass (#3060).
     const upn = (m: string) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m);
     out = out.replace(UPN_SCAN, upn);
@@ -448,25 +451,16 @@ export function createAnonymizer(
       });
       return (out !== null && saved && userToken(name), out); // the whole old name stays saved (#3047)
     };
-    return replaceUserPaths(t, userToken, carve);
+    const rest = remnants.mint(t, (name) => carve(name, false) ?? userToken(name, false));
+    return replaceUserPaths(rest, userToken, carve);
   }
   const valuesIn = valuePasses(policy.categories, {
     ...{ CMD: anonEncodedCmd, REG: anonSids, IP: anonIpv4 },
     ...{ CARD: anonCards, PHONE: anonPhones, NATID: anonNatIds },
   });
   function anonEncodedCmd(t: string): string {
-    let out = t.replace(ENC_CMD_RE, (m, flag: string, blob: string, pad: string, at: number, w: string) => {
-      const cut = pad && policy.categories.IP && ipv4StartsAt(w, at + m.length); // the address keeps its `=`
-      return ends.ended(
-        flag + (cut ? assign("CMD", blob) + pad : assign("CMD", blob + pad)),
-        m,
-        at,
-        at + m.length,
-        w,
-      );
-    });
-    out = out.replace(FROM_B64_RE, (_m, a: string, blob: string, c: string) => a + assign("CMD", blob) + c);
-    return out;
+    const cmd = (blob: string) => assign("CMD", blob);
+    return replaceEncodedCommands(t, { cmd, ip: policy.categories.IP, ended: ends.ended });
   }
   // Machine/domain-issued user SIDs (S-1-5-21-…-RID) are victim-identifying. Well-known SIDs
   // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved. A last number
@@ -642,7 +636,7 @@ export function createAnonymizer(
       learnRedactedEntities(t, red, SECRET_SENTINEL, entityRules, (n) =>
         oneWay(n) ? oneWay.claim(n) : learn(n),
       );
-      t = growGluedRemnants(t, red, { remember: oneWay.claim, compiled });
+      t = remnants.mark(t, growGluedRemnants(t, red, { remember: oneWay.claim, compiled }), SECRET_SENTINEL);
     }
     // Then reserve IPv6 literals — before anonCustom or any other pass — so nothing can substitute
     // inside one. Only when IP masking is active: if the IP category is off, no later step ever
@@ -676,7 +670,7 @@ export function createAnonymizer(
     if (policy.categories.PHONE) t = anonPhones(t);
     if (policy.categories.NATID) t = anonNatIds(t);
     t = ends.finish(t, toReal);
-    return t.replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
+    return remnants.finish(t).replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
   }
 
   const escapes = literalEscapes(TOKEN_RE.source); // restore() undoes apply()'s escapes; restore ONCE (#3001)

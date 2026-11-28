@@ -56,6 +56,7 @@ export interface NetbiosMatch {
   user: string;
   local: string; // an e-mail local part glued in front, without its `@`, or ""
   after: string; // the character after the account
+  cut?: boolean; // its qualifier is masked in place and never saved (a JSON-doubled account, #3067)
 }
 /** Replace each DOMAIN\\user account (and an e-mail local part glued in front) with `mint(match)`. */
 export function replaceNetbiosAccounts(text: string, mint: (m: NetbiosMatch) => string): string {
