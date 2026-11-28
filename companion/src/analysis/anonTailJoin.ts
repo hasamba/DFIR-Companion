@@ -41,6 +41,8 @@ const LEAD_DIGIT = /^\d/;
 // A phone value whose first (dotted) number can end a dotted IPv4 in front of it ("100 555-0100").
 const PHONE_HEAD = /^(\d{1,3}(?:\.\d{1,3}){0,3})([^\d.]\D*)(\d.*)$/s;
 const NEXT = 32; // how far a phone number after the tail is read
+// A last group of digits a phone number can start in ("fd00::164" + " 555-0100", #3043).
+const DIGIT_GROUP = /:(\d{1,4})$/;
 // A REG token, then a saved phone value or dotted numbers glued after it (#3037).
 const SID_TAIL_RE =
   /(?<![A-Za-z0-9_])(ANON_REG_\d+)(?:((?:\.\d{1,3})*\.)(ANON_PHONE_\d+)(?!\d)|((?:\.\d{1,3}){3,})\b)/g;
@@ -91,6 +93,18 @@ function lastOctetPhone(ip: string, next: string, rules: TailRules): Crossing | 
   if (FIFTH_OCTET.test(next)) return null;
   const c = crossing(ip, next, rules.crossers);
   if (!c || c.whole.length - c.len > ip.length - ip.lastIndexOf(".") - 1) return null;
+  return phoneOk(c, rules.suppressed) ? c : null;
+}
+
+// The end of an address a phone number may start in: the dotted IPv4 after its first number
+// ("::ffff:198" + ".51.100.120" + " 4624", as for a cut tail), or a last group of digits
+// ("fd00::" + "164" + " 555-0100", #3043). A plain IPv4 keeps lastOctetPhone (#3018).
+function endPhone(value: string, next: string, rules: TailRules): Crossing | null {
+  if (DOTTED_V4.test(value)) return lastOctetPhone(value, next, rules);
+  if (FIFTH_OCTET.test(next)) return null;
+  const ipv4 = value.slice(value.lastIndexOf(":") + 1);
+  const seg = DOTTED_V6.test(value) ? ipv4.slice(ipv4.indexOf(".")) : DIGIT_GROUP.exec(value)?.[1];
+  const c = seg ? crossing(seg, next, rules.crossers) : null;
   return phoneOk(c, rules.suppressed) ? c : null;
 }
 
@@ -404,12 +418,11 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
   // in one piece) has no cut tail to join. A phone number that starts in its last number is split
   // as for "fd00::10.0.0.100", whose cut tail (".0.0.100") it may start in: the address keeps its
   // token, still saved, and the rest of the number is its own token, never saved.
+  // #3043: so is a phone number that starts in a last group of digits ("fd00::164 555-0100").
   function mappedPhone(h: Head, value: string, at: number, end: number, t: string): Step | null {
-    if (!DOTTED_V6.test(value)) return null;
-    const next = t.slice(end, end + NEXT);
-    const ipv4 = value.slice(value.lastIndexOf(":") + 1);
-    const c = FIFTH_OCTET.test(next) ? null : crossing(ipv4.slice(ipv4.indexOf(".")), next, d.crossers());
-    if (!c || !phoneOk(c, d.suppressed)) return null;
+    if (!DOTTED_V6.test(value) && !DIGIT_GROUP.test(value)) return null;
+    const c = endPhone(value, t.slice(end, end + NEXT), rules());
+    if (!c) return null;
     const tok = h.mint(value);
     const p = phoneOut(c, false);
     return { out: d.ended(tok + p.out, value, at, end + p.skip, t), skip: p.skip };
@@ -462,17 +475,19 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     const v6 = DOTTED_V6.test(value);
     const v4 = !v6 && DOTTED_V4.test(value);
     const dotted = v6 || v4;
-    const octets = dotted ? "*" : "{3}";
-    const re = new RegExp(`(?<!\\d)${token}((?:\\.\\d{1,3})${octets})\\b`, "g");
+    // Without a tail, a value that ends in a group of digits may still start a phone number (#3043).
+    const octets = dotted ? "(?:\\.\\d{1,3})*" : "(?:\\.\\d{1,3}){3}|";
+    const re = new RegExp(`(?<!\\d)${token}(${octets})\\b`, "g");
     return consume(t, re, (m) => {
       const tail = m[1];
       const end = m.index + m[0].length;
       const next = t.slice(end, end + NEXT);
       const keep = { out: m[0], skip: 0 };
       // A phone number that starts in the last number of a saved dotted tail ("fd00::10.0.0.100" +
-      // " 555-0100") is split, as on a call without saved values (#3027).
+      // " 555-0100") is split, as on a call without saved values (#3027), and one that starts where
+      // a call without saved values splits it after that address (#3043).
       if (tail === "") {
-        const p = phoneOut(lastOctetPhone(value, next, rules()), false);
+        const p = phoneOut(endPhone(value, next, rules()), false);
         if (!p.skip) return keep;
         return { out: d.ended(m[0] + p.out, value, m.index, end + p.skip, t), skip: p.skip };
       }
@@ -634,7 +649,7 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
   }
   return {
     mark: (result, value) => {
-      const head = CUT_OCTET.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value);
+      const head = DIGIT_GROUP.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value);
       if (SINGLE_TOKEN.test(result) && (head || LEAD_DIGIT.test(value))) marks.add(result);
       return result;
     },
@@ -646,7 +661,7 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
         const value = d.real(token) ?? "";
         if (token.startsWith("ANON_PHONE_")) phoneLeads.add(token);
         else if (LEAD_DIGIT.test(value)) out = joinLead(out, token);
-        if (CUT_OCTET.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value))
+        if (DIGIT_GROUP.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value))
           out = joinOne(out, token);
       }
       marks.clear();
