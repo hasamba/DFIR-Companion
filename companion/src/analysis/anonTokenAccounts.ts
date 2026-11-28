@@ -1,4 +1,10 @@
-import { isNoiseAccount, PATH_DOMAINS } from "./anonUsernames.js";
+import {
+  freshQualifier,
+  isNoiseAccount,
+  isNoiseDomain,
+  PATH_DOMAINS,
+  splitGluedSid,
+} from "./anonUsernames.js";
 
 // The custom pass mints a custom or saved value before the account pass runs, so on a later call
 // `CORP\bob` reached the account pass as `ANON_DOMAIN_1\bob` and `<user>@<internal domain>` as
@@ -10,20 +16,21 @@ const HAS_TOKEN = new RegExp(TOKEN);
 const ONE_TOKEN = new RegExp(`^${TOKEN}$`);
 const ANY_TOKEN = new RegExp(TOKEN, "g");
 const NETBIOS = new RegExp(
-  String.raw`(?<![\\/:.\w-])((?:${TOKEN}|[A-Za-z0-9.-])+)\\((?:${TOKEN}|[\p{L}\p{N}._$-])+)(?![\\/\w])`,
+  String.raw`(?<![\\/:.\w-])((?:${TOKEN}|[\p{L}\p{N}.-])+)\\((?:${TOKEN}|[\p{L}\p{N}._$-])+)(?![\\/\p{L}\p{N}_])`,
   "gu",
 );
 // `<profile path>\dave élan\xC`: a call without the saved profile name reads `élan\xC` as an account.
-const TAIL_ACCOUNT = new RegExp(String.raw`(?<=\\)(${TOKEN})\\([\p{L}\p{N}._$-]+)(?![\\/\w])`, "gu");
-const TAIL_QUALIFIER = /[^\w.:\\/-]([A-Za-z][A-Za-z0-9.-]{1,14})$/;
+const TAIL_ACCOUNT = new RegExp(
+  String.raw`(?<=[\\/:.-])(${TOKEN})\\([\p{L}\p{N}._$-]+)(?![\\/\p{L}\p{N}_])`,
+  "gu",
+);
 const UPN = new RegExp(
   String.raw`(?<![\w.%+-])((?:${TOKEN}|[A-Za-z0-9._%+-])+)@((?:${TOKEN}|[A-Za-z0-9.-])+)`,
   "g",
 );
 // The fresh account and email patterns (NETBIOS_ACCT, UPN_ACCT, EMAIL_RE), read on the real text.
-const NETBIOS_QUALIFIER = /^[A-Za-z][A-Za-z0-9.-]{1,14}$/;
-const NETBIOS_AFTER = /^[A-Za-z0-9._$-]{2}$/; // the first two characters of a NETBIOS user
-// NETBIOS_ACCT reads at most 20 of [A-Za-z0-9._$-]; a user glued to `é` or `ø` is read on with it.
+const NETBIOS_QUALIFIER = /^\p{L}[\p{L}\p{N}.-]{1,14}$/u;
+const NETBIOS_AFTER = /^[\p{L}\p{N}._$-]{2}$/u; // the first two characters of a NETBIOS user
 const LONG_USER = /^[\p{L}\p{N}._$-]{2,}$/u;
 const UPN_USER = /^[A-Za-z0-9._%+-]{2,}$/;
 const UPN_DOMAIN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -41,7 +48,7 @@ export interface TokenAccountMint {
   // it beats a suppression of the whole (#1822), or the expanded text would go out in clear.
   qualifier: (real: string, raw: string) => string; // a HOST or DOMAIN token
   user: (real: string, raw: string) => string; // a USER token for the user half
-  whole: (category: "USER" | "EMAIL", value: string) => string; // one token; tokens inside expand
+  whole: (category: "USER" | "EMAIL" | "REG", value: string) => string; // one token; tokens inside expand
 }
 type Ctx = TokenAccountRules &
   TokenAccountMint & { expand: (s: string) => string; single: (s: string) => boolean };
@@ -55,7 +62,9 @@ export function tokenQualifiedAccounts(
   const single = (s: string) => ONE_TOKEN.test(s) && rules.tokens.has(s);
   const c: Ctx = { ...rules, ...mint, expand, single };
   const out = text
-    .replace(TAIL_ACCOUNT, (all, tok: string, u: string) => tailAccount(c, all, tok, u))
+    .replace(TAIL_ACCOUNT, (all, tok: string, u: string, at: number, s: string) =>
+      tailAccount(c, all, tok, u, s[at - 1] ?? ""),
+    )
     .replace(NETBIOS, (all, q: string, u: string) => (HAS_TOKEN.test(all) ? netbios(c, all, q, u) : all));
   // `x@CORP\\bob` is an account behind `CORP`: the NETBIOS pattern reads it before the UPN one.
   const behind = (s: string, end: number, d: string) =>
@@ -75,38 +84,72 @@ function longestPrefix(run: string, ok: (prefix: string) => boolean): number {
   return -1;
 }
 
-// A user half the fresh pattern would cut short (over 20 characters) is read whole, so the cut
-// never leaves the tail of a value a later pass masks in clear; it stops before a SID (#3020).
-function userHalf(c: Ctx, u: string): { part: string; rest: string; user: string } | null {
-  const sid = /[.$-](?=S-1-5-21-)/i.exec(u);
-  const [part, rest] = sid ? [u.slice(0, sid.index), u.slice(sid.index)] : [u, ""];
+// The user half is read whole, as the fresh pattern reads it (#3049). A domain SID glued to its end
+// gets its own token (`rest`), as on a call without saved values (#3020, #3049).
+interface Half {
+  part: string;
+  user: string;
+  rest: () => string;
+}
+function userHalf(c: Ctx, u: string): Half | null {
+  const sid = splitGluedSid(u, c.expand(u).length);
+  const part = sid ? sid.user : u;
   const user = c.expand(part);
-  return HAS_TOKEN.test(user) || !LONG_USER.test(user) ? null : { part, rest, user };
+  if (HAS_TOKEN.test(user) || !LONG_USER.test(user)) return null;
+  return { part, user, rest: () => (sid ? sid.sep + c.whole("REG", sid.sid) + sid.rest : "") };
 }
 
-// The qualifier is the last word of one minted value (a saved profile name with a space).
-function tailAccount(c: Ctx, all: string, tok: string, u: string): string {
-  const q = c.single(tok) ? TAIL_QUALIFIER.exec(c.tokens.get(tok) ?? "")?.[1] : undefined;
-  const half = q && !PATH_DOMAINS.test(q) ? userHalf(c, u) : null;
-  if (!q || !half) return all;
+// The qualifier is the last word of one minted value (a saved profile name with a space), read as
+// the fresh pattern reads it; one it read as a noise word (`lan` of `élan`) hides the account whole.
+function tailAccount(c: Ctx, all: string, tok: string, u: string, before: string): string {
+  const fresh = c.single(tok) ? freshQualifier(before + (c.tokens.get(tok) ?? "")) : null;
+  const q = fresh?.qualifier ?? "";
+  const half = fresh && !PATH_DOMAINS.test(q) ? userHalf(c, u) : null;
+  if (!fresh || !half) return all;
   const account = `${q}\\${half.user}`;
-  if (c.suppressed.has(account.toLowerCase()) || isNoiseAccount(account) || c.fileUser.test(half.user))
-    return all;
-  return `${tok}\\${c.user(half.user, half.part)}${half.rest}`;
+  if (c.suppressed.has(account.toLowerCase())) return all;
+  if (isNoiseDomain(fresh.cut)) return c.whole("USER", `${tok}\\${half.part}`) + half.rest(); // `élan\\x`
+  if (isNoiseAccount(account) || c.fileUser.test(half.user)) return all;
+  return `${tok}\\${c.user(half.user, half.part)}${half.rest()}`;
 }
 
 function netbios(c: Ctx, all: string, q: string, u: string): string {
   const real = c.expand(q);
-  if (HAS_TOKEN.test(real) || !NETBIOS_QUALIFIER.test(real) || PATH_DOMAINS.test(real)) return all;
+  const fresh = HAS_TOKEN.test(real) ? null : freshQualifier(real);
+  if (!fresh || PATH_DOMAINS.test(fresh.qualifier) || PATH_DOMAINS.test(fresh.cut)) return all;
   const half = userHalf(c, u);
   if (!half) return all;
-  const { part, rest, user } = half;
-  if (!HAS_TOKEN.test(q + part) || (c.single(q) && c.single(part))) return all; // read by the account pass
-  const account = `${real}\\${user}`;
+  const { part, user } = half;
+  const whole = fresh.qualifier === real;
+  if (whole && (!HAS_TOKEN.test(q + part) || (c.single(q) && c.single(part)))) return all; // the account pass
+  const account = `${fresh.qualifier}\\${user}`;
   if (c.suppressed.has(account.toLowerCase())) return all; // the analyst veto keeps the tokens it holds
-  if (isNoiseAccount(account) || c.fileUser.test(user)) return c.whole("USER", `${q}\\${part}`) + rest;
-  const qualifier = c.single(q) ? q : c.qualifier(real, q);
-  return `${qualifier}\\${c.user(user, part)}${rest}`;
+  // `ANON_EMAIL_1-CORP\\007` reads `…local-CORP` (after the `@`): only that part is the qualifier (#3049).
+  const raw = whole ? q : rawSuffix(c, q, fresh.qualifier);
+  const lead = raw === null ? q : q.slice(0, q.length - raw.length);
+  const noise = isNoiseAccount(account) || isNoiseDomain(fresh.cut) || c.fileUser.test(user);
+  if (noise) return raw === null ? all : lead + c.whole("USER", `${raw}\\${part}`) + half.rest();
+  const qualifier = raw === null ? "" : c.single(raw) ? raw : c.qualifier(fresh.qualifier, raw);
+  return `${lead}${qualifier}\\${c.user(user, part)}${half.rest()}`;
+}
+
+// The end of the run `q` that holds exactly the qualifier, or null when it starts inside a token.
+function rawSuffix(c: Ctx, q: string, qualifier: string): string | null {
+  const tokens = [...q.matchAll(ANY_TOKEN)];
+  let need = qualifier.length;
+  let i = q.length;
+  for (let t = tokens.length - 1; need > 0 && i > 0;) {
+    const tok = tokens[t];
+    if (tok && tok.index + tok[0].length === i) {
+      need -= c.expand(tok[0]).length;
+      i = tok.index;
+      t--;
+    } else {
+      need--;
+      i--;
+    }
+  }
+  return need === 0 && c.expand(q.slice(i)) === qualifier ? q.slice(i) : null;
 }
 
 function upn(c: Ctx, all: string, run: string, d: string): string {

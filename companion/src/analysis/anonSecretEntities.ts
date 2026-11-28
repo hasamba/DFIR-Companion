@@ -20,7 +20,7 @@ import {
 // reads as one backslash.
 
 const NAME_END = "(?![A-Za-z0-9._%+$@\\\\-])";
-const leading = (re: RegExp) => new RegExp(`^(?:${re.source})${NAME_END}`);
+const leading = (re: RegExp) => new RegExp(`^(?:${re.source})${NAME_END}`, re.unicode ? "u" : ""); // #3049
 const ACCOUNT = leading(NETBIOS_ACCT);
 const UPN = leading(UPN_ACCT);
 const PROFILE = new RegExp(`^(?:${USER_PATH_RE.source})`);

@@ -12,9 +12,95 @@ import { MAX_LITERAL, compileLong, nextLong, valuesCanOverlap } from "./anonChun
 
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts,
 // except that a match may not start after "-" either: in \\DC-QA-01\C$ it started at "QA-01" and
-// leaked the "DC-" prefix of the host name (#2073).
+// leaked the "DC-" prefix of the host name (#2073). The user half has no length cap and reads Unicode
+// letters (#3049): a cap of 20 left a longer user in clear whole or its tail in clear, and an `é` ended
+// the user. A qualifier may still start right after a non-ASCII letter, as before, but it is read back
+// to the start of its word (replaceNetbiosAccounts): `dave élan\x` read the bogus qualifier `lan`.
 export const NETBIOS_ACCT =
-  /(?<![\\/:.\w-])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+  /(?<![\\/:.\w-])(\p{L}[\p{L}\p{N}.-]{1,14})\\([\p{L}\p{N}._$-]{2,})(?![\\/\p{L}\p{N}_])/gu;
+const WORD_BEFORE = /[\p{L}\p{N}]+$/u; // the letters and digits the pattern started behind
+// The qualifier the pattern read before #3049, when it took ASCII letters only (`lan` of `élan`).
+const ASCII_TAIL = /(?<![\w.-])[A-Za-z][A-Za-z0-9.-]{1,14}$/;
+const QUALIFIER_TAIL = /(?<![\\/:.\w-])\p{L}[\p{L}\p{N}.-]{1,14}$/u;
+
+// The user half the pattern read before #3049: at most 20 ASCII characters, cut where a non-word
+// character followed (`bob` of `bobélan`).
+const ASCII_USER = /^[A-Za-z0-9._$-]{2,20}/;
+// An e-mail local part glued in front of the qualifier (`<user>@<domain><QUALIFIER>\\<user>`, #3049).
+const LOCAL_BEFORE = /(?<![\w.%+@-])[A-Za-z0-9._%+-]{2,}@$/;
+
+/** Where a qualifier that starts at `at` really starts: the start of the word it was cut from. */
+function wordStart(text: string, at: number, floor: number): number {
+  const run = WORD_BEFORE.exec(text.slice(Math.max(floor, at - 256), at))?.[0].length ?? 0;
+  return at - run;
+}
+
+/** How the pattern read an account before #3049: the qualifier and user half it took, or null. */
+export interface LegacyReading {
+  qualifier: string;
+  user: string | null;
+}
+export function legacyReading(qualifier: string, user: string): LegacyReading {
+  const ascii = ASCII_USER.exec(user)?.[0] ?? "";
+  let len = ascii.length;
+  while (len >= 2 && len < user.length && /[\w\\/]/.test(user[len] ?? "")) len--;
+  return {
+    qualifier: ASCII_TAIL.exec(qualifier)?.[0] ?? qualifier,
+    user: len >= 2 ? user.slice(0, len) : null,
+  };
+}
+
+export interface NetbiosMatch {
+  account: string; // the qualifier read whole, `\\`, the user half
+  qualifier: string;
+  user: string;
+  local: string; // an e-mail local part glued in front, without its `@`, or ""
+  after: string; // the character after the account
+}
+/** Replace each DOMAIN\\user account (and an e-mail local part glued in front) with `mint(match)`. */
+export function replaceNetbiosAccounts(text: string, mint: (m: NetbiosMatch) => string): string {
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(NETBIOS_ACCT)) {
+    const start = wordStart(text, m.index, last);
+    const local = LOCAL_BEFORE.exec(text.slice(Math.max(last, start - 256), start))?.[0] ?? "";
+    const account = text.slice(start, m.index + m[0].length);
+    const slash = account.lastIndexOf("\\");
+    const end = m.index + m[0].length;
+    const hit = {
+      account,
+      qualifier: account.slice(0, slash),
+      user: account.slice(slash + 1),
+      after: text[end] ?? "",
+    };
+    out += text.slice(last, start - local.length) + mint({ ...hit, local: local.slice(0, -1) });
+    last = end;
+  }
+  return out + text.slice(last);
+}
+
+/** The qualifier the account pattern reads at the end of `before` (the text before a `\\`), or null. */
+export function freshQualifier(before: string): { qualifier: string; cut: string } | null {
+  const m = QUALIFIER_TAIL.exec(before);
+  const qualifier = m ? before.slice(wordStart(before, m.index, 0)) : "";
+  return m ? { qualifier, cut: legacyReading(qualifier, "").qualifier } : null;
+}
+// A domain SID glued into a user half (`jdoe-S-1-5-21-…-1001`): the SID pass cannot read it once the
+// user is a token, so the account pass gives it its own token (#3049). Text after the SID is left to
+// the later passes, as the 20-character pattern left it, unless the old pattern read it all (≤ 20).
+const GLUED_SID = /^(.+?)([.$-])(S-1-5-21(?:-\d{1,10}){4})(?!\d)(.*)$/is;
+const OLD_USER_MAX = 20;
+
+/** Split a user half at a glued domain SID: the user, the separator, the SID and the text after it. */
+export function splitGluedSid(
+  user: string,
+  length = user.length,
+): { user: string; sep: string; sid: string; rest: string } | null {
+  const m = GLUED_SID.exec(user);
+  const rest = m?.[4] ?? "";
+  if (!m || (rest !== "" && length <= OLD_USER_MAX)) return null;
+  return { user: m[1] ?? "", sep: m[2] ?? "", sid: m[3] ?? "", rest };
+}
 
 // The server of a UNC path (\\SERVER\share) when it is a single label — a NetBIOS name, which is
 // internal naming. Dotted servers (FQDNs, IPs) are left to the host, domain and IP passes, because a
@@ -508,6 +594,13 @@ export function isNoiseDomain(domain: string): boolean {
   if (!d) return true;
   if (d.includes(".")) return false; // real FQDN (windomain.local) — always keep
   return NON_VICTIM_DOMAINS.has(d);
+}
+
+/** Noise as the account pattern read it before #3049, too: `élan\\x` is noise because `lan\\x` was. */
+export function isLegacyNoiseAccount(account: string): boolean {
+  const slash = account.lastIndexOf("\\");
+  const cut = slash > 0 ? legacyReading(account.slice(0, slash), "").qualifier : "";
+  return isNoiseAccount(account) || (cut !== "" && isNoiseDomain(cut));
 }
 
 // An extracted account is noise when its domain part is a non-victim word — e.g.

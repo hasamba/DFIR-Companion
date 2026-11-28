@@ -195,6 +195,7 @@
     "anonSecretValues.ts": "analysis/privacy",
     "anonSecrets.ts": "analysis/privacy",
     "anonTokenAccounts.ts": "analysis/privacy",
+    "anonNetbiosToken.ts": "analysis/privacy",
     "anonTokenLiterals.ts": "analysis/privacy",
     "anonUsernames.ts": "analysis/privacy",
     "anonPatterns.ts": "analysis/privacy",

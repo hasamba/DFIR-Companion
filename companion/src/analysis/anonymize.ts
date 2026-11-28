@@ -20,14 +20,15 @@ import { CARD_RE, NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPa
 import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
+import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
 import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
 import type { Ipv6Grade, Ipv6Span } from "./anonIpv6Scan.js";
 import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
 import {
-  NETBIOS_ACCT,
   UPN_ACCT,
-  PATH_DOMAINS,
   replaceUserPaths,
+  replaceNetbiosAccounts,
+  isLegacyNoiseAccount,
   bareUsername,
   collectUsernames,
   isFragmentName,
@@ -389,13 +390,19 @@ export function createAnonymizer(
     if (!forceCustom && suppressed.has(account.toLowerCase())) return account; // analyst veto
     // A registry hive, Windows principal, tactic folder or Folder\file.exe is not a person: it keeps
     // its old single whole-value token and teaches the bare pass nothing ("evil.exe", "Execution").
-    if (isNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account))) return guard("USER", account);
+    if (isLegacyNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account)))
+      return guard("USER", account);
     const slash = account.lastIndexOf("\\");
-    if (slash > 0) return `${qualifier(account.slice(0, slash))}\\${userToken(account.slice(slash + 1))}`;
+    if (slash > 0) return `${qualifier(account.slice(0, slash))}\\${userHalfToken(account.slice(slash + 1))}`;
     const at = account.indexOf("@");
     if (at > 0) return `${userToken(account.slice(0, at))}@${qualifier(account.slice(at + 1))}`;
     return userToken(account);
   }
+  const userHalfToken = (u: string) => sidUserToken(u, userToken, (sid) => assign("REG", sid));
+  const qualifierToken = (q: string) =>
+    toToken.get(anonPairKey(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q));
+  const deps = { userToken, qualifier, accountToken, qualifierToken, suppressed, savedUsers, cutUsers };
+  const netbiosToken = createNetbiosToken(deps);
   function anonAccounts(t: string): string {
     // First an account whose qualifier or user a custom or saved value already tokenized (#3020).
     const rules = { tokens: toReal, suppressed, internal: isInternalDomain, fileUser: FILE_EXT_USER };
@@ -405,7 +412,7 @@ export function createAnonymizer(
       raw === real ? userToken(real) : (learn(real), guard("USER", raw));
     const mint = { qualifier: qualify, user, whole: guard };
     let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
-    out = out.replace(NETBIOS_ACCT, (m, dom: string) => (PATH_DOMAINS.test(dom) ? m : accountToken(m)));
+    out = replaceNetbiosAccounts(out, netbiosToken);
     // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
     return out.replace(UPN_ACCT, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
   }
@@ -445,9 +452,10 @@ export function createAnonymizer(
   // Machine/domain-issued user SIDs (S-1-5-21-…-RID) are victim-identifying. Well-known SIDs
   // (S-1-5-18, S-1-5-19/20, S-1-5-32-*) lack the S-1-5-21 prefix and are preserved. A last number
   // of 11-13 digits is a RID with an IPv4 glued after it only when three dotted numbers follow, or
-  // a saved address or phone value the custom pass masked already (#3048).
+  // a saved address or phone value the custom pass masked already (#3048). Text glued after the RID
+  // (`…-1001bob`) does not stop it (#3049).
   const SID_RE =
-    /\bS-1-5-21(?:-\d{1,10}){3}-(?:\d{1,10}|\d{11,13}(?=(?:\.\d{1,3}){3}|(?:\.\d{1,3}){0,2}\.ANON_(?:IP|EXTIP|PHONE)_\d))\b/gi;
+    /\bS-1-5-21(?:-\d{1,10}){3}-(?:\d{1,10}|\d{11,13}(?=(?:\.\d{1,3}){3}|(?:\.\d{1,3}){0,2}\.ANON_(?:IP|EXTIP|PHONE)_\d))(?!\d)/gi;
   function anonSids(t: string): string {
     return t.replace(SID_RE, (m) => assign("REG", m));
   }
