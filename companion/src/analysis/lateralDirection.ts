@@ -102,6 +102,9 @@ class CaseHosts {
 interface Source {
   host?: string; // undefined = unresolved or in doubt
   evidence: string[]; // IP-binding records used
+  // The record names a source at all (a workstation, hostname or address). When it does and that
+  // source did not resolve, it must never be swapped for a nearby logon's source (#3085 review).
+  stated: boolean;
 }
 
 function resolveAddress(
@@ -109,7 +112,7 @@ function resolveAddress(
   bindings: HostBindingIndex,
   ip: string,
   at: string,
-): Source & { doubt: boolean } {
+): { host?: string; evidence: string[]; doubt: boolean } {
   const found = resolveIpAtTime(bindings, ip, at, BINDING_TOLERANCE_MS);
   if (!found.length) return { evidence: [], doubt: false };
   const named = new Set<string>();
@@ -130,23 +133,27 @@ function sourceOf(hosts: CaseHosts, bindings: HostBindingIndex, e: ForensicEvent
   const names = [c?.session?.terminal, net?.hostname]
     .map((n) => (n ?? "").trim())
     .filter((n) => n && isIdentifyingClientName(n));
+  const address = (net?.address ?? "").trim();
+  const stated = names.length > 0 || (!!address && isIdentifyingIp(address));
+  const doubt: Source = { evidence: [], stated };
   const candidates = new Set<string>();
   for (const n of names) {
     const h = hosts.resolve(n);
-    if (!h) return { evidence: [] }; // names a machine the case does not know
+    if (!h) return doubt; // names a machine the case does not know
     candidates.add(h);
   }
   let evidence: string[] = [];
-  const ip = net?.provenance === "edge-observed" ? (net.address ?? "").trim() : "";
-  if (ip && isIdentifyingIp(ip)) {
+  // Only an edge-observed address can name the source; an unstamped one is still "stated".
+  const ip = net?.provenance === "edge-observed" && isIdentifyingIp(address) ? address : "";
+  if (ip) {
     const r = resolveAddress(hosts, bindings, ip, e.timestamp);
-    if (r.doubt) return { evidence: [] };
+    if (r.doubt || (!r.host && !names.length)) return doubt;
     if (r.host) candidates.add(r.host);
     // The binding records are cited only when the IP is what named the source; when a name on the
     // record already did, the IP merely agreed with it.
     if (!names.length) evidence = r.evidence.filter((id) => id !== e.id);
   }
-  return candidates.size === 1 ? { host: [...candidates][0], evidence } : { evidence: [] };
+  return candidates.size === 1 ? { host: [...candidates][0], evidence, stated } : doubt;
 }
 
 function networkLogonAccount(e: ForensicEvent): string | undefined {
@@ -246,8 +253,9 @@ function collectEvidence(
     const target = hosts.resolve(eventAsset(e));
     if (!target) continue;
     const service = remoteExecService(e);
-    const own = service ? sourceOf(hosts, bindings, e) : { evidence: [] };
-    const paired = own.host ? undefined : pairedSource(logonsByTarget.get(target), timeOf(e.timestamp));
+    const own: Source = service ? sourceOf(hosts, bindings, e) : { evidence: [], stated: false };
+    // A nearby logon may name the source only when this record names none of its own.
+    const paired = own.stated ? undefined : pairedSource(logonsByTarget.get(target), timeOf(e.timestamp));
     const source = own.host ?? paired?.[0].source;
     const note = service ? undefined : corroboration(e);
     if (!source || source === target || (!service && !note)) continue;

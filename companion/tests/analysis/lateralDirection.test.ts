@@ -45,7 +45,13 @@ function logon(
   });
 }
 
-function serviceInstall(id: string, host: string, at: string, name = "PSEXESVC"): ForensicEvent {
+function serviceInstall(
+  id: string,
+  host: string,
+  at: string,
+  name = "PSEXESVC",
+  source?: { hostname?: string; address?: string },
+): ForensicEvent {
   return ev({
     id,
     asset: host,
@@ -56,6 +62,7 @@ function serviceInstall(id: string, host: string, at: string, name = "PSEXESVC")
       event: { category: "service", type: "service" },
       target: { kind: "host", name: host },
       service: { name, executable: `%SystemRoot%\\${name}.exe` },
+      ...(source ? { network: { source: { ...source, provenance: "edge-observed" as const } } } : {}),
       time: { observed: T(at), normalized: T(at) },
       evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
@@ -290,6 +297,49 @@ describe("directed lateral hops — what is not direction evidence", () => {
 
 describe("directed lateral hops — pairing a service install with a logon", () => {
   const base = () => [seen("src", "HOST-SRC"), logon("la", "HOST-A", "08:00", { ws: "HOST-SRC" })];
+
+  it("takes the source named on the service record itself", () => {
+    const hop = buildLateralPaths(
+      caseOf(
+        seen("src", "HOST-SRC"),
+        serviceInstall("sa", "HOST-A", "08:00", "PSEXESVC", { hostname: "HOST-SRC" }),
+      ),
+    )[0].hops[0];
+    expect([hop.from, hop.rule, hop.confidence]).toEqual(["host:host-src", "remote-service", "high"]);
+  });
+
+  // #3085 review: a service record that names a source the case cannot resolve must never borrow a
+  // nearby logon's source — the logon shows a connection, not who installed the service.
+  it("does not swap an unknown source on the service record for a nearby logon's", () => {
+    const s = caseOf(
+      ...base(),
+      serviceInstall("sa", "HOST-A", "08:01", "PSEXESVC", { hostname: "UNKNOWN-PC" }),
+    );
+    const hop = buildLateralPaths(s)[0].hops[0];
+    expect([hop.rule, hop.confidence]).toEqual(["network-logon", "medium"]);
+    expect(hop.eventIds).toEqual(["la"]);
+  });
+
+  it("does not pair a service record whose hostname and IP disagree", () => {
+    const s = caseOf(
+      ...base(),
+      seen("o", "HOST-OTHER"),
+      logon("bind", "HOST-X", "07:50", { ws: "HOST-OTHER", ip: "192.0.2.30", type: 10 }),
+      serviceInstall("sa", "HOST-A", "08:01", "PSEXESVC", { hostname: "HOST-SRC", address: "192.0.2.30" }),
+    );
+    const hop = buildLateralPaths(s).find((p) => p.hostIds[1] === "host:host-a")!.hops[0];
+    expect([hop.from, hop.rule, hop.confidence]).toEqual(["host:host-src", "network-logon", "medium"]);
+    expect(hop.eventIds).toEqual(["la"]);
+  });
+
+  it("does not pair a service record whose address the case cannot map", () => {
+    const s = caseOf(
+      ...base(),
+      serviceInstall("sa", "HOST-A", "08:01", "PSEXESVC", { address: "192.0.2.99" }),
+    );
+    const hop = buildLateralPaths(s)[0].hops[0];
+    expect([hop.rule, hop.confidence]).toEqual(["network-logon", "medium"]);
+  });
 
   it("does not pair a service install more than ten minutes from the logon", () => {
     const hop = buildLateralPaths(caseOf(...base(), serviceInstall("sa", "HOST-A", "08:20")))[0].hops[0];
