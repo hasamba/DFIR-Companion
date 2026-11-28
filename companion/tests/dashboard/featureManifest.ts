@@ -1934,6 +1934,8 @@ export const FEATURES: Feature[] = [
       "scheduleEvidenceGraphReload",
       "hasEvidenceGraph",
       "lateralPathGroups",
+      // Pure "Hosts that share a binary or account" renderer (#3085): published so escaping is testable.
+      "sharedHostLinksHtml",
       // Pure LOLBIN-chains selection (#2113): published so the filter order is testable headless.
       "evSelectGraph",
       "evLolbinSubset",
