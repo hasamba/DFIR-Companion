@@ -69,9 +69,11 @@ describe("an AWS key glued after a digit run (#3034)", () => {
     expect(redactSecretText(`{${guid}}`)).toBe(`{${guid}}`);
   });
 
-  it("still needs the digit run to start at a seam", () => {
+  it("needs the digit run to start at a seam unless the key has a base32 body (#3041)", () => {
     for (const text of [`SRV9${AWS}`, `HOST12${AWS}`, `ABC${digits(4)}${AWS}`])
-      expect(redactSecretText(text)).toBe(text);
+      expect(redactSecretText(text)).toBe(text.replace(AWS, SEC));
+    const notBase32 = join("AK", "IA", "QZ8WXCVBNMLKJHG9"); // 8 and 9 are no base32 digits
+    for (const text of [`SRV9${notBase32}`, `HOST12${notBase32}`]) expect(redactSecretText(text)).toBe(text);
   });
 
   it("stays fast on a long run of digits", () => {

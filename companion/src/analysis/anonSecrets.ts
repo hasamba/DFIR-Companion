@@ -32,27 +32,42 @@ const PEM_PRIVATE_KEY =
 const MAIL_TLDS =
   "com|net|org|edu|gov|mil|int|info|biz|io|ai|app|dev|cloud|online|local|localdomain|internal|intranet|lan|corp|home|private";
 
+// AWS key id: the edges are case-aware (#3005). A key is upper-case + digits, so lower-case text,
+// "_" or "." beside it is a seam, not more key. An upper-case hex hash never matches: every
+// 20-character stretch inside one has a hex digit beside it.
+const AWS_KEY = /(?<![0-9A-Z])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])/g;
+// ... glued after a run of digits that starts at a seam (12345 + key, #3034). A letter G-Z must be
+// in it: AKIA/ASIA/ABIA hold one, and an ACCA key's body must, so an upper-case hex hash (A-F only)
+// with digits before ACCA stays readable.
+const AWS_AFTER_DIGITS =
+  /(?=(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z]))(?<=(?<![0-9A-Z])[0-9]{1,16})(?=[0-9A-Z]{0,19}[G-Z])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])/g;
+const LEGACY_SK = /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g; // OpenAI legacy key
+
 // Fixed-shape secrets, replaced whole. Each is anchored on a vendor literal, so ordinary text and
 // hashes cannot match. Order matters only where one prefix contains another (sk-proj- before sk-).
 export const VENDOR_SECRETS: readonly RegExp[] = [
-  // AWS key id: the edges are case-aware (#3005). A key is upper-case + digits, so lower-case text,
-  // "_" or "." beside it is a seam, not more key. An upper-case hex hash never matches: every
-  // 20-character stretch inside one has a hex digit beside it.
-  /(?<![0-9A-Z])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])/g,
-  // ... glued after a run of digits that starts at a seam (12345 + key, #3034). A letter G-Z must be
-  // in it: AKIA/ASIA/ABIA hold one, and an ACCA key's body must, so an upper-case hex hash (A-F only)
-  // with digits before ACCA stays readable.
-  /(?=(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z]))(?<=(?<![0-9A-Z])[0-9]{1,16})(?=[0-9A-Z]{0,19}[G-Z])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])/g,
+  AWS_KEY,
+  AWS_AFTER_DIGITS,
+  // ... glued to a digit on either side (<key>9, 20240101T1200<key>, #3041). A real key id body is
+  // base32: A-Z and 2-7, never 0, 1, 8 or 9, so a year or an "01" suffix is not key body. It must hold
+  // a 2-7 digit directly followed by a letter, so WORD + digits (ACCAPAYABLESARCHIVE2023) is not one,
+  // and a letter G-Z, so an upper-case hex hash is not one.
+  /(?<![A-Z])(?=[A-Z2-7]{0,19}[G-Z])(?:AKIA|ASIA|ABIA|ACCA)(?=[A-Z2-7]{0,14}[2-7][A-Z])[A-Z2-7]{16}(?![A-Z])/g,
   // GitHub App installation token since 2026: ghs_<app id>_<JWT>, ~520 characters. Before the JWT
   // rules, so the app id goes with it. "eyJ" (a JSON header) keeps `highs_2024_x.final.docx` apart.
   /ghs_[0-9]{1,20}_eyJ[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,4096}\.[A-Za-z0-9_-]{4,}/g,
   /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g, // JWT
   /eyJ[A-Za-z0-9_-]{6,256}\.eyJ[A-Za-z0-9_-]{3,}\.[A-Za-z0-9_-]{4,}/g, // JWT glued to a word: JSON header AND payload
+  // ... or a long mixed signature (16+, upper, lower and a digit) as a real one has, whatever the payload (#3041):
+  // after DOMAIN\user or a dotless e-mail domain. A file name's extension is never such a segment.
+  /eyJ[A-Za-z0-9_-]{6,256}\.[A-Za-z0-9_-]{6,256}\.(?=[A-Za-z0-9_-]{0,256}[A-Z])(?=[A-Za-z0-9_-]{0,256}[a-z])(?=[A-Za-z0-9_-]{0,256}[0-9])[A-Za-z0-9_-]{16,}/g,
   // ... glued straight after an e-mail domain (<user>@<internal domain> + token, #3034). The label right before
   // it must read as a top-level domain (two letters, or a common or internal one), so a host such as
-  // x@<host>.<internal domain> (turkeyJerky01) is not one. The #3028 growth sends the whole address one way.
+  // x@<host>.<internal domain> (turkeyJerky01) is not one. A dotless domain counts only when it is
+  // localhost or one of those names (svc@localhost + token, #3041). The #3028 growth sends the whole
+  // address one way.
   new RegExp(
-    `(?=eyJ)(?<=@[A-Za-z0-9-]{1,63}(?:\\.[A-Za-z0-9-]{1,63}){0,8}\\.(?:[A-Za-z]{2}|${MAIL_TLDS}))` +
+    `(?=eyJ)(?<=@(?:[A-Za-z0-9-]{1,63}(?:\\.[A-Za-z0-9-]{1,63}){0,8}\\.(?:[A-Za-z]{2}|${MAIL_TLDS})|localhost|${MAIL_TLDS}))` +
       "eyJ[A-Za-z0-9_-]{6,256}\\.[A-Za-z0-9_-]{6,256}\\.[A-Za-z0-9_-]{4,}",
     "g",
   ),
@@ -72,7 +87,7 @@ export const VENDOR_SECRETS: readonly RegExp[] = [
   // ... an Anthropic key glued to a word (api03, admin01, ...): mixed case, so a hex hash is not one.
   /sk-ant-[a-z]{2,10}\d{2}-(?=[0-9a-z_-]{0,256}[A-Z])[A-Za-z0-9_-]{16,}/g,
   /sk-[A-Za-z0-9_-]{8,200}T3BlbkFJ[A-Za-z0-9_-]{8,}/g, // ... an OpenAI key glued to a word (its "OpenAI" marker)
-  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g, // OpenAI legacy key
+  LEGACY_SK,
   // ... glued after a name in an account, path, e-mail or host (CORP\bob + key, #3029): after a "\"
   // or "/" in the same word, or before a ".", "@" or "\". At least three digits, upper- and lower-case
   // letters, so a host or folder name such as kiosk-FrontDesk01 is not one; a bare word such as
@@ -86,6 +101,40 @@ export const VENDOR_SECRETS: readonly RegExp[] = [
   // hex. The look-ahead runs first, so the bounded look-behind is tried only at real candidates.
   /\b(?=(?:AC|SK)[0-9A-F]{32}\b)(?<=(?:twilio[^\n]{0,60}|\b(?:account_?sid|auth_?token)["']?[ \t]{0,4}[=:][ \t]{0,4}["']?))(?:AC|SK)[0-9A-F]{32}\b/gi,
 ];
+
+// #3003: inside a name the vendor shapes are tested with no edge guard: every "\b" and every negative
+// look-around that is one character class (with an optional count) is removed. Positive look-arounds
+// stay (mixed case, the "eyJ" header, the Twilio label), so the shapes keep what tells a key from a
+// hash or a word. Derived from VENDOR_SECRETS, so a later edge change there follows here.
+const EDGE_GUARD = /\\b|\(\?<?!\[[^\]]*\](?:\{\d+(?:,\d*)?\})?\)/g;
+const stripEdges = (re: RegExp, flags: string) => new RegExp(re.source.replace(EDGE_GUARD, ""), flags);
+
+/** The vendor shapes with their edge guards removed (anonGluedSecret.ts tests a name with them). */
+export const GLUED_VENDOR_SECRETS: readonly RegExp[] = VENDOR_SECRETS.map((re) =>
+  stripEdges(re, re.flags.replace("g", "")),
+);
+
+// #3041: a key glued inside an e-mail or UPN domain label (bob@SRV<key>.corp.local) is missed by the
+// edge-guarded shapes, and the e-mail or account pass then held it in a reversible token. Each label is
+// tested with the edge-free shapes, except those that cannot be told from a host label: a dotted shape
+// (a JWT or SendGrid key spans labels: x@<host>.<internal domain> (turkeyJerky01)), the [0-9A-Z] AWS shapes (the
+// base32 one stays, so ASIAPACIFICFILESERVER01 is a host) and the plain legacy sk- (disk-0123...).
+// The #3028 growth then sends the whole address one way.
+const NOT_IN_LABEL = new Set<RegExp>([AWS_KEY, AWS_AFTER_DIGITS, LEGACY_SK]);
+const LABEL_SECRETS = VENDOR_SECRETS.filter((re) => !NOT_IN_LABEL.has(re) && !re.source.includes("\\.")).map(
+  (re) => stripEdges(re, re.flags),
+);
+const MAIL_DOMAIN = /(?<=[A-Za-z0-9._%+-]@)[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,16}/g;
+
+function redactDomainLabels(text: string): string {
+  if (!text.includes("@")) return text;
+  return text.replace(MAIL_DOMAIN, (domain) =>
+    domain
+      .split(".")
+      .map((label) => LABEL_SECRETS.reduce((l, re) => l.replace(re, SECRET_PLACEHOLDER), label))
+      .join("."),
+  );
+}
 
 // A token that ends in a hex character and is glued to an IPv6 address has taken the address's hex
 // head (`fd00` of `fd00::2`), so the rest (`::2`) would go out in clear or be tokenized as the wrong
@@ -157,5 +206,5 @@ export function redactSecretText(text: string): string {
   // Vendor shapes last (#3005): a keyed or flag value that holds a vendor shape plus a glued tail
   // is hidden whole first; the vendor pass then catches shapes outside any key.
   for (const re of VENDOR_SECRETS_GLUED_V6) out = out.replace(re, SECRET_PLACEHOLDER);
-  return out;
+  return redactDomainLabels(out);
 }

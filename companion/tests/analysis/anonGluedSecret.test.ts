@@ -31,9 +31,11 @@ const PAYLOAD = join("ey", "JzdWIiOiIxMjM0In0");
 const SAMPLES = [
   AWS,
   join("9", AWS), // ... glued after a digit run (#3034)
+  join(AWS, "9"), // ... glued to a digit on either side, base32 body (#3041)
   join("gh", "s_", "123456_", HEADER, ".", PAYLOAD, ".", "Sf1KxwRJSMeK"),
   JWT,
   join(HEADER, ".", PAYLOAD, ".", "Sf1KxwRJSMeK"),
+  join(HEADER, ".", "abcdefgh", ".", "Sf1KxwRJSMeK9abc"), // ... a long mixed signature (#3041)
   join(String.fromCharCode(0x40), "corp", ".local", JWT), // ... glued after an e-mail domain (#3034)
   join("github", "_pat_", rep("A1b2C3d4", 30)),
   join("gh", "p_", rep("a1B2", 24)),

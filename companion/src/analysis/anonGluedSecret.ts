@@ -1,4 +1,4 @@
-import { redactSecretText, VENDOR_SECRETS } from "./anonSecrets.js";
+import { GLUED_VENDOR_SECRETS, redactSecretText } from "./anonSecrets.js";
 import { locateSecrets, type SecretSpan } from "./anonSecretCustom.js";
 import { findCustomSpans, type CompiledCustom } from "./anonCustomSpans.js";
 import { CARD_RE, NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
@@ -6,16 +6,8 @@ import { CARD_RE, NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPa
 // #3003: a secret glued into a name ("C:\Users\bob<key>", "/home/<key>x") can be missed by the
 // edge-guarded vendor shapes, and the later passes then minted the whole name as a reversible USER
 // token: restore() handed the secret back and the OCR path saved it as a discovery. Inside a name the
-// vendor shapes are tested with no edge guard: every "\b" and every negative look-around that is one
-// character class (with an optional count) is removed. Positive look-arounds stay (mixed case, the
-// "eyJ" header, the Twilio label), so the shapes keep what tells a key from a hash or a word. Derived
-// from VENDOR_SECRETS, so a later edge change there follows here.
-const EDGE_GUARD = /\\b|\(\?<?!\[[^\]]*\](?:\{\d+(?:,\d*)?\})?\)/g;
-
-/** The vendor shapes with their edge guards removed; exported for the tests. */
-export const GLUED_VENDOR_SECRETS: readonly RegExp[] = VENDOR_SECRETS.map(
-  (re) => new RegExp(re.source.replace(EDGE_GUARD, ""), re.flags.replace("g", "")),
-);
+// vendor shapes are tested with no edge guard (GLUED_VENDOR_SECRETS, derived in anonSecrets.ts).
+export { GLUED_VENDOR_SECRETS };
 const SENTINELS = /[\uE000\uE001]/; // an address set aside or a secret already redacted
 const SECRET_SENTINEL = "\uE001"; // the anonymizer's stand-in for [REDACTED_SECRET] until its last pass
 
