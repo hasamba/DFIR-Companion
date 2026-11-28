@@ -71,11 +71,34 @@ export function tokenQualifiedAccounts(
   // `x@CORP\\bob` is an account behind `CORP`: the NETBIOS pattern reads it before the UPN one.
   const behind = (s: string, end: number, d: string) =>
     s[end] === "\\" && NETBIOS_AFTER.test(s.slice(end + 1, end + 3)) && NETBIOS_QUALIFIER.test(expand(d));
-  return out.replace(UPN, (all, user: string, d: string, at: number, s: string) => {
+  const email = (s: string) => EMAIL.test(expand(s));
+  return replaceUpns(out, email, (all, user, d, at, s) => {
     if (!HAS_TOKEN.test(all) || behind(s, at + all.length, d)) return all;
     const hit = upn(c, all, user, d);
+    // Behind another `@` the fresh email pattern masks the whole address, its `@` included (#3074).
+    if (hit !== all && s[at - 1] === "@" && c.email) return c.whole("EMAIL", all);
     return hit !== all ? hit : gluedUpn(c, all, user, d, at, s);
   });
+}
+
+// Like `text.replace(UPN, fn)`, but a match left as it is, followed by another `@` and not itself an
+// address the email pass masks later, is read again from its first `@`: `<user>@<domain>N@ANON_DOMAIN_1`
+// holds the account `<domain>N@ANON_DOMAIN_1`, as the fresh email pattern reads it (#3074).
+type UpnFn = (all: string, user: string, d: string, at: number, s: string) => string;
+function replaceUpns(text: string, email: (s: string) => boolean, fn: UpnFn): string {
+  const re = new RegExp(UPN.source, "g");
+  let out = "";
+  let last = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const hit = fn(m[0], m[1], m[2], m.index, text);
+    if (hit === m[0]) {
+      if (text[m.index + m[0].length] === "@" && !email(m[0])) re.lastIndex = m.index + m[1].length + 1;
+      continue;
+    }
+    out += text.slice(last, m.index) + hit;
+    last = m.index + m[0].length;
+  }
+  return out + text.slice(last);
 }
 
 // Digits glued after the TLD (`<user>@<domain>1`), as GLUED_EMAIL_RE reads the real text (#3050): a
@@ -172,7 +195,8 @@ function upn(c: Ctx, all: string, run: string, d: string): string {
   // read `bob@…`, so each start after a `.`, `%`, `+` or `-` is tried, leftmost first.
   for (let i = 0; i < run.length; i++) {
     if (i > 0 && !(/[.%+-]/.test(run[i - 1]) && /\w/.test(run[i]))) continue;
-    const user = run.slice(i).replace(/^[.%+-]+/, "");
+    // A `+` before a digit is a phone prefix: it stays inside the user token (#3074).
+    const user = run.slice(i).replace(/^(?:[.%-]|\+(?!\d))+/, "");
     if (c.single(user) && c.single(d)) return all; // already masked whole
     const hit = upnFrom(c, user, d);
     if (hit !== null) return run.slice(0, run.length - user.length) + hit;
