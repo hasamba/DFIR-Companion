@@ -1,3 +1,4 @@
+import { isIPv4, isIPv6 } from "node:net";
 import { escapeRegExp } from "./regexEscape.js";
 import { MAX_LITERAL, compileLong, nextLong, valuesCanOverlap } from "./anonChunkedMatch.js";
 
@@ -354,6 +355,25 @@ export interface UsernameMatcher {
 type Span = [number, number];
 const WORD_CHAR = /[\p{L}\p{N}_]/u;
 
+// #3070: a name glued to an address that starts with a digit and is never masked ("jdoe0::2") was no
+// whole word, so it went out in clear. A digit may follow a name when what starts there is a whole
+// address (IPv6, or a dotted-quad IPv4) and no letter, digit or "_" follows it. Any other digit after
+// a name (a year, a version, a time, "jdoe0") still leaves it alone: it may be another account.
+const ADDRESS_RUN = /[0-9A-Fa-f:.]+/y;
+const IPV4_HEAD = /(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9]|\.[0-9])/y;
+
+/** True when a name ending at text[end] ends there: no word character, or a whole glued address. */
+function endsName(text: string, end: number): boolean {
+  if (!/[0-9]/.test(text[end] ?? "")) return true; // the matcher's boundary held already
+  IPV4_HEAD.lastIndex = end;
+  const v4 = IPV4_HEAD.exec(text)?.[0];
+  if (v4 && isIPv4(v4) && !WORD_CHAR.test(text[end + v4.length] ?? "")) return true;
+  ADDRESS_RUN.lastIndex = end;
+  const run = ADDRESS_RUN.exec(text)?.[0] ?? "";
+  const v6 = isIPv6(run) ? run : run.replace(/[.:]+$/, "");
+  return isIPv6(v6) && !WORD_CHAR.test(text[end + v6.length] ?? "");
+}
+
 /** A case-insensitive, whole-word, longest-first matcher of the names; null when none. */
 export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null {
   const list = [...new Set([...names].map((n) => n.trim()).filter((n) => n && !isGuardedUsername(n)))];
@@ -362,11 +382,17 @@ export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null
   const short = list.filter((n) => n.length <= MAX_LITERAL);
   const long = list.filter((n) => n.length > MAX_LITERAL).map(compileLong); // #3007
   const re = short.length
-    ? new RegExp(`(?<![${UNICODE_WORD}])(?:${short.map(escapeRegExp).join("|")})(?![${UNICODE_WORD}])`, "giu")
+    ? new RegExp(
+        `(?<![${UNICODE_WORD}])(?:${short.map(escapeRegExp).join("|")})(?:(?![${UNICODE_WORD}])|(?=[0-9]))`,
+        "giu",
+      )
     : null;
   if (re && long.length === 0 && !valuesCanOverlap(list))
     return {
-      [Symbol.replace]: (text, fn) => text.replace(re, (m: string, at: number) => fn(m, at, text) ?? m),
+      [Symbol.replace]: (text, fn) =>
+        text.replace(re, (m: string, at: number) =>
+          endsName(text, at + m.length) ? (fn(m, at, text) ?? m) : m,
+        ),
     };
   // The leftmost match wins, the longest on a tie, and the scan resumes at its end: what the single
   // alternation did before a long name had to leave it.
@@ -377,7 +403,8 @@ export function usernameMatcher(names: Iterable<string>): UsernameMatcher | null
     };
     if (re) {
       re.lastIndex = from;
-      const m = re.exec(text);
+      let m = re.exec(text);
+      while (m && !endsName(text, m.index + m[0].length)) ((re.lastIndex = m.index + 1), (m = re.exec(text)));
       offer(m ? [m.index, m.index + m[0].length] : null);
     }
     for (const ln of long) offer(nextLong(text, ln, from));
@@ -428,6 +455,7 @@ export function replaceBareNames(
   matcher: UsernameMatcher,
   suppressed: ReadonlySet<string>,
   mint: (m: string, joined?: string[]) => string,
+  ended: (result: string, value: string, at: number, end: number, text: string) => string = (r) => r,
 ): string {
   let spans: Span[] | undefined; // computed once, only when a name matches
   return matcher[Symbol.replace](text, (m, offset, whole, joined) => {
@@ -437,7 +465,8 @@ export function replaceBareNames(
     const keep =
       insideSuppressedAccount(whole, offset, joined?.[0] ?? m, suppressed) ||
       strictlyInside(spans, offset, m.length);
-    return !keep ? mint(m, joined) : joined ? null : m;
+    // A token before a glued address's digit keeps a delimiter, or it reads back as another (#3070, #2992).
+    return !keep ? ended(mint(m, joined), m, offset, offset + m.length, whole) : joined ? null : m;
   });
 }
 

@@ -429,7 +429,7 @@ export function createAnonymizer(
   // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
   function anonBareUsernames(t: string): string {
     if (bareRe === undefined) bareRe = usernameMatcher(learned);
-    return bareRe ? replaceBareNames(t, bareRe, suppressed, mintBareName) : t;
+    return bareRe ? replaceBareNames(t, bareRe, suppressed, mintBareName, ends.ended) : t;
   }
   function mintBareName(m: string, joined?: string[]): string {
     for (const n of joined ?? []) userToken(n); // a run joining overlapping names is never saved; its names are (#3010)
