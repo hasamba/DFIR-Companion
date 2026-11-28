@@ -23,11 +23,11 @@ import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
 import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
 import { carveProfileName, valuePasses } from "./anonProfileTail.js";
+import { atAnchored, UPN_SCAN } from "./anonAtScan.js"; // the account and e-mail patterns in linear time (#3055)
 import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
 import type { Ipv6Grade, Ipv6Span } from "./anonIpv6Scan.js";
 import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
 import {
-  UPN_ACCT,
   replaceUserPaths,
   replaceNetbiosAccounts,
   isLegacyNoiseAccount,
@@ -417,7 +417,7 @@ export function createAnonymizer(
     let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
     out = replaceNetbiosAccounts(out, netbiosToken);
     // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
-    return out.replace(UPN_ACCT, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
+    return out.replace(UPN_SCAN, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
   }
   // Every learned username as a whole word, after HOST and DOMAIN have claimed their spans (so
   // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
@@ -431,9 +431,10 @@ export function createAnonymizer(
   }
   const EMAIL_RE =
     /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
+  const EMAIL_SCAN = atAnchored(EMAIL_RE, 1); // linear on long runs (#3055)
   function anonEmails(t: string): string {
     // A local part holding a secret hides the whole address, or an external domain would go out in clear.
-    return t.replace(EMAIL_RE, (m) =>
+    return t.replace(EMAIL_SCAN, (m) =>
       oneWay(m.slice(0, m.lastIndexOf("@"))) ? SECRET_SENTINEL : assign("EMAIL", m),
     );
   }
