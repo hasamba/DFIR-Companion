@@ -628,7 +628,7 @@
     if (anonControl.screenshotWarning) {
       warn.style.display = "block";
       warn.textContent =
-        "⚠ Screenshots are OCR-redacted (best-effort) before being sent to the external vision model — text matching the entities below is blacked out on an in-memory copy; the original on disk is untouched. OCR can miss text, so don't rely on it for highly sensitive screens. Point DFIR_VISION_MODEL at a local Ollama vision model to keep screenshots fully on-box. Imported CSV/log text and synthesis are anonymized.";
+        "⚠ Screenshots are OCR-redacted (best-effort) before being sent to the external vision model — text matching the entities below is blacked out on an in-memory copy; the original on disk is untouched. OCR can miss text, so don't rely on it for highly sensitive screens. To keep screenshots fully on-box, point the vision provider at a model on this machine (for Ollama, a local vision model plus a base URL such as http://localhost:11434/v1 — with no base URL, Ollama sends to its cloud service). Imported CSV/log text and synthesis are anonymized.";
     } else {
       warn.style.display = "none";
     }

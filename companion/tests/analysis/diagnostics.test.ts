@@ -70,6 +70,17 @@ describe("buildAiDiagnostics", () => {
     expect(d.anonymizeDefault).toBe(false);
   });
 
+  // #3106: ollama with no base URL is hosted Ollama Cloud, not this machine.
+  it("treats ollama with no base URL as non-local, and a saved loopback Ollama URL as local", () => {
+    expect(buildAiDiagnostics({ DFIR_VISION_PROVIDER: "ollama", DFIR_VISION_MODEL: "m" }).local).toBe(false);
+    const d = buildAiDiagnostics({
+      DFIR_VISION_PROVIDER: "ollama",
+      DFIR_VISION_MODEL: "m",
+      DFIR_AI_BASE_URL_OLLAMA: "http://localhost:11434/v1",
+    });
+    expect(d.local).toBe(true);
+  });
+
   it("treats a cloud provider as non-local and falls synth model back to the main model", () => {
     const d = buildAiDiagnostics({ DFIR_AI_PROVIDER: "anthropic", DFIR_AI_MODEL: "claude" });
     expect(d.local).toBe(false);

@@ -9,6 +9,7 @@ import {
   isNoiseDomain,
   isNoiseAccount,
   isLocalAiProvider,
+  visionAiIsLocal,
   isMaskableIpv4,
   isMaskableIpv6,
   isAnonToken,
@@ -794,10 +795,60 @@ describe("deriveKnownEntities — noise filtering", () => {
 });
 
 describe("isLocalAiProvider", () => {
-  it("treats ollama and localhost base URLs as local", () => {
-    expect(isLocalAiProvider("ollama", undefined)).toBe(true);
+  it("treats a loopback base URL as local", () => {
+    expect(isLocalAiProvider("ollama", "http://localhost:11434/v1")).toBe(true);
     expect(isLocalAiProvider("litellm", "http://127.0.0.1:4000/v1")).toBe(true);
+    expect(isLocalAiProvider("openai", "http://127.0.0.2:1234/v1")).toBe(true);
+    expect(isLocalAiProvider("openai", "http://[::1]:8080/v1")).toBe(true);
     expect(isLocalAiProvider("openrouter", "https://openrouter.ai/api/v1")).toBe(false);
+  });
+
+  // #3106: with no base URL the ollama provider sends to hosted Ollama Cloud.
+  it("treats ollama with no base URL, or a public one, as external", () => {
+    expect(isLocalAiProvider("ollama", undefined)).toBe(false);
+    expect(isLocalAiProvider("ollama", "  ")).toBe(false);
+    expect(isLocalAiProvider("ollama", "https://ollama.com/v1")).toBe(false);
+  });
+
+  it("keeps litellm with no base URL external: the proxy may forward to a hosted model", () => {
+    expect(isLocalAiProvider("litellm", undefined)).toBe(false);
+  });
+
+  it("decides from the host, not from 'localhost' text elsewhere in the URL", () => {
+    expect(isLocalAiProvider("openai", "https://api.example.com/localhost/v1")).toBe(false);
+    expect(isLocalAiProvider("openai", "https://api.example.com/v1?h=127.0.0.1")).toBe(false);
+    expect(isLocalAiProvider("openai", "https://user@api.example.com/v1#localhost")).toBe(false);
+    expect(isLocalAiProvider("openai", "not a url localhost")).toBe(false);
+    expect(isLocalAiProvider("openai", "file://localhost/x")).toBe(false);
+  });
+
+  it("never treats a CLI provider as local, even with a stale loopback base URL", () => {
+    expect(isLocalAiProvider("claude-code", "http://localhost:11434/v1")).toBe(false);
+    expect(isLocalAiProvider("codex", "http://localhost:11434/v1")).toBe(false);
+    expect(isLocalAiProvider(undefined, "http://localhost:11434/v1")).toBe(false);
+  });
+});
+
+describe("visionAiIsLocal", () => {
+  it("reads the per-provider base URL the vision provider actually sends to", () => {
+    expect(
+      visionAiIsLocal({
+        DFIR_VISION_PROVIDER: "ollama",
+        DFIR_AI_BASE_URL_OLLAMA: "http://localhost:11434/v1",
+      }),
+    ).toBe(true);
+  });
+  it("is external for ollama with no base URL (hosted Ollama Cloud)", () => {
+    expect(visionAiIsLocal({ DFIR_VISION_PROVIDER: "ollama" })).toBe(false);
+  });
+  it("lets an explicit remote vision URL win over a saved loopback provider URL", () => {
+    expect(
+      visionAiIsLocal({
+        DFIR_VISION_PROVIDER: "ollama",
+        DFIR_VISION_BASE_URL: "https://ollama.com/v1",
+        DFIR_AI_BASE_URL_OLLAMA: "http://localhost:11434/v1",
+      }),
+    ).toBe(false);
   });
 });
 

@@ -796,4 +796,4 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
 }
 
 // Moved to localAiProvider.ts; re-exported for existing importers.
-export { isLocalAiProvider } from "./localAiProvider.js";
+export { isLocalAiProvider, visionAiIsLocal } from "./localAiProvider.js";
