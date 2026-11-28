@@ -4,17 +4,27 @@ import type { CaseStore } from "../../storage/caseStore.js";
 import { atomicWrite } from "../../storage/atomicWrite.js";
 import { StateLock } from "../../analysis/stateLock.js";
 
-// SO-CRATES jobs that startup recovery settled as failed while their row in socrates-jobs.json could
-// not be written (#3038). The failure was already counted in its submission's message, so a later
-// restart must treat the job as finished and never report it again. Persisted to its own side file
+// SO-CRATES jobs whose final state was reported while their row in socrates-jobs.json could not be
+// written: settled as failed by startup recovery (#3038), or finished by a poller whose final save
+// failed (#3042). The outcome was already counted in its submission's message, so a later restart
+// must treat the job as finished and never report it again. Persisted to its own side file
 // (state/socrates-settled.json): the job file is the one that just refused the write. A mark is
-// pruned once the job's row is final or gone.
+// pruned once the job's row is final or gone. A mark written before #3042 has no status: failed.
 
 export interface SocratesSettledMark {
-  /** The failure reason the submission's message gave for this job. */
+  /** The outcome the submission's message gave for this job. Absent: "error". */
+  status?: "error" | "imported";
+  /** The failure reason the message gave ("" for an imported job). */
   error: string;
+  /** What an imported job added, for its healed row. */
+  addedEvents?: number;
+  addedIocs?: number;
   settledAt: string; // ISO
 }
+
+/** What a mark records: a failure reason, or an imported job's counts. */
+export type SocratesSettledOutcome =
+  { status: "error"; error: string } | { status: "imported"; addedEvents?: number; addedIocs?: number };
 
 export type SocratesSettledMarks = Readonly<Record<string, SocratesSettledMark>>;
 
@@ -23,7 +33,13 @@ const settledLock = new StateLock();
 function isMark(value: unknown): value is SocratesSettledMark {
   const v = value as Partial<SocratesSettledMark> | null;
   return (
-    typeof v === "object" && v !== null && typeof v.error === "string" && typeof v.settledAt === "string"
+    typeof v === "object" &&
+    v !== null &&
+    typeof v.error === "string" &&
+    typeof v.settledAt === "string" &&
+    (v.status === undefined || v.status === "error" || v.status === "imported") &&
+    (v.addedEvents === undefined || Number.isInteger(v.addedEvents)) &&
+    (v.addedIocs === undefined || Number.isInteger(v.addedIocs))
   );
 }
 
@@ -48,11 +64,21 @@ export class SocratesSettledStore {
     return Object.fromEntries(Object.entries(parsed).filter(([, v]) => isMark(v)));
   }
 
-  /** Record that this job was settled as failed with `error`. Throws when it cannot be written. */
-  mark(caseId: string, jobId: string, error: string): Promise<void> {
+  /** Record the outcome this job was reported with. Throws when it cannot be written. */
+  mark(caseId: string, jobId: string, outcome: SocratesSettledOutcome): Promise<void> {
     return settledLock.runExclusive(caseId, async () => {
       const marks = await this.list(caseId);
-      const next = { ...marks, [jobId]: { error, settledAt: new Date().toISOString() } };
+      const mark: SocratesSettledMark =
+        outcome.status === "error"
+          ? { error: outcome.error, settledAt: new Date().toISOString() }
+          : {
+              status: "imported",
+              error: "",
+              ...(outcome.addedEvents !== undefined ? { addedEvents: outcome.addedEvents } : {}),
+              ...(outcome.addedIocs !== undefined ? { addedIocs: outcome.addedIocs } : {}),
+              settledAt: new Date().toISOString(),
+            };
+      const next = { ...marks, [jobId]: mark };
       await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
     });
   }

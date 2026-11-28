@@ -257,3 +257,89 @@ describe("SO-CRATES recovery messages across restarts (#3038)", () => {
     expect(text).toContain("sample.zip!a");
   });
 });
+
+// #3042 — the poller path: a job whose final row could not be saved must not report again after a
+// later restart. Same restart model as above: a new runner on the same cases root.
+describe("SO-CRATES poller messages across restarts (#3042)", () => {
+  type H = Awaited<ReturnType<typeof harness>>;
+  const restart = (h: H, sent: NotificationEvent[]): Promise<H> =>
+    harness({ added: 1, highCritical: 0 }, h.root).then((n) => {
+      n.sent.push = (...e: NotificationEvent[]) => sent.push(...e);
+      return n;
+    });
+  // Only the job's FINAL write fails: "importing" and the phase still save.
+  const failFinalWrite = (h: H, jobId: string) => {
+    const real = h.runner.jobs.upsert.bind(h.runner.jobs);
+    return vi.spyOn(h.runner.jobs, "upsert").mockImplementation(async (caseId, j) => {
+      if (j.jobId === jobId && (j.status === "error" || j.status === "imported"))
+        throw new Error("disk full");
+      return real(caseId, j);
+    });
+  };
+  const polls = (md5: string): number => vi.mocked(checkStatus).mock.calls.filter((c) => c[1] === md5).length;
+  const launchOne = (h: H, md5: string): void => {
+    h.runner.openSubmission("c1", "sub-1", "sample.zip");
+    h.runner.reserve("j1");
+    h.runner.launch("c1", job("j1", md5), cfg);
+    h.runner.sealSubmission("c1", "sub-1");
+  };
+
+  it("a failed analysis whose final row cannot be saved reports once across a restart", async () => {
+    const first = await harness();
+    const sent = first.sent;
+    await first.runner.jobs.upsert("c1", job("j1", "bad31"));
+    failFinalWrite(first, "j1");
+    launchOne(first, "bad31");
+    await pollFor("the import message", async () => sent[0]);
+    expect(sent[0].title).toBe("Import failed: SO-CRATES: sample.zip");
+    const before = polls("bad31");
+    const second = await restart(first, sent);
+    await second.runner.resumeAll();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toHaveLength(1);
+    expect(polls("bad31")).toBe(before);
+    expect((await second.runner.jobs.get("c1", "j1"))?.status).toBe("error");
+  });
+
+  it("an imported job whose final row cannot be saved reports once, and is healed as imported", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout"] });
+    try {
+      const first = await harness({ added: 3, highCritical: 1 });
+      const sent = first.sent;
+      await first.runner.jobs.upsert("c1", job("j1", "good32"));
+      failFinalWrite(first, "j1");
+      launchOne(first, "good32");
+      // The final save is retried after 1s and 5s before the poller gives up on it.
+      // vi.waitFor advances the fake clock by its interval on every check.
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 10_000, interval: 250 });
+      expect(sent[0].title).toBe("Import finished: SO-CRATES: sample.zip");
+      const second = await restart(first, sent);
+      await second.runner.resumeAll();
+      expect(sent).toHaveLength(1);
+      const healed = await second.runner.jobs.get("c1", "j1");
+      expect(healed?.status).toBe("imported");
+      expect(healed?.addedEvents).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("when neither the row nor a mark can be written, nothing is sent until a later start reports once", async () => {
+    const first = await harness();
+    const sent = first.sent;
+    await first.runner.jobs.upsert("c1", job("j1", "bad33"));
+    const spy = failFinalWrite(first, "j1");
+    const mark = vi.spyOn(first.runner.settled, "mark").mockRejectedValue(new Error("read-only"));
+    launchOne(first, "bad33");
+    await pollFor("the final write attempt", async () => (mark.mock.calls.length ? true : undefined));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(spy).toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
+    const second = await restart(first, sent);
+    await second.runner.resumeAll();
+    await pollFor("the import message", async () => sent[0]);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toHaveLength(1);
+    expect(sent[0].title).toBe("Import failed: SO-CRATES: sample.zip");
+  });
+});

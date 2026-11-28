@@ -15,7 +15,9 @@ import { pollUntilImported } from "../integrations/socrates/socratesPoller.js";
 import { recoverSocratesJobs } from "../integrations/socrates/socratesRecovery.js";
 import {
   SocratesSettledStore,
+  type SocratesSettledMark,
   type SocratesSettledMarks,
+  type SocratesSettledOutcome,
 } from "../integrations/socrates/socratesSettledStore.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
@@ -48,7 +50,7 @@ export interface SocratesJobRunnerDeps {
 
 export interface SocratesJobRunner {
   readonly jobs: SocratesJobStore;
-  /** Jobs settled as failed while their row could not be written, so no restart reports them twice (#3038). */
+  /** Jobs reported while their final row could not be written, so no restart reports them twice (#3038, #3042). */
   readonly settled: SocratesSettledStore;
   /**
    * Claim a job id BEFORE its row is written, so startup recovery running meanwhile never sees it
@@ -170,14 +172,26 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
       },
     )
       .then(
-        (final) => {
-          submissions.settle(caseId, final, counts);
-          return closeDropLog(caseId, final);
+        async (final) => {
+          // The poller hands back its final state even when the row could not be saved (#3042).
+          if (await finalOnDisk(caseId, final)) {
+            submissions.settle(caseId, final, counts);
+            return closeDropLog(caseId, final);
+          }
+          const persisted = await persistSettled(caseId, final);
+          if (persisted) submissions.settle(caseId, persisted, counts);
         },
-        (err) => {
+        async (err) => {
           const message = `poller stopped: ${(err as Error).message}`;
           warnLine(`[socrates] job ${job.jobId}: ${message}`);
-          submissions.settle(caseId, { ...job, status: "error", error: message });
+          const failed: SocratesJob = {
+            ...job,
+            status: "error",
+            error: message,
+            finishedAt: new Date().toISOString(),
+          };
+          const persisted = await persistSettled(caseId, failed);
+          if (persisted) submissions.settle(caseId, persisted);
         },
       )
       .finally(() => running.delete(job.jobId));
@@ -264,16 +278,16 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
         view.push(job);
         continue;
       }
-      const failed: SocratesJob = { ...job, status: "error", error: mark.error, finishedAt: mark.settledAt };
+      const final = finalFromMark(job, mark);
       try {
-        const stored = await jobs.upsert(caseId, failed);
+        const stored = await jobs.upsert(caseId, final);
         done.push(job.jobId);
         view.push(stored);
         await closeDropLog(caseId, stored);
       } catch (err) {
         warnLine(`[socrates] job ${job.jobId}: still cannot record its failure: ${(err as Error).message}`);
         blocked.add(job.jobId);
-        view.push(failed);
+        view.push(final);
       }
     }
     await settled
@@ -302,23 +316,34 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
     }
   }
 
-  // The job's final row, or failing that a settled mark in the side file. When neither can be
-  // written, nothing is sent: the job stays unfinished on disk and the next start reports it, so the
-  // message is late rather than sent twice.
-  async function persistSettled(caseId: string, failed: SocratesJob): Promise<SocratesJob | null> {
+  // Is the job's final row on disk? An unreadable job file counts as no (#3042).
+  async function finalOnDisk(caseId: string, final: SocratesJob): Promise<boolean> {
     try {
-      const stored = await jobs.upsert(caseId, failed);
+      const stored = await jobs.get(caseId, final.jobId);
+      return Boolean(stored && isTerminalSocratesStatus(stored.status));
+    } catch {
+      return false;
+    }
+  }
+
+  // The job's final row (failed or imported), or failing that a settled mark in the side file. When
+  // neither can be written, nothing is sent: the job stays unfinished on disk and the next start
+  // reports it, so the message is late rather than sent twice. The drop-log line is closed only with
+  // the row, so a mark healed at the next start does not close it twice.
+  async function persistSettled(caseId: string, final: SocratesJob): Promise<SocratesJob | null> {
+    try {
+      const stored = await jobs.upsert(caseId, final);
       await closeDropLog(caseId, stored);
       return stored;
     } catch {
       // The row is unwritable: fall back to the side file below.
     }
     try {
-      await settled.mark(caseId, failed.jobId, failed.error ?? RECOVERY_FAILED_MESSAGE);
-      return failed;
+      await settled.mark(caseId, final.jobId, outcomeOf(final));
+      return final;
     } catch (err) {
       warnLine(
-        `[socrates] job ${failed.jobId}: could not record its failure, so its message waits for the next ` +
+        `[socrates] job ${final.jobId}: could not record its outcome, so its message waits for the next ` +
           `start: ${(err as Error).message}`,
       );
       return null;
@@ -336,5 +361,24 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
       start(caseId, job, cfg, false);
     },
     resumeAll,
+  };
+}
+
+// What a settled mark records for a final job, and the row a mark heals back to (#3042).
+function outcomeOf(final: SocratesJob): SocratesSettledOutcome {
+  return final.status === "imported"
+    ? { status: "imported", addedEvents: final.addedEvents, addedIocs: final.addedIocs }
+    : { status: "error", error: final.error ?? RECOVERY_FAILED_MESSAGE };
+}
+
+function finalFromMark(job: SocratesJob, mark: SocratesSettledMark): SocratesJob {
+  if (mark.status !== "imported")
+    return { ...job, status: "error", error: mark.error, finishedAt: mark.settledAt };
+  return {
+    ...job,
+    status: "imported",
+    ...(mark.addedEvents !== undefined ? { addedEvents: mark.addedEvents } : {}),
+    ...(mark.addedIocs !== undefined ? { addedIocs: mark.addedIocs } : {}),
+    finishedAt: mark.settledAt,
   };
 }
