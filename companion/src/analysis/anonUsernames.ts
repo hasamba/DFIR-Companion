@@ -152,14 +152,20 @@ export type ProfileNameMint = (name: string, saved: boolean) => string;
  * A very short or digit-only name ("5", "12", "ab") is masked in place but never learned or saved
  * either (#3014): as a saved value it came back on a later call and cut SIDs and addresses apart.
  */
-export function replaceUserPaths(text: string, mint: ProfileNameMint): string {
+export function replaceUserPaths(
+  text: string,
+  mint: ProfileNameMint,
+  carve?: (name: string, saved: boolean) => string | null,
+): string {
   return text.replace(USER_PATH_RE, (m, prefix: string, name: string, at: number, w: string) => {
     if (name.includes(SECRET_MARK)) {
       const parts = name.split(SECRET_MARK).map((p) => mintTrimmed(p, (v) => mint(v, false)));
       return prefix + parts.join(SECRET_MARK);
     }
     const cut = w[at + m.length] === IPV6_PLACEHOLDER_START;
-    return !cut && WELL_KNOWN_PROFILE.test(name) ? m : prefix + mint(name, !cut && !isFragmentName(name));
+    if (!cut && WELL_KNOWN_PROFILE.test(name)) return m;
+    const saved = !cut && !isFragmentName(name);
+    return prefix + (carve?.(name, saved) ?? mint(name, saved)); // values get their own tokens (#3047)
   });
 }
 /** Mint a part of a split profile name, keeping its edge spaces outside the token. */

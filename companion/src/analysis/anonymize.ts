@@ -21,6 +21,7 @@ import { expandMintedTokens, scanTokenLiterals, tokenEnds, tokenReaders } from "
 import { literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
 import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
+import { carveProfileName, valuePasses } from "./anonProfileTail.js";
 import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
 import type { Ipv6Grade, Ipv6Span } from "./anonIpv6Scan.js";
 import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
@@ -435,8 +436,19 @@ export function createAnonymizer(
     );
   }
   function anonUserPaths(t: string): string {
-    return replaceUserPaths(t, userToken);
+    const carve = (name: string, saved: boolean) => {
+      const out = carveProfileName(name, valuesIn, {
+        real: (tok) => toReal.get(tok),
+        cut: (p) => userToken(p, false),
+      });
+      return (out !== null && saved && userToken(name), out); // the whole old name stays saved (#3047)
+    };
+    return replaceUserPaths(t, userToken, carve);
   }
+  const valuesIn = valuePasses(policy.categories, {
+    ...{ CMD: anonEncodedCmd, REG: anonSids, IP: anonIpv4 },
+    ...{ CARD: anonCards, PHONE: anonPhones, NATID: anonNatIds },
+  });
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
   // FromBase64String('…'). Tokenize ONLY the blob — the verb + flag stay visible as tradecraft signal,
   // and victim data in the payload never reaches the wire. `=` padding is matched outside the class.
