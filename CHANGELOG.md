@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI Agent Forensics report section** — the case report lists each run launched in or filed into the case, with inventory, matched text, both hashes, Sigma coverage and the rules not run (closes #2721)
 
 ### Fixed
+- **Attack Path Hosts view, multi-host steps** — a step that names two or more hosts appears under each of them, and its time link in each row opens that host's own event (closes #3082)
 - **Demo case Chain of Custody populated** — seeding the demo stores its five screenshots and four imports and records them on the chain of custody, so the panel and report appendix list them and Verify now passes (closes #3022)
 - **IPv6 with a dotted IPv4 tail masked whole** — an address such as `fd00::192.168.1.5` is one token instead of masking only up to the first octet and sending the rest of the IPv4 in clear (closes #2990)
 - **Demo case shows a lateral movement path** — a freshly seeded or reset demo reconstructs the workstation → DC01 → FS01 → WEB01 chain in Evidence Chain; Lateral Movement collection targets no longer list an account name as a host (closes #3024)
