@@ -2,6 +2,9 @@
 
 > Plain-English guide for security analysts, incident responders, and anyone who wants to understand what the tool does, how to reach every feature, and how to get the most out of it.
 
+!!! warning "Use at your own risk"
+    You use DFIR Companion on your own responsibility. The creator and contributors take no responsibility or liability for how you use it, or for any result, decision, or damage that follows. Output can be wrong or incomplete. Verify it independently.
+
 ---
 
 ## What Is DFIR Companion?

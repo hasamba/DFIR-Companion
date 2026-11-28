@@ -23,7 +23,11 @@ stays on disk, and the AI provider is yours to choose.
 > from **Velociraptor, Security Onion, Chainsaw, Hayabusa, THOR, Cyber Triage, EDR/SIEM**,
 > correlates them into one forensic timeline, and synthesizes findings, attacker path, IOCs, and reports.
 > The value is **"so what"**, not re-deriving alerts.
->
+
+> **Warning - use at your own risk.** You use DFIR Companion on your own responsibility. The
+> creator and contributors take no responsibility or liability for how you use it, or for any
+> result, decision, or damage that follows. Output can be wrong or incomplete. Verify it
+> independently. See the [Disclaimer](#disclaimer).
 
 Demo Case: https://dfir-companion-production.up.railway.app/dashboard?caseId=demo
  
@@ -32,6 +36,10 @@ Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
 User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 
 Data Flow Map: https://hasamba.github.io/DFIR-Companion/data-flow.html
+
+Introduction Videos Playlist (Hebrew): https://www.youtube.com/watch?v=TSmetNRsTLw&list=PLT3Pxklx4XE4
+
+Introduction Videos Playlist (English): https://www.youtube.com/watch?v=21PTAbZRIC4&list=PLA5IQO_Yy8MY
 
 ## Table of contents
 
@@ -741,7 +749,7 @@ Pick one option. Each one runs the same server and dashboard on `http://127.0.0.
 | [Windows](#option-1---windows)                         | Most Windows users        | Nothing (release zip) |
 | [Linux (AppImage)](#option-2---linux-appimage)         | Most Linux users          | Nothing (AppImage)    |
 | [Docker / Compose](#option-3---docker--docker-compose) | Servers, teams, isolation | Docker + Compose      |
-| [From source](#option-4---from-source-nodejs-dev-version)          | Developers, contributors  | Node.js 22.19+, git   |
+| [From source-DEV Version](#option-4---from-source-nodejs-dev-version)          | Developers, contributors  | Node.js 22.19+, git   |
 
 After you start the server, [install the capture extension](#capture-extension-and-first-case).
 

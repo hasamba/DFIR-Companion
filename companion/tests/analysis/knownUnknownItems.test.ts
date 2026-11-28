@@ -96,6 +96,15 @@ describe("tacticCollectDirectives", () => {
     expect(dirs[0].logSource).toMatch(/4624/);
     expect(dirs.every((d) => !!d.host)).toBe(true);
   });
+  it("Lateral Movement targets hosts only, never the account of a shared-account edge (#3024)", () => {
+    const s = emptyState("c");
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WKSTN-A", description: "Excel run as CORP\\alice" }),
+      partialEvent({ id: "e2", asset: "DC01", description: "PsExec explicit logon, account: CORP\\alice" }),
+    ];
+    const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, []);
+    expect(dirs.map((d) => d.host).sort()).toEqual(["DC01", "WKSTN-A"]);
+  });
   it("points Initial Access at the earliest-active asset", () => {
     const s = seriousState();
     const dirs = tacticCollectDirectives("Initial Access", s, s.forensicTimeline, ["DC01"]);

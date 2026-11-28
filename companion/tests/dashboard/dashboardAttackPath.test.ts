@@ -90,6 +90,25 @@ describe("attackSteps", () => {
     expect(steps.map((x) => x.title)).toEqual(["Credential Access", "Defense Evasion"]);
   });
 
+  it("hides a description with no letter or digit in it (#3023)", () => {
+    const item = (n: number, tail: string) => `${n}. **Lateral Movement (T1021.002)** — May 16 10:00${tail}`;
+    for (const tail of [".", ": …", ": — —", ":", ": /"]) {
+      const steps = ap.attackSteps(
+        `${item(1, tail)}\n2. **Impact (T1486)** — May 16 11:00: Files encrypted.`,
+      );
+      expect(steps).toHaveLength(2);
+      expect(steps[0]).toMatchObject({ title: "Lateral Movement", time: "10:00", desc: "", summary: "" });
+      expect(steps[1].desc).toBe("Files encrypted.");
+    }
+  });
+
+  it("keeps a description written in any script, or in digits alone (#3023)", () => {
+    const steps = ap.attackSteps(
+      "1. **Execution (T1059)** — May 15 09:48: Запуск powershell.\n2. **Impact (T1486)** — May 15 10:00: 847",
+    );
+    expect(steps.map((x) => x.desc)).toEqual(["Запуск powershell.", "847"]);
+  });
+
   it("finds no steps in plain prose", () => {
     expect(ap.attackSteps("The attacker got in and moved around.")).toHaveLength(0);
   });
@@ -156,6 +175,145 @@ describe("attackPathHtml", () => {
     expect(html).toContain('</span><span class="ap-txt">The script copied tools</span>');
     expect(html).not.toMatch(/<span class="ap-txt"><\/span>/);
     expect(html).not.toMatch(/<b><\/b>/);
+  });
+
+  it("prints no description row for a step whose description is only punctuation (#3023)", () => {
+    const text =
+      "1. **Lateral Movement to DC01 (T1021.002)** — May 16 08:22: PsExec to DC01.\n" +
+      "2. **Lateral Movement (T1021.002)** — May 16 10:00.\n" +
+      "3. **Impact (T1486)** — May 16 11:00: …";
+    const steps = ap.attackPathHtml(text, EVENTS, "steps");
+    expect(steps).toContain('<div class="ap-desc">PsExec to DC01.</div>');
+    expect(steps.match(/class="ap-desc"/g)).toHaveLength(1);
+    expect(steps).not.toMatch(/<div class="ap-desc">[.…\s]*<\/div>/);
+    const hosts = ap.attackPathHtml(text, EVENTS, "hosts");
+    expect(hosts).not.toMatch(/<span class="ap-txt">[.…\s]*<\/span>/);
+  });
+
+  describe("a step that names several hosts (#3082)", () => {
+    // The Hosts-table row of one host, so an assertion can never match the Steps view.
+    const lane = (html: string, host: string): string => {
+      const start = html.indexOf(`<th scope="row"><span class="ap-host">${host}</span>`);
+      return start < 0 ? "" : html.slice(start, html.indexOf("</tr>", start));
+    };
+    const jumps = (row: string): string[] =>
+      [...row.matchAll(/data-act="attackPathJumpToEvent" data-id="([^"]*)"/g)].map((m) => m[1]);
+    const hopLine = (html: string): string => {
+      const at = html.indexOf('class="ap-hops"');
+      return html.slice(at, html.indexOf("</div>", at));
+    };
+    const path = (move: string, time = "08:22") =>
+      "1. **Initial Access (T1566.001)** — May 16 08:00: Phishing on WKSTN-JSMITH.\n" +
+      `2. **Lateral Movement (T1021.002)** — May 16 ${time}: ${move}`;
+    const W0 = ev("w0", "2026-05-16T08:00:00Z", "WKSTN-JSMITH");
+    const A1 = ev("a1", "2026-05-16T08:22:05Z", "HOST-A");
+    const B1 = ev("b1", "2026-05-16T08:22:40Z", "HOST-B");
+
+    it("puts the step under every host it names, each linking that host's event", () => {
+      const html = ap.attackPathHtml(path("PsExec to HOST-A and HOST-B."), [W0, A1, B1], "hosts");
+      expect(jumps(lane(html, "HOST-A"))).toEqual(["a1"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["b1"]);
+      // The hop line and the Steps-view target still name the step's one destination.
+      expect(hopLine(html)).not.toContain("HOST-A");
+      expect(html).toContain('<span class="ap-host">→ HOST-B</span>');
+    });
+
+    it("handles three destinations and a repeated mention with one card per host", () => {
+      const events = [W0, A1, B1, ev("c1", "2026-05-16T08:22:50Z", "HOST-C")];
+      const html = ap.attackPathHtml(
+        path("PsExec to HOST-A, HOST-B and HOST-C, then HOST-A again."),
+        events,
+        "hosts",
+      );
+      expect(jumps(lane(html, "HOST-A"))).toEqual(["a1"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["b1"]);
+      expect(jumps(lane(html, "HOST-C"))).toEqual(["c1"]);
+    });
+
+    it("links the most severe event of that minute on that host", () => {
+      const events = [
+        W0,
+        ev("x", "2026-05-16T08:22:01Z", "HOST-B", "Critical"),
+        A1,
+        ev("a2", "2026-05-16T08:22:30Z", "  HOST-A ", "Critical"),
+        B1,
+      ];
+      const html = ap.attackPathHtml(path("PsExec to HOST-A and HOST-B."), events, "hosts");
+      expect(jumps(lane(html, "HOST-A"))).toEqual(["a2"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["x"]);
+    });
+
+    it("falls back to the step's own event when a named host has none at that time", () => {
+      const events = [W0, A1, ev("b0", "2026-05-15T10:00:00Z", "HOST-B")];
+      const html = ap.attackPathHtml(path("PsExec to HOST-A and HOST-B."), events, "hosts");
+      expect(jumps(lane(html, "HOST-A"))).toEqual(["a1"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["a1"]);
+    });
+
+    it("matches to the second when the step gives seconds", () => {
+      const events = [W0, A1, ev("a3", "2026-05-16T08:22:40Z", "HOST-A"), B1];
+      const html = ap.attackPathHtml(path("PsExec to HOST-A and HOST-B.", "08:22:40"), events, "hosts");
+      expect(jumps(lane(html, "HOST-A"))).toEqual(["a3"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["b1"]);
+    });
+
+    it("looks for a host's event across the step's whole time range", () => {
+      const events = [
+        W0,
+        A1,
+        ev("b5", "2026-05-16T08:25:30Z", "HOST-B"),
+        ev("b9", "2026-05-16T08:27:00Z", "HOST-B"),
+      ];
+      const html = ap.attackPathHtml(path("PsExec to HOST-A and HOST-B.", "08:22–08:26"), events, "hosts");
+      expect(jumps(lane(html, "HOST-A"))).toEqual(["a1"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["b5"]);
+    });
+
+    it("prints a plain time in every lane when no event matches", () => {
+      const events = [
+        W0,
+        ev("a0", "2026-05-16T09:00:00Z", "HOST-A"),
+        ev("b0", "2026-05-16T09:00:00Z", "HOST-B"),
+      ];
+      const html = ap.attackPathHtml(path("PsExec to HOST-A and HOST-B."), events, "hosts");
+      expect(lane(html, "HOST-A")).toContain('<span class="ap-ct">08:22</span>');
+      expect(lane(html, "HOST-B")).toContain('<span class="ap-ct">08:22</span>');
+    });
+
+    it("also shows a move under the host it came from", () => {
+      const events = [W0, ev("w1", "2026-05-16T08:22:10Z", "WKSTN-JSMITH"), B1];
+      const html = ap.attackPathHtml(path("PsExec from WKSTN-JSMITH to HOST-B."), events, "hosts");
+      expect(jumps(lane(html, "WKSTN-JSMITH"))).toEqual(["w0", "w1"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["b1"]);
+      expect(html).toContain('<span class="ap-host">→ HOST-B</span>');
+    });
+
+    it("keeps a non-move step on its event's host as well as the hosts it names", () => {
+      const text =
+        "1. **Initial Access (T1566.001)** — May 16 08:00: Phishing.\n" +
+        "2. **Discovery (T1018)** — May 16 08:22: Scanned HOST-A and HOST-B.";
+      const events = [W0, ev("w1", "2026-05-16T08:22:00Z", "WKSTN-JSMITH", "Critical"), A1, B1];
+      const html = ap.attackPathHtml(text, events, "hosts");
+      expect(jumps(lane(html, "WKSTN-JSMITH"))).toEqual(["w0", "w1"]);
+      expect(jumps(lane(html, "HOST-A"))).toEqual(["a1"]);
+      expect(jumps(lane(html, "HOST-B"))).toEqual(["b1"]);
+    });
+
+    it("adds no lane for a short name two case hosts share, but does for a full name", () => {
+      const events = [
+        W0,
+        ev("s1", "2026-05-16T08:22:05Z", "srv.a.example"),
+        ev("s2", "2026-05-16T08:22:06Z", "srv.b.example"),
+        ev("d1", "2026-05-16T08:22:07Z", "DC01"),
+      ];
+      const short = ap.attackPathHtml(path("PsExec to srv and DC01."), events, "hosts");
+      expect(lane(short, "srv.a.example")).toBe("");
+      expect(lane(short, "srv.b.example")).toBe("");
+      const full = ap.attackPathHtml(path("PsExec to srv.b.example and DC01."), events, "hosts");
+      expect(jumps(lane(full, "srv.b.example"))).toEqual(["s2"]);
+      expect(lane(full, "srv.a.example")).toBe("");
+      expect(jumps(lane(full, "DC01"))).toEqual(["d1"]);
+    });
   });
 
   it("escapes the model's text", () => {

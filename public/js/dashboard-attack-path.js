@@ -13,7 +13,9 @@
 // Times are read as UTC, the zone the forensic timeline uses, and each one links to the most severe
 // event of that minute. The Hosts view places a step on a host from evidence first (the linked
 // event's host), then from a case host its text names, and only then from the step before it — and
-// that last placement is drawn dashed with a tooltip, so a guess never reads as a finding.
+// that last placement is drawn dashed with a tooltip, so a guess never reads as a finding. A step
+// that names two or more case hosts is also drawn under each of them, and each of those cards links
+// that host's own event in the step's time when it has one (#3082).
 
 function attackSteps(text) {
   const src = String(text == null ? "" : text).trim();
@@ -57,6 +59,8 @@ function apStep(chunk, listed) {
   if (!title && tactic) title = tactic.label;
   if (!title && !when) return null;
   desc = desc.trim();
+  // Nothing left but punctuation ("— May 16 10:00." leaves "."): say nothing rather than print it (#3023).
+  if (!/[\p{L}\p{N}]/u.test(desc)) desc = "";
   return {
     title,
     summary: apLabel(desc, listed ? null : when),
@@ -175,8 +179,38 @@ function apPlace(steps, ctx) {
     const found = step.group === "move" ? named || (hit && hit.asset) : (hit && hit.asset) || named;
     const assumed = !found && !!host;
     if (found) host = found;
-    return { step, day, hit, host: found || host, assumed };
+    const lanes = apLanes(step, ctx, day, hit, found || host);
+    return { step, day, hit, host: found || host, assumed, lanes };
   });
+}
+
+// The Hosts-view rows a step is drawn in, each with the event its time links to there. A step naming
+// two or more case hosts goes under each one (and under its own host too, when that is not named);
+// otherwise it stays on its one host. A lane links that host's most severe event in the step's time
+// (its whole range, "10:00–10:05") on the step's day, or the step's own event when that host has none.
+function apLanes(step, ctx, day, hit, host) {
+  const named = apNamedHosts(step, ctx.hosts);
+  const hosts = named.length < 2 ? [host] : named.includes(host) ? named : [host, ...named];
+  return hosts.map((h) => {
+    if (!hit || !h || h === String(hit.asset).trim()) return { host: h, hit };
+    const own = ctx.timed.filter((t) => String(t.e.asset || "").trim() === h);
+    return { host: h, hit: apRangeEventAt(own, day, step.time, step.timeEnd) || hit };
+  });
+}
+
+// The most severe event from `time` through the `timeEnd` minute (just `time` with no range, or a
+// range that runs past midnight); a tie goes to the earliest.
+function apRangeEventAt(timed, day, time, timeEnd) {
+  const mins = (t) => Number(t.split(":")[0]) * 60 + Number(t.split(":")[1]);
+  const last = timeEnd && mins(timeEnd) > mins(time) ? mins(timeEnd) : mins(time);
+  const rank = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
+  let best = null;
+  for (let m = mins(time); m <= last; m++) {
+    const hhmm = m === mins(time) ? time : `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    const hit = narrativeEventAt(timed, [day], hhmm);
+    if (hit && (!best || (rank[hit.severity] ?? -1) > (rank[best.severity] ?? -1))) best = hit;
+  }
+  return best;
 }
 
 function apStepDate(step, ctx) {
@@ -202,6 +236,25 @@ function apNamedHost(step, hosts) {
     }
   }
   return best ? best.host : "";
+}
+
+// Every case host the step's text names, in the order it first names them. A host matches by its full
+// name, or by its short name when no other case host shares that short name — "srv" names neither
+// srv.a.example nor srv.b.example.
+function apNamedHosts(step, hosts) {
+  const text = `${step.title} ${step.desc}`;
+  const shortOf = (h) => h.split(".")[0].toLowerCase();
+  const found = [];
+  for (const h of hosts) {
+    const names = hosts.filter((o) => shortOf(o) === shortOf(h)).length === 1 ? [h, h.split(".")[0]] : [h];
+    let at = Infinity;
+    for (const name of names) {
+      const m = new RegExp(`(?<![\\w-])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.-]*\\w)`, "i").exec(text);
+      if (m && m.index < at) at = m.index;
+    }
+    if (at < Infinity) found.push({ h, at });
+  }
+  return found.sort((a, b) => a.at - b.at).map((f) => f.h);
 }
 
 function apTabsHtml(shown) {
@@ -279,7 +332,7 @@ function apDayLabel(iso) {
 // at all (none named, no event, nothing before it) goes in a "Host not named" row.
 function apLanesHtml(placed) {
   const hosts = [];
-  for (const p of placed) if (!hosts.includes(p.host)) hosts.push(p.host);
+  for (const p of placed) for (const l of p.lanes) if (!hosts.includes(l.host)) hosts.push(l.host);
   hosts.sort((a, b) => (a === "") - (b === ""));
   const days = [];
   for (const p of placed) if (!days.includes(p.day)) days.push(p.day);
@@ -287,7 +340,11 @@ function apLanesHtml(placed) {
   const head = days.map((d) => `<th scope="col">${esc(d ? apDayLabel(d) : "No date")}</th>`).join("");
   const rows = hosts.map((h) => {
     const name = h ? `<span class="ap-host">${esc(h)}</span>` : `<span class="ap-nohost">Host not named</span>`;
-    const cells = days.map((d) => `<td>${placed.filter((p) => p.host === h && p.day === d).map(apCardHtml).join("")}</td>`);
+    const cards = (d) =>
+      placed
+        .filter((p) => p.day === d)
+        .flatMap((p) => p.lanes.filter((l) => l.host === h).map((l) => apCardHtml({ ...p, hit: l.hit })));
+    const cells = days.map((d) => `<td>${cards(d).join("")}</td>`);
     return `<tr><th scope="row">${name}</th>${cells.join("")}</tr>`;
   });
   return `<div class="ap-lanes-wrap"><table class="ap-lanes"><thead><tr><th></th>${head}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
@@ -336,6 +393,9 @@ window.DfirAttackPath = {
   apPlace,
   apStepDate,
   apNamedHost,
+  apLanes,
+  apRangeEventAt,
+  apNamedHosts,
   apTabsHtml,
   apHopsHtml,
   apStepsHtml,
