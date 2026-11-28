@@ -1,4 +1,6 @@
 import { isRegistryCredentialName } from "./anonSecretKeys.js";
+import { readHereString, readValueQuoted, type QuoteMode } from "./anonSecretPsQuote.js";
+import { regFileSpans } from "./anonSecretRegFile.js";
 import { isEncodedCue, readQuoted, type Span } from "./anonSecretValues.js";
 
 // One-way redaction of a stored-credential registry value whose NAME and DATA sit in separate
@@ -406,6 +408,20 @@ interface Token {
   span: Span;
   after: number;
   quoted: boolean;
+  // A quoted token is walked with the `''` escape only, so a stray `""` or backtick never moves the
+  // command's token boundaries (#3051). Taken as data, it is read again across its escapes (reread).
+  open?: number;
+  // A here-string: the command ends after it, as it ended at the line break before (#3051), so the
+  // walk never runs on into the lines after it.
+  last?: boolean;
+  mode?: QuoteMode;
+}
+
+// A quoted data token read across its `""` / backtick escapes; the walked span otherwise.
+function reread(text: string, t: Token): Span {
+  if (t.open === undefined) return t.span;
+  const q = readValueQuoted(text, t.open, t.mode);
+  return q && q.span[0] === t.span[0] && q.span[1] > t.span[1] ? q.span : t.span;
 }
 
 // An odd number of unescaped `"` before `at` on its line: the command sits inside a quoted string.
@@ -424,39 +440,33 @@ function bareToken(text: string, at: number, end: number, stops: string): Token 
   return { span: [at, stop], after: stop, quoted: false };
 }
 
-// A single-quoted PowerShell string doubles a quote to escape it: 'a''b' is a'b (#3047). The value
-// runs across each `''`; a continuation that does not close is not taken, so the closed part before
-// it stays the value. A double-quoted or JSON-escaped value is read as before.
-function readValueQuoted(text: string, at: number): { span: Span; after: number } | null {
-  const q = readQuoted(text, at);
-  if (!q || text[at] !== "'" || q.after <= q.span[1]) return q;
-  let after = q.after;
-  let stop = q.span[1];
-  while (text[after] === "'") {
-    const next = readQuoted(text, after);
-    if (!next || next.after <= next.span[1]) break;
-    after = next.after;
-    stop = next.span[1];
-  }
-  return { span: [q.span[0], stop], after };
-}
-
-function nextToken(text: string, i: number, end: number, nested: boolean, stops: string): Token | null {
+function nextToken(
+  text: string,
+  i: number,
+  end: number,
+  nested: boolean,
+  stops: string,
+  ps = false,
+): Token | null {
   let at = i;
   while (at < end && (text[at] === " " || text[at] === "\t")) at += 1;
   if (at >= end || text[at] === "\r" || text[at] === "\n" || stops.includes(text[at])) return null;
   const escapedQuote = text.startsWith('\\"', at);
   // Inside `cmd /c "…"` a quote after a space that is followed by text opens a quoted argument
   // (`cmd /c "reg add "HKLM\…\Windows NT\…" /v …"`); any other bare quote closes the command.
+  // A PowerShell here-string (`@'…'@`, `@"…"@`) is one value across its lines (#3051).
+  const here = ps && text[at] === "@" ? readHereString(text, at, end) : null;
+  if (here) return { span: here.span, after: here.after, quoted: true, last: true };
   if (text[at] === '"' && nested && !(/\s/.test(text[at - 1] ?? "") && /[^\s"]/.test(text[at + 1] ?? "")))
     return null;
   if (escapedQuote || text[at] === '"' || text[at] === "'") {
-    const q = readValueQuoted(text, at);
+    const q = readValueQuoted(text, at, { escapes: false });
     if (!q) return null;
     // An unclosed quote would run to the line end and hide what follows (an address the anonymizer
     // must learn, an encoded command): take one word after the quote instead.
     const closed = q.after > q.span[1] || text[q.after] === '"';
-    return closed ? { span: q.span, after: q.after, quoted: true } : bareToken(text, q.span[0], end, stops);
+    if (!closed) return bareToken(text, q.span[0], end, stops);
+    return { span: q.span, after: q.after, quoted: true, open: at, mode: { ps, nested } };
   }
   return bareToken(text, at, end, stops);
 }
@@ -466,9 +476,19 @@ const isLiteral = (value: string): boolean => value !== "" && !/^[$(@]/.test(val
 
 // The data stops before an encoded-command cue inside it (#3005): `-Value '… FromBase64String('`
 // closes the quote at the cue's own `'`, and hiding the cue would send the blob after it in clear.
+// A cue whose quote is escaped (`FromBase64String(''<blob>'')` inside a '-quoted value, `""`, a
+// backtick) is not one the CMD pass tokenizes (anonymize.ts FROM_B64_RE needs the blob right after
+// ONE quote), so cutting before it would send the blob in clear: the value is hidden whole (#3051).
+const ESCAPED_CUE = /FromBase64String\(\s*(?:''|""|`|\\"\\")/iy;
+
+function cmdMasksCue(text: string, j: number): boolean {
+  ESCAPED_CUE.lastIndex = j;
+  return !ESCAPED_CUE.test(text);
+}
+
 function beforeCue(text: string, span: Span): Span {
   for (let j = span[0] + 1; j < span[1]; j += 1) {
-    if (!isEncodedCue(text, j)) continue;
+    if (!isEncodedCue(text, j) || !cmdMasksCue(text, j)) continue;
     let end = j;
     while (end > span[0] && /\s/.test(text[end - 1])) end -= 1;
     return [span[0], end];
@@ -510,7 +530,7 @@ function commandSpan(text: string, from: number, g: CommandGrammar): { span: Spa
     i = t.after;
     if (pending === "name") name ??= value;
     else if (pending === "data")
-      data ??= beforeCue(text, t.quoted ? t.span : withDigitRun(text, t.span, end, g.stops));
+      data ??= beforeCue(text, t.quoted ? reread(text, t) : withDigitRun(text, t.span, end, g.stops));
     const flag: boolean = pending === null && !t.quoted;
     pending = flag && g.name.test(value) ? "name" : flag && g.data.test(value) ? "data" : null;
     t = nextToken(text, i, end, nested, g.stops);
@@ -532,7 +552,7 @@ function psSlot(param: string): PsSlot | "switch" | "other" | null {
 
 // The value token as data: a quoted value whole, a bare one with its digit run, cut before a cue.
 function psData(text: string, t: Token, end: number): Span {
-  return beforeCue(text, t.quoted ? t.span : withDigitRun(text, t.span, end, PS_SET_PROPERTY.stops));
+  return beforeCue(text, t.quoted ? reread(text, t) : withDigitRun(text, t.span, end, PS_SET_PROPERTY.stops));
 }
 
 // `-Name:DefaultPassword` / `-Value:'<pw>'`: the argument glued to the parameter by a colon.
@@ -540,8 +560,9 @@ function psInline(text: string, t: Token, colon: number, end: number): Token | n
   const at = t.span[0] + colon + 1;
   if (at >= t.span[1]) return null;
   if (text[at] !== "'" && text[at] !== '"') return { span: [at, t.span[1]], after: t.after, quoted: false };
-  const q = readValueQuoted(text, at);
-  return q && q.span[1] <= end ? { span: q.span, after: Math.max(q.after, t.after), quoted: true } : null;
+  const q = readValueQuoted(text, at, { escapes: false });
+  if (!q || q.span[1] > end) return null;
+  return { span: q.span, after: Math.max(q.after, t.after), quoted: true, open: at, mode: { ps: true } };
 }
 
 interface PsResult {
@@ -577,7 +598,7 @@ function psCommandSpan(text: string, from: number): PsResult {
   let pending: PsSlot | "other" | null = null;
   let more = false;
   let i = from;
-  for (let t = nextToken(text, i, end, nested, PS_SET_PROPERTY.stops); t && t.after > i;) {
+  for (let t = nextToken(text, i, end, nested, PS_SET_PROPERTY.stops, true); t && t.after > i;) {
     const raw = text.slice(t.span[0], t.span[1]);
     // An option of unknown arity may be a switch (`-Zork`, an abbreviated `-wh`): a following
     // `-option` is then a parameter, never its argument.
@@ -602,7 +623,7 @@ function psCommandSpan(text: string, from: number): PsResult {
       if (inline && slot && slot !== "switch" && slot !== "other") named[slot] = inline;
       else if (!inline && colon < 0 && slot !== "switch") pending = slot ?? "other";
     } else positional.push(t);
-    t = nextToken(text, i, end, nested, PS_SET_PROPERTY.stops);
+    t = t.last ? null : nextToken(text, i, end, nested, PS_SET_PROPERTY.stops, true);
   }
   return { span: psBind(text, named, positionalOk ? positional : [], end), after: i, more };
 }
@@ -616,16 +637,29 @@ const SET_VALUE_RE = /(\]::|\.)SetValue\(/gi;
 
 // The quoted arguments of a call whose `(` ends at `at`, up to its `)`: null for a non-literal one.
 // A non-literal argument is skipped within the window, so many unclosed calls stay linear.
-function callArgs(text: string, at: number): (Span | null)[] {
+// A quoted value walked with `''` only, widened across its `""` / backtick escapes when the widened
+// value still ends inside its call or hashtable (`ends` after it, within `limit`); else the walked span.
+function widen(text: string, open: number, span: Span, mode: QuoteMode, ends: string, limit: number): Span {
+  const q = readValueQuoted(text, open, mode);
+  if (!q || q.span[0] !== span[0] || q.span[1] <= span[1] || q.span[1] > limit) return span;
+  let k = q.after;
+  while (text[k] === " " || text[k] === "\t") k += 1;
+  return ends.includes(text[k] ?? "") ? q.span : span;
+}
+
+// The arguments are found with the `''` escape only, so a stray escape never shifts them; each is
+// then widened on its own (#3051).
+function callArgs(text: string, at: number, mode: QuoteMode): (Span | null)[] {
   const args: (Span | null)[] = [];
   const end = Math.min(text.length, at + COMMAND_WINDOW);
   let i = at;
   for (let n = 0; n < 4; n += 1) {
     while (text[i] === " " || text[i] === "\t") i += 1;
     const quote = text[i] === '"' || text[i] === "'" || text.startsWith('\\"', i);
-    const q = quote ? readValueQuoted(text, i) : null;
+    const here = mode.ps && text[i] === "@" ? readHereString(text, i, end) : null;
+    const q = here ?? (quote ? readValueQuoted(text, i, { escapes: false }) : null);
     if (q && q.after > q.span[1]) {
-      args.push(q.span);
+      args.push(here ? q.span : widen(text, i, q.span, mode, ",)", end));
       i = q.after;
     } else {
       args.push(null);
@@ -648,7 +682,9 @@ function setValueSpans(text: string): Span[] {
   const spans: Span[] = [];
   const re = new RegExp(SET_VALUE_RE.source, "gi");
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    const args = callArgs(text, re.lastIndex);
+    // `]::` and `$key.` are PowerShell (backtick escapes); a bare dotted call may be C#.
+    const ps = m[1] !== "." || /\$[\w:]+$/.test(text.slice(Math.max(0, m.index - 64), m.index));
+    const args = callArgs(text, re.lastIndex, { ps });
     const firsts = m[1] === "." ? [0] : [1];
     if (m[1] === "." && (!args[0] || KEY_PATH_RE.test(text.slice(args[0][0], args[0][1])))) firsts.push(1);
     for (const first of firsts) {
@@ -689,8 +725,11 @@ function splatSpans(text: string): Span[] {
     let name: string | null = null;
     let value: Span | null = null;
     for (let m = re.exec(body); m; m = re.exec(body)) {
-      const q = readValueQuoted(text, at + 1 + re.lastIndex);
-      const span = q && q.after > q.span[1] && q.span[1] <= end ? q.span : null;
+      const v = at + 1 + re.lastIndex;
+      const here = text[v] === "@" ? readHereString(text, v, end) : null;
+      const q = here ?? readValueQuoted(text, v, { escapes: false });
+      const walked = q && q.after > q.span[1] && q.span[1] <= end ? q.span : null;
+      const span = walked && !here ? widen(text, v, walked, { ps: true }, ";}\r\n", end) : walked;
       if (m[2].toLowerCase() === "name") name ??= span ? text.slice(span[0], span[1]) : "";
       else value ??= span;
     }
@@ -725,6 +764,7 @@ export function redactRegistryCredentialPairs(text: string, placeholder: string)
     ...pairedFieldSpans(text, placeholder),
     ...regQuerySpans(text, placeholder),
     ...commandSpans(text, placeholder),
+    ...regFileSpans(text, placeholder),
   ]
     .sort((a, b) => a[0] - b[0])
     // Overlapping spans merge into one, so no part of either is left out or written twice.
