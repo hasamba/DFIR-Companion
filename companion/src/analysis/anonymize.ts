@@ -29,6 +29,7 @@ import {
   replaceUserPaths,
   bareUsername,
   collectUsernames,
+  isFragmentName,
   isGuardedUsername,
   shortHostLabels,
   isNoiseAccount,
@@ -374,7 +375,7 @@ export function createAnonymizer(
     if (saved) learn(user);
     if (oneWay(user)) return SECRET_SENTINEL; // the qualifier keeps its own token
     const token = assign("USER", user);
-    (saved ? savedUsers : cutUsers).add(token);
+    (saved && !isFragmentName(user) ? savedUsers : cutUsers).add(token); // "12", "ab": never saved (#3014, #3030)
     return token;
   }
   function accountToken(account: string): string {
