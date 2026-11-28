@@ -554,7 +554,7 @@ export function createAnonymizer(
   function anonIpv4(t: string): string {
     const mask = (ip: string, m: string, cat = ipv4Category(ip)) => (cat ? assign(cat, m) : m);
     const plain = tails.gluedRaw(t).replace(IPV4_RE, (ip) => mask(ip, ip));
-    return replaceGluedIpv4Runs(plain, pairRules()); // an address with digits glued on (#3058, #3068)
+    return tails.gluedRun(replaceGluedIpv4Runs(plain, pairRules())); // glued digits, dotted tail (#3058, #3066)
   }
 
   function anonCards(t: string): string {
@@ -665,7 +665,7 @@ export function createAnonymizer(
     if (policy.categories.IP) {
       t = tails.restore(t, ipv6Literals); // classify + tokenize the reserved literals
       t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
-    }
+    } else t = tails.gluedRun(t); // a saved glued IPv4 inside a run (#3066)
     if (policy.categories.CARD) t = anonCards(t);
     if (policy.categories.PHONE) t = anonPhones(t);
     if (policy.categories.NATID) t = anonNatIds(t);

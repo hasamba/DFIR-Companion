@@ -69,6 +69,10 @@ const SAVED_RUN = /^\d{1,3}(?:\.\d{1,3}){3,}$/;
 // needs a separator other than "." after that number, so the run stayed split and the address's
 // middle numbers between the two saved tokens went in clear.
 const DOTTED_PHONE_HEAD = /^(\d{1,3})(\.)(\d+(?:\.\d+)+)$/;
+// #3066: an IPv4 or SID-run token, then more dotted numbers ("<a>.<b>." + the token of "<c>.<d>.<e>.<f>" +
+// ".<g>"). GLUED_VALUE: a value that ends in four dotted numbers whose last is not an octet (#3058).
+const GLUED_MID = /(?<![\dA-Za-z_])(ANON_(?:IP|EXTIP|REG)_\d+)((?:\.\d+)*)\b/g;
+const GLUED_VALUE = /(?:^|[:.])\d{1,3}(?:\.\d{1,3}){2}\.(\d+)$/;
 const OCTET = /^(?:0|[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])$/;
 
 /** Whether an IPv4 glued right after this point of the text could be read as its own address. */
@@ -226,6 +230,8 @@ export interface TailJoiner {
   restore: (text: string, literals: readonly ReservedLiteral[]) => string;
   /** Mask an IPv4 glued to an address left in clear. */
   gluedRaw: (text: string) => string;
+  /** Join the dotted numbers after a glued IPv4 token (#3066). */
+  gluedRun: (text: string) => string;
   /** A pair only this stage minted that is never saved as a discovery (anonPairKey). */
   unsaved: (key: string) => boolean;
 }
@@ -637,7 +643,8 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
   // saved values. It runs in `restore`, so only with the IP category on, as the IPv4 pass does. The
   // rest of the number is forced: the saved token hid it already.
   function splitPhoneLead(t: string, token: string): string {
-    const head = PHONE_HEAD.exec(d.real(token) ?? "");
+    const value = d.real(token) ?? "";
+    const head = PHONE_HEAD.exec(value) ?? DOTTED_PHONE_HEAD.exec(value); // "100.555.0100" too (#3066)
     if (!head) return t;
     const [, num, gap, rest] = head;
     return consume(t, leadRe(token, ""), (m) => {
@@ -733,6 +740,32 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     });
     return plainRun(out);
   }
+  // #3066: the glued-IPv4 pass can read four numbers in the middle of a longer dotted run, and the
+  // numbers after them were left in clear, where a phone number that starts in them was masked
+  // before. They join the token, forced and unsaved; the pair stays saved, as before. A saved pair
+  // (a custom token on a later call) is joined the same way, or it would cut the run (IP on only).
+  function gluedRun(text: string): string {
+    return consume(text, GLUED_MID, (m) => {
+      const [all, tok, more] = m;
+      const value = d.real(tok) ?? "";
+      const last = GLUED_VALUE.exec(value)?.[1];
+      if (last === undefined || OCTET.test(last)) return { out: all, skip: 0 };
+      const end = m.index + all.length;
+      const next = text.slice(end, end + NEXT);
+      // A phone number that starts in those numbers and runs on is the phone pass's, as before. One
+      // that starts inside the token's own value ("<c>.<f>" + "-0100") would never be read: it joins.
+      const c = crossing(more || value, next, d.crossers());
+      if (more ? c : !c || !phoneOk(c, d.suppressed)) return { out: all, skip: 0 };
+      const skip = more ? 0 : c!.len;
+      const run = value + more + next.slice(0, skip);
+      const cat = SINGLE_TOKEN.exec(tok)![1] as AnonTokenCategory;
+      const out = unsaved(
+        d.forcing(() => d.assign(cat, run)),
+        run,
+      );
+      return { out: d.ended(out, run, m.index, end + skip, text), skip };
+    });
+  }
   return {
     mark: (result, value) => {
       const head = DIGIT_GROUP.test(value) || DOTTED_V6.test(value) || DOTTED_V4.test(value);
@@ -756,5 +789,6 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     restore,
     unsaved: (key) => late.has(key) && !normal.has(key),
     gluedRaw,
+    gluedRun,
   };
 }
