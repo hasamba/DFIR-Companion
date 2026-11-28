@@ -137,3 +137,33 @@ describe("an e-mail domain with text glued after its TLD (#3060)", () => {
     expect(run(text, { EMAIL: false }).out).toContain("example.com");
   });
 });
+
+describe("a suppressed encoded blob (#3060)", () => {
+  for (const pm of [true, false]) {
+    it(`shows only the blob; an address glued after it keeps its token (maskPublicIps=${pm})`, () => {
+      for (const text of [`x -enc ${BLOB}==${IP} y`, `x -enc ${BLOB}=${IP} y`, `x 1-enc ${BLOB}==${IP} y`]) {
+        const an = createAnonymizer(policy({}, pm), {
+          hosts: [],
+          accounts: [],
+          internalDomains: [DOM],
+          suppressed: [BLOB],
+        });
+        const out = an.apply(text);
+        expect(out).toContain(BLOB);
+        expect(out).not.toContain(IP);
+        expect(an.restore(out)).toBe(text);
+      }
+    });
+  }
+});
+
+describe("a second registry write later on the same line (#3060)", () => {
+  it("is read after the first one", () => {
+    const pw3 = ["Zq9", "pw", "Q44"].join("");
+    const text = `sp HKLM:\\x DefaultPassword '${PW}' {"CommandLine":"powershell sp HKLM:\\\\x DefaultPassword ${pw3}"}`;
+    const r = run(text);
+    expect(r.out).not.toContain(PW);
+    expect(r.out).not.toContain(pw3);
+    expect(r.held.some((v) => v.includes(pw3))).toBe(false);
+  });
+});
