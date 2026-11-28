@@ -159,3 +159,43 @@ describe("a public head with a three- or four-digit last part (#3062)", () => {
     }
   });
 });
+
+describe("glued readings a later call must keep hidden (#3068)", () => {
+  it("a public head glued to a card-shaped digit run stays hidden with public masking and CARD off later", () => {
+    const run = withCheck("36011" + "3".repeat(13)); // 19 digits: CARD_RE reads it after the dot
+    const text = `a ${ip(93, 1, 2, run)}`;
+    const first = createAnonymizer(policy(true), known);
+    const out = first.apply(text);
+    expect(out).toMatch(/^a ANON_EXTIP_\d+$/);
+    expect(first.restore(out)).toBe(text);
+    const later = createAnonymizer(policy(false, { CARD: false }), { ...known, custom: first.discoveries() });
+    const out2 = later.apply(text);
+    expect(out2).not.toContain(run.slice(1));
+    expect(later.restore(out2)).toBe(text);
+  });
+
+  it("a card with digits glued in front, before an internal address: one token each", () => {
+    for (const pre of ["5", "12", "123"]) {
+      const a = masks(`a ${pre}${CARD}${ip(10, 0, 0, 5)} b`, /^a ANON_CARD_\d+ANON_IP_\d+ b$/);
+      expect(a.discoveries().map((d) => d.value)).toEqual(
+        expect.arrayContaining([pre + CARD, ip(10, 0, 0, 5)]),
+      );
+    }
+    masks(`a 5${CARD19}${ip(10, 0, 0, 5)} b`, /^a ANON_CARD_\d+ANON_IP_\d+ b$/);
+    masks(`a 5${AMEX}${ip(10, 0, 0, 5)} b`, /^a ANON_CARD_\d+ANON_IP_\d+ b$/);
+  });
+
+  it("an internal address glued to a public one with public masking off never shows the internal one", () => {
+    const off = createAnonymizer(policy(false), known);
+    for (const [head, tail] of [
+      [ip(10, 0, 0, 5), ip(93, 1, 2, 3)],
+      [ip(10, 0, 0, 51), ip(8, 8, 8, 8)],
+    ]) {
+      const text = `a ${head}${tail} b`;
+      const out = off.apply(text);
+      expect(out).toMatch(/^a ANON_IP_\d+/);
+      expect(out).not.toContain(head.slice(0, -1));
+      expect(off.restore(out)).toBe(text);
+    }
+  });
+});

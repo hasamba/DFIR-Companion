@@ -1,6 +1,6 @@
 import type { AnonTokenCategory } from "./anonymize.js";
 import { AMEX, C16, C19, type CardShape, cardOk, isCardNumber, replaceEach } from "./anonPiiPatterns.js";
-import { readCardsAsBefore, readGluedIpv4AsBefore } from "./anonPiiPatterns.js";
+import { readCardsAsBefore, readGluedIpv4AsBefore, replaceGluedIpv4 } from "./anonPiiPatterns.js";
 
 // Values glued to each other (#3062): a card glued to an IPv4 address (either order), or two
 // addresses glued together, were read as one value and the rest was left in clear. Each part now
@@ -32,6 +32,7 @@ type Shape = {
   readonly shape: CardShape;
   readonly bare: boolean;
   readonly alone: boolean;
+  readonly front?: boolean;
 };
 // `alone`: with the address left in clear, the card may still be split off (no #3058 reading hid any
 // of it, or it is checked below). A 4-4-4-4 card keeps its #3058 reading (the first octet with it).
@@ -41,7 +42,20 @@ const SHAPES: readonly Shape[] = [
   { src: String.raw`\d{4}[ -]\d{6}[ -]\d{5}`, shape: AMEX, bare: false, alone: true },
   { src: String.raw`\d{16}`, shape: C16, bare: true, alone: true },
 ];
-const CARD_FIRST = SHAPES.map((s) => ({
+// A grouped card with one to three digits glued in front (#3068): judged on its core (the last
+// group widths' worth of digits). Split only when both parts are masked; otherwise #3058's reading.
+const FRONT: readonly Shape[] = [
+  {
+    src: String.raw`\d{5,7}[ -]\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{3}`,
+    shape: C19,
+    bare: false,
+    alone: false,
+    front: true,
+  },
+  { src: String.raw`\d{5,7}[ -]\d{4}[ -]\d{4}[ -]\d{4}`, shape: C16, bare: false, alone: false, front: true },
+  { src: String.raw`\d{5,7}[ -]\d{6}[ -]\d{5}`, shape: AMEX, bare: false, alone: false, front: true },
+];
+const CARD_FIRST = [...SHAPES, ...FRONT].map((s) => ({
   ...s,
   re: new RegExp(String.raw`(?<![\w.])(${s.src})(${V4})(?!\w|\.\d)`, "g"),
 }));
@@ -55,6 +69,9 @@ const OCTET = /^(?:0|[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])$/;
 const validV4 = (ip: string) => ip.split(".").every((p) => Number(p) <= 255);
 const lastOctetOk = (ip: string) => OCTET.test(ip.slice(ip.lastIndexOf(".") + 1)) && validV4(ip);
 const digitsOf = (raw: string) => raw.replace(/[ -]/g, "");
+/** The digits a card match is judged on: a front-glued one by its last group widths' worth. */
+const coreOf = (raw: string, s: Shape) =>
+  s.front ? digitsOf(raw).slice(-s.shape.widths.reduce((n, w) => n + w, 0)) : digitsOf(raw);
 
 /** The minting helpers both passes share. `old` mints what #3058 read in a pair (saved pairs only). */
 function minters(r: PairRules) {
@@ -80,7 +97,7 @@ export function replaceGluedPairs(text: string, r: PairRules): string {
     for (const s of CARD_FIRST)
       out = replaceEach(out, s.re, (m) => {
         const [c, a] = [m[1], m[2]];
-        if (!cardOk(digitsOf(c), s.shape) || !validV4(a) || !maskable(a)) return null;
+        if (!cardOk(coreOf(c, s), s.shape) || !validV4(a) || !maskable(a)) return null;
         if (s.bare && isCardNumber(c + a.slice(0, a.indexOf(".")))) return null; // CARD_RE's whole run
         return (old(m[0]), card(c) + ip(a));
       });
@@ -92,6 +109,19 @@ export function replaceGluedPairs(text: string, r: PairRules): string {
       });
   }
   return r.ip ? replaceEach(out, V4_PAIR_RE, (m) => splitPair(m, maskable, r, ip, old)) : out;
+}
+
+/**
+ * The glued IPv4 readings (#3058). A run minted whole also mints the card reading master had of it
+ * (saved only, #3068): a later call that leaves the run in clear (public masking off) still hides it.
+ */
+export function replaceGluedIpv4Runs(text: string, r: PairRules): string {
+  return replaceGluedIpv4(text, (head, run) => {
+    const cat = r.category(head);
+    if (!cat) return run;
+    if (r.card) readCardsAsBefore(run, (c) => r.assign("CARD", c));
+    return r.assign(cat, run);
+  });
 }
 
 /**

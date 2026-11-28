@@ -16,9 +16,9 @@ import { SECRET_PLACEHOLDER } from "./anonSecrets.js";
 import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
 import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
-import { NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
+import { NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP, replaceCards } from "./anonPiiPatterns.js";
 import { replaceEncodedCommands } from "./anonEncodedCmd.js";
-import { replaceCards, replaceGluedIpv4 } from "./anonPiiPatterns.js";
+import { replaceGluedIpv4Runs } from "./anonGluedPairs.js"; // + the card reading master had (#3068)
 import { replaceCardOnlyPairs, replaceGluedPairs, type PairRules } from "./anonGluedPairs.js";
 import { scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
@@ -554,7 +554,7 @@ export function createAnonymizer(
   function anonIpv4(t: string): string {
     const mask = (ip: string, m: string, cat = ipv4Category(ip)) => (cat ? assign(cat, m) : m);
     const plain = tails.gluedRaw(t).replace(IPV4_RE, (ip) => mask(ip, ip));
-    return replaceGluedIpv4(plain, mask); // an address with digits glued on (#3058)
+    return replaceGluedIpv4Runs(plain, pairRules()); // an address with digits glued on (#3058, #3068)
   }
 
   function anonCards(t: string): string {
