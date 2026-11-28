@@ -26,6 +26,11 @@ export interface LateralPathDismissal {
   hostIds: string[]; // the route as dismissed, kept readable for the review/undo list
   note: string; // why the analyst rejected it (free text, may be empty)
   dismissedAt: string; // ISO timestamp
+  // What the rejected route was built from. "direction": a hop the target's own records attribute
+  // to its source (#3085). Absent on a dismissal made before #3085, when routes were chained from
+  // shared hashes/accounts in time order — rejecting THAT inference says nothing about a route the
+  // direction evidence now shows, so such a record no longer hides anything.
+  basis?: "direction";
 }
 
 // A path annotated with its dismissal state, for the "show dismissed" review view.
@@ -41,7 +46,10 @@ function dismissedKeys(dismissals: readonly LateralPathDismissal[]): Map<string,
   const byKey = new Map<string, LateralPathDismissal>();
   // Re-derive the key from hostIds rather than trusting the stored `key`, so a hand-edited or
   // older file can't hold a stale/mis-normalized anchor that silently matches nothing.
-  for (const d of dismissals) byKey.set(d.hostIds?.length ? lateralPathKey(d.hostIds) : d.key, d);
+  for (const d of dismissals) {
+    if (d.basis !== "direction") continue; // pre-#3085 shared-chain dismissal: a different claim
+    byKey.set(d.hostIds?.length ? lateralPathKey(d.hostIds) : d.key, d);
+  }
   return byKey;
 }
 
@@ -84,6 +92,7 @@ export function buildDismissal(
     hostIds: hosts,
     note: note.trim(),
     dismissedAt: now.toISOString(),
+    basis: "direction",
   };
 }
 

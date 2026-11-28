@@ -1,6 +1,6 @@
 {
   "analysis/downloadExecution.ts": 815,
-  "analysis/evidenceGraph.ts": 855,
+  "analysis/evidenceGraph.ts": 675,
   "analysis/memoryImport.ts": 1633,
   "analysis/seedDemoCase.ts": 2700,
   "analysis/siemImport.ts": 1445,

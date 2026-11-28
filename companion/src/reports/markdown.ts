@@ -34,6 +34,7 @@ import {
 import { watsonFindingLines } from "./watsonFindingMd.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
+import { sharedHostLinksSection } from "./sharedHostLinksSection.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
@@ -966,7 +967,7 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("");
   }
 
-  const lateral = graph.edges.filter((e) => e.type === "lateral_move");
+  const lateral = graph.edges.filter((e) => e.type === "lateral_move" && !e.undirected); // directed (#3085)
   if (lateral.length > 0) {
     lines.push("**Lateral movement**", "");
     lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
@@ -978,10 +979,8 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("");
   }
 
-  // Ordered lateral-movement PATHS (#92) — ...→pivot→target chains reconstructed from the
-  // pairwise lateral_move edges above, chronologically sequenced rather than pairwise.
-  // prebuiltPaths (with analyst dismissals already applied) is used when available, so a chain the
-  // analyst rejected does not reappear in the report.
+  // Ordered lateral-movement PATHS (#92) — the directed hops above stitched by real time (#3085).
+  // prebuiltPaths (dismissals already applied) is used when available, so a rejected chain stays out.
   const paths = prebuiltPaths ?? buildLateralPaths(state);
   if (paths.length > 0) {
     lines.push("**Lateral movement paths**", "");
@@ -997,6 +996,7 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("");
   }
 
+  lines.push(...sharedHostLinksSection(state)); // hosts sharing a binary/account, no direction (#3085)
   const fileLineage = graph.edges.filter((e) => e.type === "file_lineage");
   if (fileLineage.length > 0) {
     lines.push("**File lineage (wrote → executed)**", "");

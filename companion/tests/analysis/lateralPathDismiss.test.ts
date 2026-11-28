@@ -3,6 +3,7 @@ import {
   lateralPathKey,
   filterDismissedPaths,
   annotateDismissedPaths,
+  buildDismissal,
   type LateralPathDismissal,
 } from "../../src/analysis/lateralPathDismiss.js";
 import type { LateralPath } from "../../src/analysis/evidenceGraph.js";
@@ -31,6 +32,7 @@ function dismissal(hostIds: string[]): LateralPathDismissal {
     hostIds,
     note: "",
     dismissedAt: "2026-05-21T00:00:00Z",
+    basis: "direction",
   };
 }
 
@@ -94,6 +96,20 @@ describe("annotateDismissedPaths", () => {
     expect(annotated).toHaveLength(2);
     expect(annotated[0].dismissed).toBe(true);
     expect(annotated[1].dismissed).toBe(false);
+  });
+
+  // #3085: before routes came from direction evidence they were chained from shared hashes/accounts
+  // in time order. An analyst who rejected THAT inference has not rejected a route the target's own
+  // records now attribute to its source, so the old record must not hide the new path.
+  it("does not let a pre-#3085 dismissal (no basis) hide a direction-backed path", () => {
+    const { basis: _drop, ...legacy } = dismissal(["host:a", "host:b"]);
+    const paths = [path("lateral-path:0", ["host:a", "host:b"])];
+    expect(filterDismissedPaths(paths, [legacy])).toHaveLength(1);
+    expect(annotateDismissedPaths(paths, [legacy])[0].dismissed).toBe(false);
+  });
+
+  it("stamps a new dismissal as direction-based", () => {
+    expect(buildDismissal(["host:a", "host:b"], "")?.basis).toBe("direction");
   });
 
   it("carries the dismissal note so the analyst can see why it was rejected", () => {

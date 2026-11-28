@@ -105,6 +105,20 @@ describe("tacticCollectDirectives", () => {
     const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, []);
     expect(dirs.map((d) => d.host).sort()).toEqual(["DC01", "WKSTN-A"]);
   });
+  it("Lateral Movement points at the SOURCE of a directed hop too, not only the target (#3085)", () => {
+    const s = emptyState("c");
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "HOST-SRC", description: "PsExec.exe started" }),
+      partialEvent({
+        id: "e2",
+        asset: "HOST-TGT",
+        description:
+          "Windows Security Successful logon (EID 4624) - CORP\\ops - LogonType=3 - WorkstationName=HOST-SRC @ HOST-TGT [Network]",
+      }),
+    ];
+    const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, []);
+    expect(dirs.map((d) => d.host).sort()).toEqual(["HOST-SRC", "HOST-TGT"]);
+  });
   it("points Initial Access at the earliest-active asset", () => {
     const s = seriousState();
     const dirs = tacticCollectDirectives("Initial Access", s, s.forensicTimeline, ["DC01"]);

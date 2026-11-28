@@ -16,8 +16,15 @@ interface Path {
   hostIds: string[];
   hops: Hop[];
 }
+interface SharedLink {
+  actor: string;
+  actorKind: "binary" | "account";
+  hosts: string[];
+  firstSeen: string;
+}
 interface Api {
   lateralPathGroups(paths: Path[]): Array<{ key: string; members: number[]; rep: number }>;
+  sharedHostLinksHtml(links: SharedLink[] | undefined): string;
 }
 
 const api = () =>
@@ -112,5 +119,49 @@ describe("Highlight and the grouped row, in the source", () => {
     expect(js).not.toMatch(/if \(ok\) await loadLateralPaths/);
     expect(js).toContain("chains - ${failed} failed");
     expect(js).toMatch(/showToast\(/);
+  });
+});
+
+// #3085: hosts that share a binary or account are listed apart from the directed paths, and drawn
+// in the graph without an arrowhead, so a shared link is never read as a move.
+describe("hosts that share a binary or account", () => {
+  it("lists each link's hosts and what they share, escaping every name", () => {
+    const html = api().sharedHostLinksHtml([
+      {
+        actor: "<img src=x>.exe",
+        actorKind: "binary",
+        hosts: ["HOST-A", "<b>HOST-B"],
+        firstSeen: "2026-05-20T09:00:00Z",
+      },
+      {
+        actor: "CORP\\ops",
+        actorKind: "account",
+        hosts: ["HOST-C", "HOST-D"],
+        firstSeen: "2026-05-20T10:00:00Z",
+      },
+    ]);
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<b>HOST-B");
+    expect(html).toContain("&lt;img src=x&gt;.exe");
+    expect(html).toContain("share file");
+    expect(html).toContain("share account");
+    expect(html).toContain("<b>HOST-C</b>, <b>HOST-D</b>");
+  });
+
+  it("says so when nothing is shared", () => {
+    expect(api().sharedHostLinksHtml([])).toContain("No file or account seen on more than one host.");
+    expect(api().sharedHostLinksHtml(undefined)).toContain("No file or account seen on more than one host.");
+  });
+
+  it("draws shared links without an arrowhead and gives them their own element id", () => {
+    const js = readFileSync(
+      new URL("../../../public/js/dashboard-evidence-graph.js", import.meta.url),
+      "utf8",
+    );
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(js).toMatch(/selector: "edge\[\?undirected\]",\s*style: \{ "target-arrow-shape": "none"/);
+    expect(js).toContain('${e.undirected ? "|shared" : ""}');
+    expect(js).toContain("renderEvidenceShared();");
+    expect(html).toContain('id="evSharedList"');
   });
 });

@@ -28,15 +28,22 @@ function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   };
 }
 
-// A case whose timeline yields one chain: WS-01 → WS-02, from a tool in a writable location
-// (so the vendor-software filter keeps it).
+// A case whose timeline yields one chain: WS-01 → WS-02. WS-02 recorded a network logon whose
+// Workstation Name is WS-01 (direction evidence, #3085); WS-01 is a host the case knows.
 async function seedCaseWithOneChain(caseId: string): Promise<void> {
   await store.createCase({ caseId, name: "n", investigator: "i", aiProvider: null });
   const state = emptyState(caseId);
   const path = "C:\\Users\\jdoe\\Downloads\\psexec.exe";
   state.forensicTimeline.push(
     ev({ id: "e1", asset: "WS-01", sha256: HASH, path, timestamp: "2026-05-20T09:00:00Z" }),
-    ev({ id: "e2", asset: "WS-02", sha256: HASH, path, timestamp: "2026-05-20T10:00:00Z" }),
+    ev({
+      id: "e2",
+      asset: "WS-02",
+      severity: "Low",
+      timestamp: "2026-05-20T10:00:00Z",
+      description:
+        "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 - IpAddress=192.0.2.10 - WorkstationName=WS-01 @ WS-02 [Network]",
+    }),
   );
   await stateStore.save(state);
 }
