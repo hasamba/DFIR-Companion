@@ -2,6 +2,7 @@ import { isIPv6 } from "node:net";
 import type { AnonTokenCategory } from "./anonymize.js";
 import { anonPairKey } from "./anonPatterns.js";
 import { ipv6Mask, type SeparatorFlags } from "./anonIpv6Scan.js";
+import { splitGluedPhones } from "./anonGluedPhone.js";
 
 /**
  * The dotted IPv4 that follows an IPv6 address, and the late stage that joins it (#2990, #2995).
@@ -81,7 +82,7 @@ export function gluedIpv4At(text: string, at: number): boolean {
 }
 
 /** A phone match that starts inside `seg` and runs into `next`: the part after `seg`, split at its first digit. */
-interface Crossing {
+export interface Crossing {
   gap: string;
   value: string;
   len: number;
@@ -232,6 +233,8 @@ export interface TailJoiner {
   gluedRaw: (text: string) => string;
   /** Join the dotted numbers after a glued IPv4 token (#3066). */
   gluedRun: (text: string) => string;
+  /** A phone number that starts in a glued address token's numbers gets its own token (#3077). */
+  gluedPhone: (text: string) => string;
   /** A pair only this stage minted that is never saved as a discovery (anonPairKey). */
   unsaved: (key: string) => boolean;
 }
@@ -790,5 +793,6 @@ export function createTailJoiner(d: TailMinter): TailJoiner {
     unsaved: (key) => late.has(key) && !normal.has(key),
     gluedRaw,
     gluedRun,
+    gluedPhone: (t) => splitGluedPhones(t, { ...d, unsaved, crossing, phoneOk }), // #3077
   };
 }

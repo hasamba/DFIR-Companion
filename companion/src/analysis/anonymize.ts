@@ -667,7 +667,7 @@ export function createAnonymizer(
       t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
     } else t = tails.gluedRun(t); // a saved glued IPv4 inside a run (#3066)
     if (policy.categories.CARD) t = anonCards(t);
-    if (policy.categories.PHONE) t = anonPhones(t);
+    if (policy.categories.PHONE) t = anonPhones(tails.gluedPhone(t)); // + a glued address's (#3077)
     if (policy.categories.NATID) t = anonNatIds(t);
     t = ends.finish(t, toReal);
     return remnants.finish(t).replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
