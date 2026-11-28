@@ -206,7 +206,11 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           );
           const timelineDiff = diffTimeline(before.forensicTimeline, finalState.forensicTimeline);
           const iocDiff = diffIocs(before.iocs, finalState.iocs);
-          outcome.settled({ timelineDiff, superTimelineAddedCount });
+          outcome.settled({
+            timelineDiff,
+            superTimelineAddedCount,
+            superTimelineAvailable: Boolean(options.superTimelineStore), // #3042
+          });
           // This handler settles inline, inside the case's import section, rather than through
           // settleForensicImport: it re-selects the pre-crash batches by stored name, because those
           // rows are already in the forensic timeline but were never settled. The done line is the

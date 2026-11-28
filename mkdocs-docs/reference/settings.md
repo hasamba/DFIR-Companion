@@ -827,13 +827,15 @@ dashboard. A local tool run sends one message per run, named after the tool and 
 that the drop folder runs is reported in the drop-folder batch message instead, so that file never
 gets two messages.
 The message names what was imported, how many events it added to the forensic timeline, how many of
-those are graded High or Critical, and any files or artifacts that failed. A failed import sends
+those are graded High or Critical, how many rows it added to the super-timeline (left out when the
+case has no super-timeline store), and any files or artifacts that failed. A failed import sends
 "Import failed" with the reason. Screenshots (dropped images or extension captures) and live monitors
 send nothing. A file sent to SO-CRATES (from the drop folder or the dashboard) is
 not counted in the drop-folder batch message, because its import is not finished. Instead, it sends
 its own message when its verdicts are imported: one message for the file, or one message for all
 the entries of an archive, with the entries that failed listed. An entry that a server restart
-interrupts counts as failed. Like milestones, import messages
+interrupts counts as failed. A SO-CRATES submission is reported once, also across server restarts.
+Like milestones, import messages
 ignore the minimum severity. The toggle is on for new channels and for channels saved before it
 existed.
 

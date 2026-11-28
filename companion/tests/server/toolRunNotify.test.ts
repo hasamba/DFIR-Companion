@@ -8,6 +8,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { NotificationConfigStore } from "../../src/analysis/notificationStore.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createNotifier } from "../../src/integrations/notify/notifyDispatch.js";
 import { loadToolConfig, type ToolId, type ToolConfig } from "../../src/integrations/tools/toolConfig.js";
 import type { ToolRunner } from "../../src/integrations/tools/toolRunner.js";
@@ -39,7 +40,7 @@ const failingRunner: ToolRunner = async (_binary, args) => {
   return { stdout: "", stderr: "synthetic parser crash", code: 2 };
 };
 
-async function harness(runner: ToolRunner) {
+async function harness(runner: ToolRunner, withSuperTimeline = false) {
   const root = await mkdtemp(join(tmpdir(), "dfir-toolnotify-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -58,6 +59,7 @@ async function harness(runner: ToolRunner) {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     }),
     stateStore,
+    ...(withSuperTimeline ? { superTimelineStore: new SuperTimelineStore(store) } : {}),
     toolRunner: runner,
     loadToolConfigs: hayabusaCfg,
     notificationStore,
@@ -92,6 +94,24 @@ describe("a dashboard tool run's import message (#3036)", { timeout: POLL_TIMEOU
     // The settled diff's real counts: the fixture's one High row (#3038), never "not available".
     expect(sent[0]).toContain("Forensic timeline: +1 event (1 High/Critical)");
     expect(sent[0]).not.toContain("Event counts are not available");
+    // No super-timeline store in this harness: no "+0 rows" that only means "no store" (#3042).
+    expect(sent[0]).not.toContain("Super-timeline");
+  });
+
+  it("with a super-timeline store, a re-run that adds nothing says +0 rows (#3042)", async () => {
+    const h = await harness(okRunner, true);
+    const run = () =>
+      request(h.app)
+        .post("/cases/c1/tools/hayabusa/run-upload")
+        .send({ filename: "Security.evtx", dataBase64: RAW_EVTX.toString("base64") });
+    expect((await run()).status).toBe(200);
+    await pollFor("the first message", async () => (h.importMessages().length ? true : undefined));
+    expect(h.importMessages()[0]).toContain("Super-timeline: +1 row");
+    expect((await run()).status).toBe(200);
+    await pollFor("the second message", async () => (h.importMessages().length > 1 ? true : undefined));
+    await settle();
+    expect(h.importMessages()).toHaveLength(2);
+    expect(h.importMessages()[1]).toContain("Super-timeline: +0 rows");
   });
 
   it("a tool run that fails sends one Import failed message with the reason", async () => {

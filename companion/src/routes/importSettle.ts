@@ -129,6 +129,11 @@ export interface SettledImport {
   /** Rows the super-timeline RETAINED from this import (0 when no store is wired). */
   superTimelineAddedCount: number;
   /**
+   * False when no super-timeline store is wired, so the count above is not a real zero (#3042): the
+   * import message then leaves the super-timeline line out. Optional for legacy fakes (= wired).
+   */
+  superTimelineAvailable?: boolean;
+  /**
    * What the super-timeline's cap dropped to make room for this import (#1535). Undefined when no
    * store is wired or the store cannot report it; `count: 0` when the cap took nothing. This is
    * per-import; a case's complete eviction record is `SuperTimelineStore.meta().evictedTotal`,
@@ -327,6 +332,7 @@ export async function settleForensicImport(
     });
     return {
       superTimelineAddedCount,
+      superTimelineAvailable: Boolean(deps.superTimelineStore),
       superTimelineEvicted,
       timelineDiff,
       iocsDiff,

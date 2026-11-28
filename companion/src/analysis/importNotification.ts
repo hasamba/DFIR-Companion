@@ -51,18 +51,23 @@ export interface ImportOutcome {
 const FAILED_LINES_MAX = 10;
 const HIGH_CRITICAL = new Set(["High", "Critical"]);
 
-/** Counts from a settled import's diff — the full diff, so the High/Critical count is never capped. */
+/**
+ * Counts from a settled import's diff — the full diff, so the High/Critical count is never capped. A
+ * case with no super-timeline store (`superTimelineAvailable: false`) has no super-timeline count:
+ * its zero means "no store", not "nothing added" (#3042).
+ */
 export function countsFromSettled(settled: {
   timelineDiff: Pick<TimelineDiff, "added">;
   superTimelineAddedCount?: number;
+  superTimelineAvailable?: boolean;
 }): ImportCounts {
   const added = settled.timelineDiff.added;
+  const superKnown =
+    typeof settled.superTimelineAddedCount === "number" && settled.superTimelineAvailable !== false;
   return {
     added: added.length,
     highCritical: added.filter((e) => HIGH_CRITICAL.has(e.severity)).length,
-    ...(typeof settled.superTimelineAddedCount === "number"
-      ? { superAdded: settled.superTimelineAddedCount }
-      : {}),
+    ...(superKnown ? { superAdded: settled.superTimelineAddedCount } : {}),
   };
 }
 

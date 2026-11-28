@@ -38,6 +38,20 @@ describe("countsFromSettled", () => {
   it("leaves the super-timeline count out when the settle did not report one", () => {
     expect(countsFromSettled({ timelineDiff: { added: [] } })).toEqual({ added: 0, highCritical: 0 });
   });
+
+  it("leaves the super-timeline count out when the case has no store, and keeps a real zero (#3042)", () => {
+    const noStore = {
+      timelineDiff: { added: [] },
+      superTimelineAddedCount: 0,
+      superTimelineAvailable: false,
+    };
+    expect(countsFromSettled(noStore)).toEqual({ added: 0, highCritical: 0 });
+    expect(countsFromSettled({ ...noStore, superTimelineAvailable: true })).toEqual({
+      added: 0,
+      highCritical: 0,
+      superAdded: 0,
+    });
+  });
 });
 
 describe("addCounts", () => {
