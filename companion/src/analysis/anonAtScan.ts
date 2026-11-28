@@ -1,4 +1,4 @@
-// The account and e-mail patterns (UPN_ACCT in anonUsernames.ts, EMAIL_RE in anonymize.ts) open with
+// The account and e-mail patterns (UPN_ACCT in anonUsernames.ts, EMAIL_RE below) open with
 // `\b` and a local part of [A-Za-z0-9._%+-] before an "@". A regex engine tries that opening at every
 // word boundary and scans the whole run of local-part characters for an "@" each time, so a long run
 // (a domain of `sk-` runs or dotted labels, a URL-encoded body, a dashed slug) took time quadratic in
@@ -12,6 +12,14 @@
 // read once, so the scan is linear, and it returns exactly what `text.replace(re, fn)` returns.
 
 import { UPN_ACCT } from "./anonUsernames.js";
+
+// The e-mail pattern, and the same address with 1-3 digits glued after its TLD (`<user>@<domain>0|x`,
+// a log field run into the next value) when the digits cannot go on into another local part or an "@"
+// (#3050). A TLD never holds a digit, so the digits are not part of the domain.
+export const EMAIL_RE =
+  /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
+export const GLUED_EMAIL_RE =
+  /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+\.[A-Za-z]{2,}(?=\d{1,3}(?![A-Za-z0-9._%+@-]))/g;
 
 const LOCAL = /[A-Za-z0-9._%+-]/;
 const WORD = /[A-Za-z0-9_]/;
@@ -60,3 +68,23 @@ export function atAnchored(re: RegExp, minLocal: number): AtAnchored {
 
 /** UPN_ACCT (anonUsernames.ts) read by the scanner; its opener is `\b[A-Za-z0-9._%+-]{2,}@`. */
 export const UPN_SCAN: AtAnchored = atAnchored(UPN_ACCT, 2);
+
+const EMAIL_SCAN = atAnchored(EMAIL_RE, 1);
+const GLUED_SCAN = atAnchored(GLUED_EMAIL_RE, 1);
+type Ended = (result: string, value: string, at: number, end: number, text: string) => string;
+
+/**
+ * The e-mail pass: `mint(address, glued)` gives each address its replacement. A glued address is
+ * spliced through `ended`, so the digit after its token keeps a delimiter. A digit-led local part may
+ * be the tail of a card or phone number a later pass masks whole, so it is not read as glued.
+ */
+export function replaceEmails(
+  text: string,
+  mint: (m: string, glued: boolean) => string,
+  ended: Ended,
+): string {
+  const out = text.replace(EMAIL_SCAN, (m) => mint(m, false));
+  return out.replace(GLUED_SCAN, (m, at, w) =>
+    /^\d/.test(m) ? m : ended(mint(m, true), m, at, at + m.length, w),
+  );
+}

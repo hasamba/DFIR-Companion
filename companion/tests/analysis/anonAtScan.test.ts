@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { expectLinearScan } from "../helpers/growth.js";
-import { atAnchored } from "../../src/analysis/anonAtScan.js";
+import { atAnchored, EMAIL_RE, GLUED_EMAIL_RE } from "../../src/analysis/anonAtScan.js";
 import { UPN_ACCT } from "../../src/analysis/anonUsernames.js";
 import { createAnonymizer, type AnonPolicy } from "../../src/analysis/anonymize.js";
 
@@ -26,6 +26,8 @@ describe("atAnchored — the same matches as the regex, read in linear time (#30
     for (const [re, min] of [
       [UPN_ACCT, 2],
       [EMAIL_LIKE, 1],
+      [EMAIL_RE, 1],
+      [GLUED_EMAIL_RE, 1],
     ] as const) {
       for (let i = 0; i < 3000; i++) {
         const t = randomText(1 + Math.floor(rnd() * 40));
@@ -39,6 +41,7 @@ describe("atAnchored — the same matches as the regex, read in linear time (#30
     for (const t of [`_.bob${AT}x.com`, `..bob${AT}x.com`, `a_bob${AT}x.com`, `a${AT}b.com.x${AT}y.com`]) {
       expect(t.replace(atAnchored(EMAIL_LIKE, 1), fn)).toBe(t.replace(EMAIL_LIKE, fn));
       expect(t.replace(atAnchored(UPN_ACCT, 2), fn)).toBe(t.replace(UPN_ACCT, fn));
+      expect(t.replace(atAnchored(GLUED_EMAIL_RE, 1), fn)).toBe(t.replace(GLUED_EMAIL_RE, fn));
     }
   });
 });

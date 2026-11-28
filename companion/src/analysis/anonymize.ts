@@ -23,9 +23,8 @@ import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
 import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
 import { carveProfileName, valuePasses } from "./anonProfileTail.js";
-import { atAnchored, UPN_SCAN } from "./anonAtScan.js"; // the account and e-mail patterns in linear time (#3055)
-import { findIpv6Literals, groupAsRead } from "./anonIpv6Scan.js";
-import type { Ipv6Grade, Ipv6Span } from "./anonIpv6Scan.js";
+import { replaceEmails, UPN_SCAN } from "./anonAtScan.js"; // linear on long runs (#3055)
+import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
 import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
 import {
   replaceUserPaths,
@@ -416,7 +415,7 @@ export function createAnonymizer(
     const mint = { qualifier: qualify, user, whole: guard };
     let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
     out = replaceNetbiosAccounts(out, netbiosToken);
-    // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
+    // Only UPNs on an internal domain are AD accounts → USER. Others stay for the e-mail pass.
     return out.replace(UPN_SCAN, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
   }
   // Every learned username as a whole word, after HOST and DOMAIN have claimed their spans (so
@@ -429,14 +428,13 @@ export function createAnonymizer(
     for (const n of joined ?? []) userToken(n); // a run joining overlapping names is never saved; its names are (#3010)
     return joined ? userToken(m, false) : guard("USER", m);
   }
-  const EMAIL_RE =
-    /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
-  const EMAIL_SCAN = atAnchored(EMAIL_RE, 1); // linear on long runs (#3055)
-  function anonEmails(t: string): string {
-    // A local part holding a secret hides the whole address, or an external domain would go out in clear.
-    return t.replace(EMAIL_SCAN, (m) =>
-      oneWay(m.slice(0, m.lastIndexOf("@"))) ? SECRET_SENTINEL : assign("EMAIL", m),
-    );
+  // A secret in the local part hides the whole address (or an external domain would go out in clear); an
+  // internal address the account pass read with a glued digit is still an account (#3050).
+  function mintEmail(m: string, glued: boolean): string {
+    const at = m.lastIndexOf("@");
+    if (oneWay(m.slice(0, at))) return SECRET_SENTINEL;
+    const account = glued && policy.categories.USER && isInternalDomain(m.slice(at + 1));
+    return account ? accountToken(m) : assign("EMAIL", m);
   }
   function anonUserPaths(t: string): string {
     const carve = (name: string, saved: boolean) => {
@@ -649,7 +647,7 @@ export function createAnonymizer(
     // UNC server names before accounts, or \\DC-QA-01\C$ reads as an account (#2073).
     if (policy.categories.HOST) t = replaceUncServers(t, (s) => assign("HOST", s));
     if (policy.categories.USER) t = anonAccounts(t);
-    if (policy.categories.EMAIL) t = anonEmails(t);
+    if (policy.categories.EMAIL) t = replaceEmails(t, mintEmail, ends.ended);
     if (policy.categories.PATH) t = anonUserPaths(t);
     if (policy.categories.CMD) t = anonEncodedCmd(t);
     if (policy.categories.REG) t = anonSids(t);
