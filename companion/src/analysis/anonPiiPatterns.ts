@@ -93,3 +93,19 @@ export function replaceGluedIpv4(
     return head ? mint(head, m) : m;
   });
 }
+
+// Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
+// FromBase64String('…') in one, doubled or JSON-escaped quotes (#3053). Tokenize ONLY the blob: the verb
+// and flag stay visible as tradecraft signal, the payload never reaches the wire. `=` padding is outside.
+// A cue may follow a number or a JSON `\n`; padding before a glued IPv4 stays out of the token (#3060).
+export const ENC_CMD_RE =
+  /(?:(?<![A-Za-z])|(?<=(?<!\\)(?:\\\\)*\\[nrt]))(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/_-]{16,})(={0,2})/gi;
+export const FROM_B64_RE =
+  /(FromBase64String\(\s*(?:''|""|\\"|["']))([A-Za-z0-9+\/_-]{16,}={0,2})(''|""|\\"|["'])/gi;
+const IPV4_AT = /\d{1,3}(?:\.\d{1,3}){3}/y;
+
+/** True when an IPv4 address starts at `at` in `text`. */
+export function ipv4StartsAt(text: string, at: number): boolean {
+  IPV4_AT.lastIndex = at;
+  return IPV4_AT.test(text);
+}

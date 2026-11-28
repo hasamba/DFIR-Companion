@@ -565,7 +565,9 @@ export function commandSpans(text: string, placeholder: string): Span[] {
         if (r.span) spans.push(r.span);
         if (r.after <= at) break;
       }
-      re.lastIndex = Math.max(re.lastIndex, r.resume ?? r.after);
+      // A command read ends at its value: a later one quoted on the same line is read too (#3060).
+      const done = r.span && r.span[1] > re.lastIndex ? Math.min(r.after, r.span[1]) : r.after;
+      re.lastIndex = Math.max(re.lastIndex, r.resume ?? done);
     }
   }
   return [...spans, ...setValueSpans(text, vars), ...splatSpans(text, vars)].filter(

@@ -19,7 +19,7 @@ import { UPN_ACCT } from "./anonUsernames.js";
 export const EMAIL_RE =
   /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
 export const GLUED_EMAIL_RE =
-  /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+\.[A-Za-z]{2,}(?=\d{1,3}(?![A-Za-z0-9._%+@-]))/g;
+  /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+\.[A-Za-z]{2,}(?=\d{1,3}(?![A-Za-z0-9._%+@-])|(?<!ANON)_)/g;
 
 const LOCAL = /[A-Za-z0-9._%+-]/;
 const WORD = /[A-Za-z0-9_]/;
@@ -84,7 +84,12 @@ export function replaceEmails(
   ended: Ended,
 ): string {
   const out = text.replace(EMAIL_SCAN, (m) => mint(m, false));
-  return out.replace(GLUED_SCAN, (m, at, w) =>
-    /^\d/.test(m) ? m : ended(mint(m, true), m, at, at + m.length, w),
+  return replaceGluedAddresses(out, (m) => mint(m, true), ended);
+}
+
+/** Each address with a number or `_` glued after its TLD (GLUED_EMAIL_RE), replaced with `mint(address)`. */
+export function replaceGluedAddresses(text: string, mint: (m: string) => string, ended: Ended): string {
+  return text.replace(GLUED_SCAN, (m, at, w) =>
+    /^\d/.test(m) ? m : ended(mint(m), m, at, at + m.length, w),
   );
 }

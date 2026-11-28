@@ -11,6 +11,7 @@ import { TOKEN_DELIMITER } from "./anonTokenLiterals.js";
 // still inside a token.
 
 const TOKEN = /ANON_[A-Z]+_\d+/g;
+const CMD_TOKEN = /ANON_CMD_\d/;
 const WORD = /[\p{L}\p{N}]/u;
 const EDGE_SPACE = /^(\s*)([\s\S]*?)(\s*)$/;
 
@@ -29,7 +30,8 @@ export function carveProfileName(
   mint: CarveMint,
 ): string | null {
   const out = passes(name);
-  if (out === name) return null;
+  // A token already in the name (an encoded blob the CMD pass read first, #3060) is a value too.
+  if (out === name && !CMD_TOKEN.test(name)) return null;
   let carved = "";
   let at = 0; // position in `name`
   let last = 0; // position in `out`

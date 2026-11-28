@@ -17,13 +17,14 @@ import { redactSecretsWithCustom } from "./anonSecretCustom.js";
 import { createOneWayCheck, growGluedRemnants } from "./anonGluedSecret.js";
 import { learnRedactedEntities } from "./anonSecretEntities.js"; // a user inside a redacted value (#3039)
 import { NATID_RE, PHONE_E164, PHONE_IL, PHONE_NANP } from "./anonPiiPatterns.js";
+import { ENC_CMD_RE, FROM_B64_RE, ipv4StartsAt } from "./anonPiiPatterns.js";
 import { replaceCards, replaceGluedIpv4 } from "./anonPiiPatterns.js";
 import { scanTokenLiterals, tokenEnds, tokenReaders } from "./anonTokenLiterals.js";
 import { createInputSpelling, literalEscapes } from "./anonTokenLiterals.js";
 import { tokenQualifiedAccounts } from "./anonTokenAccounts.js";
 import { createNetbiosToken, sidUserToken } from "./anonNetbiosToken.js";
 import { carveProfileName, valuePasses } from "./anonProfileTail.js";
-import { replaceEmails, UPN_SCAN } from "./anonAtScan.js"; // linear on long runs (#3055)
+import { replaceEmails, replaceGluedAddresses, UPN_SCAN } from "./anonAtScan.js"; // linear on long runs (#3055)
 import { findIpv6Literals, groupAsRead, type Ipv6Grade, type Ipv6Span } from "./anonIpv6Scan.js";
 import { createTailJoiner, gluedIpv4At, type ReservedLiteral as Reserved } from "./anonTailJoin.js";
 import {
@@ -415,8 +416,10 @@ export function createAnonymizer(
     const mint = { qualifier: qualify, user, whole: guard };
     let out = tokenQualifiedAccounts(t, { ...rules, email: policy.categories.EMAIL }, mint);
     out = replaceNetbiosAccounts(out, netbiosToken);
-    // Only UPNs on an internal domain are AD accounts → USER. Others stay for the e-mail pass.
-    return out.replace(UPN_SCAN, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
+    // Only UPNs on an internal domain are AD accounts → USER; others stay for the e-mail pass (#3060).
+    const upn = (m: string) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m);
+    out = out.replace(UPN_SCAN, upn);
+    return policy.categories.EMAIL ? out : replaceGluedAddresses(out, upn, ends.ended);
   }
   // Every learned username as a whole word, after HOST and DOMAIN have claimed their spans (so
   // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
@@ -450,16 +453,17 @@ export function createAnonymizer(
     ...{ CMD: anonEncodedCmd, REG: anonSids, IP: anonIpv4 },
     ...{ CARD: anonCards, PHONE: anonPhones, NATID: anonNatIds },
   });
-  // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
-  // FromBase64String('…') in one, doubled or JSON-escaped quotes (#3053). Tokenize ONLY the blob: the verb
-  // and flag stay visible as tradecraft signal, the payload never reaches the wire. `=` padding is outside.
-  const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/_-]{16,}={0,2})/gi;
-  const FROM_B64_RE =
-    /(FromBase64String\(\s*(?:''|""|\\"|["']))([A-Za-z0-9+\/_-]{16,}={0,2})(''|""|\\"|["'])/gi;
   function anonEncodedCmd(t: string): string {
-    let out = t.replace(ENC_CMD_RE, (m, flag: string, blob: string, at: number, w: string) =>
-      ends.ended(flag + assign("CMD", blob), flag + blob, at, at + m.length, w),
-    );
+    let out = t.replace(ENC_CMD_RE, (m, flag: string, blob: string, pad: string, at: number, w: string) => {
+      const cut = pad && policy.categories.IP && ipv4StartsAt(w, at + m.length); // the address keeps its `=`
+      return ends.ended(
+        flag + (cut ? assign("CMD", blob) + pad : assign("CMD", blob + pad)),
+        m,
+        at,
+        at + m.length,
+        w,
+      );
+    });
     out = out.replace(FROM_B64_RE, (_m, a: string, blob: string, c: string) => a + assign("CMD", blob) + c);
     return out;
   }
@@ -646,12 +650,13 @@ export function createAnonymizer(
       ipv6Literals = reserved.literals;
     }
     t = anonCustom(t, ipv6Literals); // analyst-added entities win over every detector
+    // Encoded blobs first: an account, profile path or server read across a cue would hide it (#3060).
+    if (policy.categories.CMD) t = anonEncodedCmd(t);
     // UNC server names before accounts, or \\DC-QA-01\C$ reads as an account (#2073).
     if (policy.categories.HOST) t = replaceUncServers(t, (s) => assign("HOST", s));
     if (policy.categories.USER) t = anonAccounts(t);
     if (policy.categories.EMAIL) t = replaceEmails(t, mintEmail, ends.ended);
     if (policy.categories.PATH) t = anonUserPaths(t);
-    if (policy.categories.CMD) t = anonEncodedCmd(t);
     if (policy.categories.REG) t = anonSids(t);
     t = replaceKnownValues(t, knownValues, (v) => assign(v.category, v.value), joinKnown, kept);
     if (policy.categories.USER) t = anonBareUsernames(t);
