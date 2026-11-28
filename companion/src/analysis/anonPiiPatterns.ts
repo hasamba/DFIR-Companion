@@ -66,7 +66,9 @@ export function isCardNumber(m: string): boolean {
 // A 4-4-4-4 card with one to three digits glued on either end (#3058): CARD_RE's `\b` failed on the
 // glued side, so the whole number went out in clear. Only the grouped shape: in a bare run of
 // digits any 16-digit window would be tried, and long decimals (FILETIMEs) would be read as cards.
-const GLUED_CARD_RE = /(?<!\d)(?:\d{5,7}(?:[ -]\d{4}){2}[ -]\d{4,7}|\d{4}(?:[ -]\d{4}){2}[ -]\d{5,7})(?!\d)/g;
+// Never from inside a token's number (an alias spliced before a digit, #3078).
+const GLUED_CARD_RE =
+  /(?<!\d|ANON_[A-Z]+_)(?:\d{5,7}(?:[ -]\d{4}){2}[ -]\d{4,7}|\d{4}(?:[ -]\d{4}){2}[ -]\d{5,7})(?!\d)/g;
 /** The 16-digit card a GLUED_CARD_RE match is read as: the four groups cut to four digits. */
 function gluedCardCore(m: string): string {
   const groups = m.split(/[ -]/);
@@ -110,10 +112,10 @@ function gluedCore(m: string, shape: CardShape): boolean {
 // Grouped shapes only, as GLUED_CARD_RE: a bare long run is never cut into a card window. Nor is a
 // window of a longer column of number groups (event IDs, ports, years): no group may sit on either side.
 const GLUED_LONG: ReadonlyArray<readonly [RegExp, CardShape]> = [
-  [/(?<!\d|\d[ -])\d{4}(?:[ -]\d{4}){3}[ -]\d{4,6}(?!\d|[ -]\d)/g, C19],
-  [/(?<!\d|\d[ -])\d{5,7}(?:[ -]\d{4}){3}[ -]\d{3}(?!\d|[ -]\d)/g, C19],
-  [/(?<!\d|\d[ -])\d{4}[ -]\d{6}[ -]\d{6,8}(?!\d|[ -]\d)/g, AMEX],
-  [/(?<!\d|\d[ -])\d{5,7}[ -]\d{6}[ -]\d{5}(?!\d|[ -]\d)/g, AMEX],
+  [/(?<!\d|\d[ -]|ANON_[A-Z]+_)\d{4}(?:[ -]\d{4}){3}[ -]\d{4,6}(?!\d|[ -]\d)/g, C19],
+  [/(?<!\d|\d[ -]|ANON_[A-Z]+_)\d{5,7}(?:[ -]\d{4}){3}[ -]\d{3}(?!\d|[ -]\d)/g, C19],
+  [/(?<!\d|\d[ -]|ANON_[A-Z]+_)\d{4}[ -]\d{6}[ -]\d{6,8}(?!\d|[ -]\d)/g, AMEX],
+  [/(?<!\d|\d[ -]|ANON_[A-Z]+_)\d{5,7}[ -]\d{6}[ -]\d{5}(?!\d|[ -]\d)/g, AMEX],
 ];
 
 /** Replace each match `fn` accepts; a rejected match is tried again one character later. */

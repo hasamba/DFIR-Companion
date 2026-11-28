@@ -111,15 +111,16 @@ describe("an IPv4 address glued after a word (#3071)", () => {
     expect(a.restore(out)).toBe(text);
   });
 
-  it("leaves a word made only of digits before an address as it was", () => {
+  it("masks a word made only of digits with the address it is glued to (#3078)", () => {
     const a = createAnonymizer(policy(false), NONE);
-    expect(a.apply(`x 99${INNER} y`)).toBe(`x 99${INNER} y`);
+    const out = a.apply(`x 99${INNER} y`);
+    expect(out).toBe("x ANON_IP_1 y");
+    expect(a.restore(out)).toBe(`x 99${INNER} y`);
   });
 
-  it("leaves a dotted run, a word after the address and the IP category off as they were", () => {
+  it("leaves a word after the address and the IP category off as they were", () => {
     const a = createAnonymizer(policy(false), NONE);
-    for (const text of [`x ab${INNER}.6`, `x ab${INNER}x`, `x ab${dotted(1, 2, 3)}`])
-      expect(a.apply(text)).toBe(text);
+    for (const text of [`x ab${INNER}x`, `x ab${dotted(1, 2, 3)}`]) expect(a.apply(text)).toBe(text);
     const off = createAnonymizer(policy(true, false), NONE);
     expect(off.apply(`x ab${INNER}`)).toBe(`x ab${INNER}`);
   });

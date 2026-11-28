@@ -21,10 +21,10 @@ export interface PairRules {
   readonly category: (ip: string) => AnonTokenCategory | null;
   readonly internal: (ip: string) => boolean;
   readonly assign: (category: AnonTokenCategory, raw: string) => string;
-  /** Splices a token before what follows it (a digit needs a delimiter, #2992). */
-  readonly ended: (token: string, value: string, at: number, end: number, text: string) => string;
-  /** The call's token ends: where a token alias spliced before a digit ends (#3071). */
-  readonly ends: Pick<TokenEnds, "aliasEnd">;
+  /** Whether the PHONE category is on: a phone number that starts in a glued address's last number (#3078). */
+  readonly phone: boolean;
+  /** The call's token ends: `ended` splices a token before a digit (#2992), `aliasEnd` (#3071). */
+  readonly ends: Pick<TokenEnds, "aliasEnd" | "ended">;
   /** False: no address glued after a word is split off. A profile name keeps its one token, as before. */
   readonly word?: boolean;
 }
@@ -98,6 +98,11 @@ function minters(r: PairRules) {
 /** Before the custom pass: each glued pair whose parts are all masked gets one token per part. */
 export function replaceGluedPairs(text: string, r: PairRules): string {
   const { maskable, ip, card, old } = minters(r);
+  // #3078: a part kept in clear (suppressed) opens with a digit; the token before it is spliced as #2992.
+  const join = (first: string, value: string, second: string, m: RegExpExecArray) =>
+    /^\d/.test(second)
+      ? r.ends.ended(first, value, m.index, m.index + value.length, m.input) + second
+      : first + second;
   let out = text;
   if (r.card) {
     for (const s of CARD_FIRST)
@@ -105,16 +110,16 @@ export function replaceGluedPairs(text: string, r: PairRules): string {
         const [c, a] = [m[1], m[2]];
         if (!cardOk(coreOf(c, s), s.shape) || !validV4(a) || !maskable(a)) return null;
         if (s.bare && isCardNumber(c + a.slice(0, a.indexOf(".")))) return null; // CARD_RE's whole run
-        return (old(m[0]), card(c) + ip(a));
+        return (old(m[0]), join(card(c), c, ip(a), m));
       });
     for (const s of IP_FIRST)
       out = replaceEach(out, s.re, (m) => {
         const [a, c] = [m[1], m[2]];
         if (!lastOctetOk(a) || !maskable(a) || !cardOk(digitsOf(c), s.shape)) return null;
-        return (old(m[0]), ip(a) + card(c));
+        return (old(m[0]), join(ip(a), a, card(c), m));
       });
   }
-  return r.ip ? replaceEach(out, V4_PAIR_RE, (m) => splitPair(m, maskable, r, ip, old)) : out;
+  return r.ip ? replaceEach(out, V4_PAIR_RE, (m) => splitPair(m, maskable, r, ip, old, join)) : out;
 }
 
 /**
@@ -130,7 +135,11 @@ export function replaceGluedIpv4Runs(text: string, r: PairRules): string {
     return r.assign(cat, run);
   };
   const out = replaceGluedIpv4(text, mask);
-  return r.word === false ? out : replaceWordGluedIpv4(out, { category: r.category, mask, ends: r.ends });
+  if (r.word === false) return out;
+  const phone = r.phone
+    ? (value: string, whole: string) => (r.assign("PHONE", whole), r.assign("PHONE", value))
+    : null;
+  return replaceWordGluedIpv4(out, { category: r.category, mask, ends: r.ends, phone });
 }
 
 /**
@@ -146,7 +155,7 @@ export function replaceCardOnlyPairs(text: string, r: PairRules): string {
       const [c, a] = [m[1], m[2]];
       if (!s.alone || !cardOk(digitsOf(c), s.shape) || !validV4(a) || maskable(a)) return null;
       if (s.bare && isCardNumber(c + a.slice(0, a.indexOf(".")))) return null;
-      return (old(m[0]), r.ended(card(c), c, m.index, m.index + c.length, out) + a);
+      return (old(m[0]), r.ends.ended(card(c), c, m.index, m.index + c.length, out) + a);
     });
   const bare = IP_FIRST[IP_FIRST.length - 1];
   return replaceEach(out, bare.re, (m) => {
@@ -164,6 +173,7 @@ function splitPair(
   r: PairRules,
   ip: (a: string) => string,
   old: (run: string) => void,
+  join: (first: string, value: string, second: string, m: RegExpExecArray) => string,
 ): string | null {
   const [head, mid, tail] = [m[1], m[2], m[3]];
   if (OCTET.test(mid) && maskable(`${head}.${mid}`)) return null;
@@ -178,5 +188,5 @@ function splitPair(
   }
   if (!best) return null;
   old(m[0]);
-  return (maskable(best.a) ? ip(best.a) : best.a) + ip(best.b);
+  return join(maskable(best.a) ? ip(best.a) : best.a, best.a, ip(best.b), m);
 }

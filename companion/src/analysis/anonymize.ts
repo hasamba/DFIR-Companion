@@ -561,8 +561,8 @@ export function createAnonymizer(
     return replaceCards(replaceCardOnlyPairs(t, pairRules()), (m) => assign("CARD", m)); // + glued (#3058, #3062)
   }
   function pairRules(): PairRules {
-    const { IP: ip, CARD: card } = policy.categories;
-    return { ip, card, category: ipv4Category, internal: isInternalIp, assign, ended: ends.ended, ends };
+    const { IP: ip, CARD: card, PHONE: phone } = policy.categories;
+    return { ip, card, phone, category: ipv4Category, internal: isInternalIp, assign, ends };
   }
 
   // E.164 runs first: it is the most specific, and an international number has no leading zero
